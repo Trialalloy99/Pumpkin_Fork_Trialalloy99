@@ -151,7 +151,7 @@ impl BlockBehaviour for EnderChestBlock {
 }
 
 fn is_chest_blocked(world: &World, block_pos: &BlockPos) -> bool {
-    // TODO: Block opening when a cat is sitting on top.
+    // ender_chest: blocked if solid block on top (EnderChestBlock.useWithoutItem)
     has_block_on_top(world, block_pos)
 }
 fn has_block_on_top(world: &World, block_pos: &BlockPos) -> bool {
