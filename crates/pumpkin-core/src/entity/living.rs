@@ -3904,6 +3904,27 @@ impl EntityBase for LivingEntity {
                         .on_use_tick(item, player, remaining_use_ticks);
                 }
             }
+        } else if let Some(mob) = caller.get_mob() {
+            // mob item use tick: kinetic spear charge (LivingEntity.updatingUsingItem)
+            let remaining_use_ticks = self.item_use_time.load(Ordering::Relaxed);
+            if remaining_use_ticks > 0 {
+                let item_in_use = self
+                    .item_in_use
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
+                if let Some(item) = item_in_use.as_ref()
+                    && item
+                        .get_data_component::<pumpkin_data::data_component_impl::KineticWeaponImpl>()
+                        .is_some()
+                {
+                    crate::item::items::spear::SpearItem::mob_kinetic_tick(
+                        mob,
+                        item,
+                        remaining_use_ticks,
+                    );
+                }
+            }
         }
 
         // Current active item

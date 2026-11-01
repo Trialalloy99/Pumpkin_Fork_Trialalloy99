@@ -490,7 +490,12 @@ impl Goal for EvokerSummonSpellGoal {
                 );
 
                 let vex = from_type(&EntityType::VEX, spawn_pos, &world, Uuid::new_v4());
-                finalize_spawn(&vex, &world, None);
+                finalize_spawn(
+                    &vex,
+                    &world,
+                    None,
+                    crate::entity::mob::spawn::SpawnReason::MobSummoned,
+                );
                 if let Some(vex_entity) = vex.cast_any().downcast_ref::<VexEntity>() {
                     vex_entity.set_owner(evoker_ent);
                     vex_entity.set_bound_origin(Some(pos));

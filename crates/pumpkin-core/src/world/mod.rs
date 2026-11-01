@@ -38,6 +38,7 @@ pub mod random_sequences;
 pub mod stopwatches;
 pub mod time;
 pub mod villager_poi;
+pub mod village;
 
 use crate::block::RandomTickArgs;
 use crate::world::chunker::is_within_chebyshev_distance;
@@ -5086,6 +5087,19 @@ impl World {
             rider.init_data_tracker();
             self.add_entity_silent(rider.clone());
             vehicle.get_entity().add_passenger(vehicle.clone(), rider);
+        }
+        // mob spawn: mount a vehicle chosen in finalize_spawn (chicken jockey, camel husk)
+        if let Some((mount, spawn)) = mob.get_mob_entity().take_pending_vehicle() {
+            if spawn {
+                mount.init_data_tracker();
+                self.add_entity_silent(mount.clone());
+            }
+            if !mount.get_entity().is_removed() {
+                mount.get_entity().add_passenger(mount.clone(), vehicle.clone());
+            }
+            if spawn {
+                self.add_pending_riders(&mount);
+            }
         }
     }
 

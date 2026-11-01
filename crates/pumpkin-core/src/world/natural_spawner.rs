@@ -1,5 +1,6 @@
 use crate::block::PathComputationType;
 use crate::entity::EntityBase;
+use crate::entity::mob::spawn::SpawnReason;
 use crate::entity::mob::spawn::finalize_spawn;
 use crate::entity::r#type::{check_spawn_rules, from_type};
 use crate::world::World;
@@ -623,7 +624,12 @@ pub fn spawn_mobs_for_chunk_generation(
                         entity
                             .get_entity()
                             .set_rotation(rand::random::<f32>() * 360.0, 0.0);
-                        group_data = finalize_spawn(&entity, world, group_data);
+                        group_data = finalize_spawn(
+                            &entity,
+                            world,
+                            group_data,
+                            SpawnReason::ChunkGeneration,
+                        );
                         world.spawn_entity_non_save(entity);
                         success = true;
                     }
@@ -827,7 +833,8 @@ pub fn spawn_category_for_position(
                     });
 
                     if is_valid_for_mob {
-                        group_data = finalize_spawn(&entity, world, group_data);
+                        group_data =
+                            finalize_spawn(&entity, world, group_data, SpawnReason::Natural);
                         cluster_size += 1;
                         group_size += 1;
                         let max_group_size_reached = entity

@@ -52,6 +52,7 @@ impl DrownedEntity {
             ZombieEntityBase::revenge_goal()
                 .ignoring(|entity_type| entity_type == &EntityType::DROWNED),
             DROWNED_HUNTS,
+            false,
         );
         let zombie = Self { entity };
         Arc::new(zombie)

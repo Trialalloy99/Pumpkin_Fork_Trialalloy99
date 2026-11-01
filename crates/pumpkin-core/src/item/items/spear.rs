@@ -3,6 +3,7 @@ use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
 use crate::entity::combat;
+use crate::entity::mob::Mob;
 use crate::entity::player::Player;
 use crate::entity::{Entity, EntityBase};
 use crate::item::{ItemBehaviour, ItemMetadata};
@@ -11,7 +12,8 @@ use crate::world::World;
 use pumpkin_data::attributes::Attributes;
 use pumpkin_data::damage::DamageType;
 use pumpkin_data::data_component_impl::{
-    AttackRangeImpl, AttributeModifiersImpl, EnchantmentsImpl, EquipmentSlot, KineticWeaponImpl,
+    AttackRangeImpl, AttributeModifiersImpl, EnchantmentsImpl, EquipmentSlot, KineticConditionImpl,
+    KineticWeaponImpl,
     Operation, PiercingWeaponImpl, WeaponImpl,
 };
 use pumpkin_data::effect::StatusEffect;
@@ -161,7 +163,8 @@ struct StabEffects {
 }
 
 impl SpearItem {
-    const USE_DURATION: i32 = 72_000;
+    pub const USE_DURATION: i32 = 72_000;
+    const MOB_ACTION_FACTOR: f64 = 0.2;
 
     fn stab_attack(
         player: &Player,
@@ -320,6 +323,162 @@ impl SpearItem {
         }
     }
 
+    // spear: mob charge damage while using (KineticWeapon.damageEntities, non-player)
+    pub fn mob_kinetic_tick(mob: &dyn Mob, stack: &ItemStack, remaining_use_ticks: i32) {
+        let Some(weapon) = stack.get_data_component::<KineticWeaponImpl>() else {
+            return;
+        };
+        let ticks_used = Self::USE_DURATION - remaining_use_ticks - weapon.delay_ticks;
+        if ticks_used < 0 {
+            return;
+        }
+        let entity = mob.get_entity();
+        let living = &mob.get_mob_entity().living_entity;
+        let look = Vector3::rotation_vector(
+            f64::from(entity.pitch.load()),
+            f64::from(entity.head_yaw.load()),
+        );
+        let attacker_speed = look.dot(&Self::known_speed(entity));
+        let range = stack.get_data_component::<AttackRangeImpl>();
+        let (min_reach, max_reach, margin) = range.map_or_else(
+            || {
+                (
+                    0.0,
+                    living.get_attribute_value(&Attributes::ENTITY_INTERACTION_RANGE),
+                    0.0,
+                )
+            },
+            |range| {
+                (
+                    f64::from(range.min_reach * range.mob_factor),
+                    f64::from(range.max_reach * range.mob_factor),
+                    f64::from(range.hitbox_margin),
+                )
+            },
+        );
+        let base_damage = living.get_attribute_base(&Attributes::ATTACK_DAMAGE) as f32;
+        let now = entity.tick_count.load(Ordering::Relaxed);
+        let mut affected = false;
+
+        for target in Self::targets_along(
+            entity,
+            None,
+            entity.get_eye_pos(),
+            look,
+            min_reach,
+            max_reach,
+            margin,
+        ) {
+            let target_entity = target.get_entity();
+            if living.was_recently_stabbed(
+                target_entity.entity_id,
+                now,
+                weapon.contact_cooldown_ticks,
+            ) {
+                continue;
+            }
+            living.remember_stabbed_entity(target_entity.entity_id, now);
+
+            let target_speed = look.dot(&Self::known_speed(target_entity));
+            let relative_speed = (attacker_speed - target_speed).max(0.0);
+            let test = |condition: &Option<KineticConditionImpl>| {
+                condition.as_ref().is_some_and(|condition| {
+                    condition.test_scaled(
+                        ticks_used,
+                        attacker_speed,
+                        relative_speed,
+                        Self::MOB_ACTION_FACTOR,
+                    )
+                })
+            };
+            let effects = StabEffects {
+                damage: test(&weapon.damage_conditions),
+                knockback: test(&weapon.knockback_conditions),
+                dismount: test(&weapon.dismount_conditions),
+            };
+            if !effects.damage && !effects.knockback && !effects.dismount {
+                continue;
+            }
+            let damage =
+                base_damage + (relative_speed * f64::from(weapon.damage_multiplier)).floor() as f32;
+            affected |= Self::mob_stab_attack(mob, stack, &target, damage, effects);
+        }
+
+        if affected {
+            entity.world.load().send_entity_status(
+                entity,
+                EntityStatus::KineticHit,
+                ActorEventID::KineticDamageDealt,
+            );
+        }
+    }
+
+    // spear: mob stab (LivingEntity.stabAttack)
+    fn mob_stab_attack(
+        mob: &dyn Mob,
+        stack: &ItemStack,
+        target: &Arc<dyn EntityBase>,
+        base_damage: f32,
+        effects: StabEffects,
+    ) -> bool {
+        let target_entity = target.get_entity();
+        let mob_entity = mob.get_mob_entity();
+        let living = &mob_entity.living_entity;
+        let damage = base_damage + Self::enchantment_damage(stack, target_entity) as f32;
+        let was_hurt = effects.damage
+            && target.damage_with_context(
+                target.as_ref(),
+                damage,
+                DamageType::SPEAR,
+                None,
+                Some(mob),
+                Some(mob),
+            );
+        let mut affected = effects.knockback || was_hurt;
+        if effects.knockback && target.get_living_entity().is_some() {
+            let attacker = mob.get_entity();
+            combat::handle_knockback(attacker, target.as_ref(), 0.8);
+            let knockback = living.get_attribute_value(&Attributes::ATTACK_KNOCKBACK)
+                + f64::from(Self::knockback_level(stack));
+            if knockback > 0.0 {
+                combat::handle_knockback(attacker, target.as_ref(), knockback);
+            }
+            target_entity.send_velocity();
+        }
+        if effects.dismount
+            && !target_entity
+                .entity_type
+                .has_tag(&tag::EntityType::MINECRAFT_CANNOT_BE_DISMOUNTED_BY_ITEM_USAGE)
+            && let Some(vehicle) = target_entity.get_vehicle()
+        {
+            affected = true;
+            vehicle
+                .get_entity()
+                .remove_passenger(target_entity.entity_id);
+        }
+        if target.get_living_entity().is_some()
+            && let Some(weapon) = stack.get_data_component::<WeaponImpl>()
+        {
+            mob_entity.damage_item_in_slot(
+                &EquipmentSlot::MAIN_HAND,
+                weapon.item_damage_per_attack as i32,
+            );
+        }
+        if was_hurt {
+            Self::apply_post_damage_effects(stack, target_entity);
+        }
+        if affected {
+            living
+                .last_attacking_id
+                .store(target_entity.entity_id, Ordering::Relaxed);
+            living.last_attack_time.store(
+                mob.get_entity().tick_count.load(Ordering::Relaxed),
+                Ordering::Relaxed,
+            );
+        }
+        affected
+    }
+
     fn look_vector(player: &Player) -> Vector3<f64> {
         let (yaw, pitch) = player.rotation();
         Vector3::rotation_vector(f64::from(pitch), f64::from(yaw))
@@ -471,19 +630,35 @@ impl SpearItem {
         let Some(range) = stack.get_data_component::<AttackRangeImpl>() else {
             return Vec::new();
         };
-        let world = player.world();
-        let look = Self::look_vector(player);
-        let eye = player.eye_position();
         let (min_reach, max_reach) = if player.gamemode.load() == GameMode::Creative {
-            (
-                f64::from(range.min_creative_reach),
-                f64::from(range.max_creative_reach),
-            )
+            (range.min_creative_reach, range.max_creative_reach)
         } else {
-            (f64::from(range.min_reach), f64::from(range.max_reach))
+            (range.min_reach, range.max_reach)
         };
+        Self::targets_along(
+            player.get_entity(),
+            Some(server),
+            player.eye_position(),
+            Self::look_vector(player),
+            f64::from(min_reach),
+            f64::from(max_reach),
+            f64::from(range.hitbox_margin),
+        )
+    }
+
+    // spear: entities along the reach line (ProjectileUtil.getHitEntitiesAlong)
+    fn targets_along(
+        attacker: &Entity,
+        pvp: Option<&Server>,
+        eye: Vector3<f64>,
+        look: Vector3<f64>,
+        min_reach: f64,
+        max_reach: f64,
+        margin: f64,
+    ) -> Vec<Arc<dyn EntityBase>> {
+        let world = attacker.world.load_full();
         let from = eye.add(&(look * min_reach));
-        let forward = player.get_entity().movement.load().dot(&look).max(0.0);
+        let forward = attacker.movement.load().dot(&look).max(0.0);
         let mut to = eye.add(&(look * (max_reach + forward)));
         if let Some(block_hit) = Self::clip_blocks(&world, eye, to) {
             if eye.squared_distance_to_vec(&block_hit) < eye.squared_distance_to_vec(&from) {
@@ -492,7 +667,6 @@ impl SpearItem {
             to = block_hit;
         }
 
-        let margin = f64::from(range.hitbox_margin);
         let half_margin = Vector3::new(margin / 2.0, margin / 2.0, margin / 2.0);
         let delta = to.sub(&from);
         let search_box = BoundingBox::new(from.sub(&half_margin), from.add(&half_margin))
@@ -503,7 +677,7 @@ impl SpearItem {
             .get_all_at_box(&search_box)
             .into_iter()
             .filter(|target| {
-                Self::can_hit(player, server, target.as_ref())
+                Self::can_hit(attacker, pvp, target.as_ref())
                     && Self::hits_entity(
                         &world,
                         &target.get_entity().bounding_box.load(),
@@ -620,9 +794,10 @@ impl SpearItem {
             })
     }
 
-    fn can_hit(player: &Player, server: &Server, target: &dyn EntityBase) -> bool {
+    /// `pvp` is set for player attackers, whose hits on players follow the PvP config.
+    fn can_hit(attacker: &Entity, pvp: Option<&Server>, target: &dyn EntityBase) -> bool {
         let entity = target.get_entity();
-        if entity.entity_id == player.entity_id()
+        if entity.entity_id == attacker.entity_id
             || entity.is_removed()
             || entity.invulnerable.load(Ordering::Relaxed)
             || target.is_spectator()
@@ -635,7 +810,9 @@ impl SpearItem {
         if living.health.load() <= 0.0 {
             return false;
         }
-        if let Some(other) = target.get_player() {
+        if let Some(server) = pvp
+            && let Some(other) = target.get_player()
+        {
             let config = &server.advanced_config.pvp;
             if !config.enabled
                 || (config.protect_creative && other.gamemode.load() == GameMode::Creative)
@@ -643,7 +820,7 @@ impl SpearItem {
                 return false;
             }
         }
-        player.get_entity().root_vehicle_id() != entity.root_vehicle_id()
+        attacker.root_vehicle_id() != entity.root_vehicle_id()
     }
 }
 

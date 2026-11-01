@@ -882,9 +882,24 @@ pub struct KineticConditionImpl {
 }
 impl KineticConditionImpl {
     pub fn test(&self, ticks_used: i32, attacker_speed: f64, relative_speed: f64) -> bool {
+        self.test_scaled(ticks_used, attacker_speed, relative_speed, 1.0)
+    }
+    /// Vanilla `Condition.test` with its entity factor (1 for players, 0.2 for mobs).
+    pub fn test_scaled(
+        &self,
+        ticks_used: i32,
+        attacker_speed: f64,
+        relative_speed: f64,
+        entity_factor: f64,
+    ) -> bool {
         ticks_used <= self.max_duration_ticks
-            && attacker_speed >= f64::from(self.min_speed)
-            && relative_speed >= f64::from(self.min_relative_speed)
+            && attacker_speed >= f64::from(self.min_speed) * entity_factor
+            && relative_speed >= f64::from(self.min_relative_speed) * entity_factor
+    }
+    /// Vanilla `KineticWeapon.computeDamageUseDuration` part: the condition's tick limit.
+    #[must_use]
+    pub const fn max_duration_ticks(&self) -> i32 {
+        self.max_duration_ticks
     }
     fn read(compound: &NbtCompound, key: &str) -> Option<Self> {
         let condition = compound.get_compound(key)?;

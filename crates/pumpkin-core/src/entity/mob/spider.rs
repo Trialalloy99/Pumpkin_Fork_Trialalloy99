@@ -121,7 +121,12 @@ pub fn finalize_spider_spawn(
     if rng.random_range(0..100) == 0 {
         let skeleton = from_type(&EntityType::SKELETON, pos, world, Uuid::new_v4());
         skeleton.get_entity().set_rotation(entity.yaw.load(), 0.0);
-        finalize_spawn(&skeleton, world, None);
+        finalize_spawn(
+            &skeleton,
+            world,
+            None,
+            crate::entity::mob::spawn::SpawnReason::Jockey,
+        );
         mob.add_pending_rider(skeleton);
     }
 

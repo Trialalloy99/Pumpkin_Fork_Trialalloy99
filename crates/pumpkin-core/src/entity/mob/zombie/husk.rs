@@ -4,7 +4,13 @@ use pumpkin_util::math::position::BlockPos;
 use std::sync::Arc;
 
 use crate::entity::mob::equipment::RegionalDifficulty;
-use crate::entity::mob::spawn::SpawnGroupData;
+use crate::entity::mob::spawn::{SpawnGroupData, SpawnReason, finalize_spawn};
+use crate::entity::r#type::from_type;
+use pumpkin_data::data_component_impl::EquipmentSlot;
+use pumpkin_data::entity::EntityType;
+use pumpkin_data::item::Item;
+use pumpkin_data::item_stack::ItemStack;
+use rand::RngExt;
 use crate::entity::mob::zombie::ZombieEntityBase;
 use crate::entity::{
     Entity, EntityBase,
@@ -40,6 +46,25 @@ impl HuskEntity {
     }
 }
 
+impl HuskEntity {
+    // husk: ride a new camel husk with a parched behind, iron spear (Husk.finalizeSpawn)
+    fn spawn_camel_husk_jockey(&self, world: &Arc<World>, reason: SpawnReason) {
+        let mob_entity = self.get_mob_entity();
+        mob_entity.set_item_slot(&EquipmentSlot::MAIN_HAND, ItemStack::new(1, &Item::IRON_SPEAR));
+        let entity = self.get_entity();
+        let pos = entity.pos.load();
+        let camel_husk = from_type(&EntityType::CAMEL_HUSK, pos, world, uuid::Uuid::new_v4());
+        finalize_spawn(&camel_husk, world, None, reason);
+        let parched = from_type(&EntityType::PARCHED, pos, world, uuid::Uuid::new_v4());
+        parched.get_entity().set_rotation(entity.yaw.load(), 0.0);
+        finalize_spawn(&parched, world, None, reason);
+        if let Some(camel_mob) = camel_husk.get_mob() {
+            camel_mob.get_mob_entity().add_pending_rider(parched);
+        }
+        mob_entity.set_pending_vehicle(camel_husk, true);
+    }
+}
+
 impl Mob for HuskEntity {
     // zombie family: spawn rolls, hit effects, reinforcements, baby xp (Zombie)
     fn finalize_spawn(
@@ -47,7 +72,36 @@ impl Mob for HuskEntity {
         world: &Arc<World>,
         group_data: Option<SpawnGroupData>,
     ) -> Option<SpawnGroupData> {
-        self.entity.finalize_zombie_spawn(self, world, group_data)
+        let mut group_data = self.entity.finalize_zombie_spawn(self, world, group_data);
+        let mob_entity = self.get_mob_entity();
+        let reason = mob_entity.spawn_reason();
+        let multiplier = RegionalDifficulty::at(world, self.get_entity().pos.load()).special_multiplier;
+        let mut random = rand::rng();
+        // husk: second loot roll + camel husk jockey (Husk.finalizeSpawn)
+        if reason != SpawnReason::Conversion {
+            mob_entity.set_can_pick_up_loot(random.random::<f32>() < 0.55 * multiplier);
+        }
+        if let Some(SpawnGroupData::Zombie {
+            tried_camel_husk, ..
+        }) = group_data.as_mut()
+        {
+            *tried_camel_husk = reason != SpawnReason::Natural;
+            if !*tried_camel_husk {
+                let pos = self.get_entity().block_pos.load();
+                let spawn_box = EntityType::CAMEL_HUSK.get_spawn_aabb(
+                    f64::from(pos.0.x) + 0.5,
+                    f64::from(pos.0.y),
+                    f64::from(pos.0.z) + 0.5,
+                );
+                if world.is_space_empty(spawn_box) {
+                    *tried_camel_husk = true;
+                    if random.random::<f32>() < 0.1 {
+                        self.spawn_camel_husk_jockey(world, reason);
+                    }
+                }
+            }
+        }
+        group_data
     }
 
     fn on_attack(&self, target: &dyn EntityBase) {

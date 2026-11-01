@@ -1,4 +1,5 @@
 use pumpkin_util::math::position::BlockPos;
+use rand::RngExt;
 use pumpkin_util::math::vector3::Vector3;
 
 use super::{goal_utils, random_pos};
@@ -10,6 +11,19 @@ use crate::world::World;
 /// and water is rejected.
 #[must_use]
 pub fn get_pos(mob: &dyn Mob, horizontal_dist: i32, vertical_dist: i32) -> Option<Vector3<f64>> {
+    get_pos_weighted(mob, horizontal_dist, vertical_dist, |pos| {
+        f64::from(mob.get_walk_target_value(pos))
+    })
+}
+
+// land random pos: custom weight (LandRandomPos.getPos with positionWeight)
+#[must_use]
+pub fn get_pos_weighted(
+    mob: &dyn Mob,
+    horizontal_dist: i32,
+    vertical_dist: i32,
+    position_weight: impl Fn(&BlockPos) -> f64,
+) -> Option<Vector3<f64>> {
     let restrict = goal_utils::mob_restricted(mob, f64::from(horizontal_dist));
     let world = mob.get_entity().world.load_full();
     let block_pos = mob.get_entity().block_pos.load();
@@ -33,7 +47,7 @@ pub fn get_pos(mob: &dyn Mob, horizontal_dist: i32, vertical_dist: i32) -> Optio
             )?;
             move_pos_up_out_of_solid(mob, &world, &mut context, pos)
         },
-        |pos| f64::from(mob.get_walk_target_value(pos)),
+        position_weight,
     )
 }
 
@@ -67,4 +81,56 @@ pub fn toward_direction(
         && !goal_utils::is_restricted(restrict, mob, &pos)
         && !goal_utils::is_not_stable(mob, world, &pos))
     .then_some(pos)
+}
+
+// land random pos: away from a point within [min, max] (LandRandomPos.getPosAway)
+#[must_use]
+pub fn get_pos_away(
+    mob: &dyn Mob,
+    min_horizontal_dist: f64,
+    max_horizontal_dist: f64,
+    vertical_dist: i32,
+    avoid_pos: Vector3<f64>,
+) -> Option<Vector3<f64>> {
+    let mut rng = mob.get_random();
+    let mut dir_away = mob.get_entity().pos.load() - avoid_pos;
+    if dir_away.length() == 0.0 {
+        dir_away = Vector3::new(
+            rng.random::<f64>() - 0.5,
+            0.0,
+            rng.random::<f64>() - 0.5,
+        );
+    }
+    let restrict = goal_utils::mob_restricted(mob, max_horizontal_dist);
+    let world = mob.get_entity().world.load_full();
+    let block_pos = mob.get_entity().block_pos.load();
+    let mut context = PathfindingContext::new(
+        Vector3::new(block_pos.0.x, block_pos.0.y, block_pos.0.z),
+        world.clone(),
+    );
+
+    random_pos::generate_random_pos(
+        || {
+            let direction = random_pos::generate_random_direction_within_radians(
+                &mut rng,
+                min_horizontal_dist,
+                max_horizontal_dist,
+                vertical_dist,
+                0,
+                dir_away.x,
+                dir_away.z,
+                std::f64::consts::FRAC_PI_2,
+            )?;
+            let pos = toward_direction(
+                mob,
+                &world,
+                max_horizontal_dist,
+                restrict,
+                direction,
+                &mut rng,
+            )?;
+            move_pos_up_out_of_solid(mob, &world, &mut context, pos)
+        },
+        |pos| f64::from(mob.get_walk_target_value(pos)),
+    )
 }

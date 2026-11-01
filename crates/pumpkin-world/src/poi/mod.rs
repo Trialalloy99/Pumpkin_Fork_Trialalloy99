@@ -544,6 +544,31 @@ impl PoiStorage {
         results
     }
 
+    /// Visits every POI within `radius` blocks of `center` on the x/z axes, without allocating.
+    pub fn for_each_in_square(
+        &mut self,
+        center: BlockPos,
+        radius: i32,
+        mut visit: impl FnMut(BlockPos, &str),
+    ) {
+        let min_rx = ((center.0.x - radius) >> 4) >> 5;
+        let max_rx = ((center.0.x + radius) >> 4) >> 5;
+        let min_rz = ((center.0.z - radius) >> 4) >> 5;
+        let max_rz = ((center.0.z + radius) >> 4) >> 5;
+        for rx in min_rx..=max_rx {
+            for rz in min_rz..=max_rz {
+                let region = self.get_or_load_region(rx, rz);
+                for entry in region.entries.values() {
+                    if (entry.x - center.0.x).abs() <= radius
+                        && (entry.z - center.0.z).abs() <= radius
+                    {
+                        visit(entry.pos(), &entry.poi_type);
+                    }
+                }
+            }
+        }
+    }
+
     /// Finds the closest POI whose type matches `matches`, considering
     /// entries within `radius` blocks of `center` on the x/z axes (like
     /// vanilla's `PoiManager.findClosestWithType`: a chebyshev square gather

@@ -150,6 +150,8 @@ pub struct MobEntity {
     pub death_loot_table_seed: AtomicI64,
     pub ambient_sound_time: AtomicI32,
     pending_riders: std::sync::Mutex<Vec<Arc<dyn EntityBase>>>,
+    pending_vehicle: std::sync::Mutex<Option<(Arc<dyn EntityBase>, bool)>>,
+    pub spawn_reason: std::sync::atomic::AtomicU8,
     mob_flags: AtomicU8,
 }
 impl MobEntity {
@@ -280,6 +282,8 @@ impl MobEntity {
             death_loot_table_seed: AtomicI64::new(0),
             ambient_sound_time: AtomicI32::new(0),
             pending_riders: std::sync::Mutex::new(Vec::new()),
+            pending_vehicle: std::sync::Mutex::new(None),
+            spawn_reason: std::sync::atomic::AtomicU8::new(crate::entity::mob::spawn::SpawnReason::Command as u8),
             mob_flags: AtomicU8::new(0),
         }
     }
@@ -493,6 +497,69 @@ impl MobEntity {
         self.living_entity
             .send_equipment_changes(&[(slot.clone(), stack)]);
         previous
+    }
+
+    // mob: read main hand without cloning
+    pub fn with_main_hand<R>(&self, f: impl FnOnce(&ItemStack) -> R) -> R {
+        let equipment = self
+            .living_entity
+            .entity_equipment
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        f(equipment
+            .equipment
+            .get(&EquipmentSlot::MAIN_HAND)
+            .unwrap_or(ItemStack::EMPTY))
+    }
+
+    // mob: turn body + pitch towards entity (Mob.lookAt)
+    pub fn look_at_entity_body(&self, target: &dyn EntityBase, max_yaw: f32, max_pitch: f32) {
+        let entity = &self.living_entity.entity;
+        let pos = entity.pos.load();
+        let is_living = target.get_living_entity().is_some();
+        let target = target.get_entity();
+        let target_pos = target.pos.load();
+        let xd = target_pos.x - pos.x;
+        let zd = target_pos.z - pos.z;
+        let yd = if is_living {
+            target.get_eye_y() - entity.get_eye_y()
+        } else {
+            let bb = target.bounding_box.load();
+            f64::midpoint(bb.min.y, bb.max.y) - entity.get_eye_y()
+        };
+        let sd = xd.hypot(zd);
+        let yaw = (zd.atan2(xd).to_degrees() as f32) - 90.0;
+        let pitch = -(yd.atan2(sd).to_degrees() as f32);
+        let rotlerp = |from: f32, to: f32, max: f32| {
+            from + pumpkin_util::math::wrap_degrees(to - from).clamp(-max, max)
+        };
+        entity.pitch.store(rotlerp(entity.pitch.load(), pitch, max_pitch));
+        entity.yaw.store(rotlerp(entity.yaw.load(), yaw, max_yaw));
+    }
+
+    // mob: equipment durability loss + break event (ItemStack.hurtAndBreak, Mob.onEquippedItemBroken)
+    pub fn damage_item_in_slot(&self, slot: &EquipmentSlot, amount: i32) {
+        let mut stack = self
+            .living_entity
+            .entity_equipment
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(slot);
+        match stack.damage_item(amount) {
+            pumpkin_data::item_stack::DamageResult::Untouched => {}
+            pumpkin_data::item_stack::DamageResult::Damaged => {
+                self.set_item_slot(slot, stack);
+            }
+            pumpkin_data::item_stack::DamageResult::Broken => {
+                self.set_item_slot(slot, stack);
+                let entity = &self.living_entity.entity;
+                entity.world.load().send_entity_status(
+                    entity,
+                    crate::entity::equipment_break_status(slot),
+                    pumpkin_protocol::bedrock::server::actor_event::ActorEventID::None,
+                );
+            }
+        }
     }
 
     pub fn set_item_slot_and_drop_when_killed(&self, slot: &EquipmentSlot, stack: ItemStack) {
@@ -1592,6 +1659,11 @@ pub trait Mob: EntityBase + Send + Sync {
 
     fn as_animal(&self) -> Option<&dyn crate::entity::passive::animal::Animal> {
         None
+    }
+
+    // mob: mount speed factor for spear charges (Mob.chargeSpeedModifier)
+    fn charge_speed_modifier(&self) -> f32 {
+        1.0
     }
 
     /// How much this mob likes standing on `pos`, used to rank stroll candidates.

@@ -222,7 +222,12 @@ pub(crate) fn prepare_egg_mob(
     world: &Arc<World>,
     user: Option<&Player>,
 ) {
-    finalize_spawn(mob, world, None);
+    finalize_spawn(
+        mob,
+        world,
+        None,
+        crate::entity::mob::spawn::SpawnReason::SpawnItemUse,
+    );
     apply_entity_variant(item, mob.as_ref(), user);
 }
 

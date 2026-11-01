@@ -79,6 +79,16 @@ impl VillagerPoiStorage {
         }
     }
 
+    // village: job site claimed by a live villager (PoiRecord.isOccupied)
+    #[must_use]
+    pub fn is_claimed(&self, position: BlockPos) -> bool {
+        self.job_sites
+            .get(&position)
+            .and_then(|site| site.owner.as_ref())
+            .and_then(Self::live_owner)
+            .is_some()
+    }
+
     #[must_use]
     pub fn available_job_sites(
         &self,

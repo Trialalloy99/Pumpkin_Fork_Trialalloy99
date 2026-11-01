@@ -33,9 +33,11 @@ pub enum SpawnGroupData {
         variant: FoxVariant,
         size: u32,
     },
-    /// Vanilla `ZombieGroupData`: whether this group spawns babies.
+    /// Vanilla `ZombieGroupData` (and `HuskGroupData`): baby group, jockey allowed, camel husk tried.
     Zombie {
         baby: bool,
+        can_spawn_jockey: bool,
+        tried_camel_husk: bool,
     },
     /// Vanilla `WolfPackData`: the variant every wolf of the pack shares.
     WolfPack(pumpkin_data::wolf_variant::WolfVariant),
@@ -76,6 +78,27 @@ impl MobEntity {
             .push(rider);
     }
 
+    // mob spawn: reason passed to the last finalize_spawn (EntitySpawnReason)
+    #[must_use]
+    pub fn spawn_reason(&self) -> SpawnReason {
+        SpawnReason::from_u8(self.spawn_reason.load(std::sync::atomic::Ordering::Relaxed))
+    }
+
+    /// Queues a vehicle that this mob mounts when it enters the world; `spawn` adds it too.
+    pub fn set_pending_vehicle(&self, vehicle: Arc<dyn EntityBase>, spawn: bool) {
+        *self
+            .pending_vehicle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((vehicle, spawn));
+    }
+
+    pub(crate) fn take_pending_vehicle(&self) -> Option<(Arc<dyn EntityBase>, bool)> {
+        self.pending_vehicle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+    }
+
     pub(crate) fn take_pending_riders(&self) -> Vec<Arc<dyn EntityBase>> {
         std::mem::take(
             &mut *self
@@ -86,14 +109,78 @@ impl MobEntity {
     }
 }
 
+/// Vanilla `EntitySpawnReason`: why a mob was created, read by some `finalizeSpawn` overrides.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[repr(u8)]
+pub enum SpawnReason {
+    Natural,
+    ChunkGeneration,
+    Spawner,
+    Structure,
+    Breeding,
+    MobSummoned,
+    Jockey,
+    Event,
+    Conversion,
+    Reinforcement,
+    Triggered,
+    Bucket,
+    SpawnItemUse,
+    #[default]
+    Command,
+    Dispenser,
+    Patrol,
+    TrialSpawner,
+    Load,
+    DimensionTravel,
+}
+
+impl SpawnReason {
+    const ALL: [Self; 19] = [
+        Self::Natural,
+        Self::ChunkGeneration,
+        Self::Spawner,
+        Self::Structure,
+        Self::Breeding,
+        Self::MobSummoned,
+        Self::Jockey,
+        Self::Event,
+        Self::Conversion,
+        Self::Reinforcement,
+        Self::Triggered,
+        Self::Bucket,
+        Self::SpawnItemUse,
+        Self::Command,
+        Self::Dispenser,
+        Self::Patrol,
+        Self::TrialSpawner,
+        Self::Load,
+        Self::DimensionTravel,
+    ];
+
+    #[must_use]
+    pub fn from_u8(value: u8) -> Self {
+        Self::ALL
+            .get(usize::from(value))
+            .copied()
+            .unwrap_or_default()
+    }
+}
+
 /// Finalizes `entity` if it is a mob, and returns the group data for the next mob of the group.
 pub fn finalize_spawn(
     entity: &Arc<dyn EntityBase>,
     world: &Arc<World>,
     group_data: Option<SpawnGroupData>,
+    reason: SpawnReason,
 ) -> Option<SpawnGroupData> {
     match entity.get_mob() {
-        Some(mob) => mob.finalize_spawn(world, group_data),
+        Some(mob) => {
+            mob.get_mob_entity()
+                .spawn_reason
+                .store(reason as u8, std::sync::atomic::Ordering::Relaxed);
+            mob.finalize_spawn(world, group_data)
+        }
         None => group_data,
     }
 }

@@ -123,6 +123,11 @@ impl Animal for ZombieHorseEntity {
 }
 
 impl Mob for ZombieHorseEntity {
+    // zombie horse: spear charge mount factor (ZombieHorse.chargeSpeedModifier)
+    fn charge_speed_modifier(&self) -> f32 {
+        1.4
+    }
+
     fn is_tamed(&self) -> bool {
         self.is_tame()
     }

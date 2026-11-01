@@ -126,6 +126,15 @@ impl Animal for CamelEntity {
 
 // TODO: tame state (`AbstractHorse.isTamed`), so `is_tamed` sees tamed camels.
 impl Mob for CamelEntity {
+    // camel husk: spear charge mount factor (CamelHusk.chargeSpeedModifier)
+    fn charge_speed_modifier(&self) -> f32 {
+        if self.get_entity().entity_type == &EntityType::CAMEL_HUSK {
+            4.0
+        } else {
+            1.0
+        }
+    }
+
     fn mob_play_step_sound(&self, _pos: &BlockPos, state: &BlockState) {
         let sound = if state
             .id

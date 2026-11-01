@@ -2,6 +2,8 @@ use super::{Mob, MobEntity, MobMetadata};
 use crate::entity::ai::goal::break_door::BreakDoorGoal;
 use crate::entity::ai::goal::destroy_egg::DestroyEggGoal;
 use crate::entity::ai::goal::look_around::RandomLookAroundGoal;
+use crate::entity::ai::goal::move_through_village::MoveThroughVillageGoal;
+use crate::entity::ai::goal::spear_use::SpearUseGoal;
 use crate::entity::ai::goal::revenge::RevengeGoal;
 use crate::entity::ai::goal::wander_around::WanderAroundGoal;
 use crate::entity::ai::goal::zombie_attack::ZombieAttackGoal;
@@ -10,6 +12,7 @@ use crate::entity::mob::conversion;
 use crate::entity::mob::equipment::RegionalDifficulty;
 use crate::entity::mob::spawn::SpawnGroupData;
 use crate::entity::r#type::from_type;
+use crate::entity::mob::spawn::SpawnReason;
 use crate::entity::{
     Entity, EntityBase,
     ai::behavior::hunting::{self, Hunt},
@@ -70,7 +73,13 @@ impl ZombieEntityBase {
     }
 
     pub fn with_can_break_doors(entity: Entity, can_break_doors: bool) -> Arc<Self> {
-        Self::with_targets(entity, can_break_doors, Self::revenge_goal(), ZOMBIE_HUNTS)
+        Self::with_targets(
+            entity,
+            can_break_doors,
+            Self::revenge_goal(),
+            ZOMBIE_HUNTS,
+            true,
+        )
     }
 
     /// Vanilla `HurtByTargetGoal(this).setAlertOthers(ZombifiedPiglin.class)`.
@@ -86,6 +95,7 @@ impl ZombieEntityBase {
         can_break_doors: bool,
         revenge: RevengeGoal,
         hunts: &[Hunt],
+        zombie_behaviour: bool,
     ) -> Arc<Self> {
         let mob_entity = MobEntity::new(entity);
         let zombie = Self {
@@ -115,7 +125,15 @@ impl ZombieEntityBase {
             if can_break_doors {
                 goal_selector.add_goal(1, Box::new(BreakDoorGoal::default()));
             }
+            if zombie_behaviour {
+                goal_selector.add_goal(2, SpearUseGoal::new(1.0, 1.0, 10.0, 2.0));
+            }
             goal_selector.add_goal(3, ZombieAttackGoal::new(1.0, false));
+            if zombie_behaviour {
+                goal_selector.add_goal(6, MoveThroughVillageGoal::new(1.0, true, 4, |mob| {
+                        zombie_base_of(mob).is_some_and(ZombieEntityBase::can_break_doors)
+                    }));
+            }
             goal_selector.add_goal(7, Box::new(WanderAroundGoal::water_avoiding(1.0)));
 
             target_selector.add_goal(1, Box::new(revenge));
@@ -136,6 +154,11 @@ impl ZombieEntityBase {
             .swap(can_break_doors, Ordering::Relaxed)
             != can_break_doors
         {
+            self.mob_entity
+                .navigator
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .set_can_open_doors(can_break_doors);
             if can_break_doors {
                 self.mob_entity
                     .goals_selector
@@ -245,21 +268,36 @@ impl ZombieEntityBase {
         let difficulty = RegionalDifficulty::at(world, mob.get_entity().pos.load());
         let multiplier = difficulty.special_multiplier;
         let mut random = rand::rng();
-        self.mob_entity
-            .set_can_pick_up_loot(random.random::<f32>() < 0.55 * multiplier);
+        let conversion = self.mob_entity.spawn_reason() == SpawnReason::Conversion;
+        if !conversion {
+            self.mob_entity
+                .set_can_pick_up_loot(random.random::<f32>() < 0.55 * multiplier);
+        }
         let group_data = group_data.unwrap_or(SpawnGroupData::Zombie {
             baby: random.random::<f32>() < BABY_SPAWN_CHANCE,
+            can_spawn_jockey: true,
+            tried_camel_husk: false,
         });
-        if let SpawnGroupData::Zombie { baby } = group_data {
+        if let SpawnGroupData::Zombie {
+            baby,
+            can_spawn_jockey,
+            ..
+        } = group_data
+        {
             if baby {
                 mob.spawn_as_baby();
+                if can_spawn_jockey {
+                    roll_chicken_jockey(&self.mob_entity, world, &mut random);
+                }
             }
             self.set_can_break_doors(random.random::<f32>() < multiplier * 0.1, mob);
-            mob.populate_default_equipment_slots(world, &difficulty);
-            mob.populate_default_equipment_enchantments(&difficulty);
+            if !conversion {
+                mob.populate_default_equipment_slots(world, &difficulty);
+                mob.populate_default_equipment_enchantments(&difficulty);
+            }
         }
         maybe_wear_halloween_head(&self.mob_entity);
-        self.handle_attributes(multiplier, false);
+        self.handle_attributes(multiplier, conversion);
         Some(group_data)
     }
 
@@ -298,6 +336,16 @@ impl ZombieEntityBase {
                 true,
                 true,
                 |converted| {
+                    crate::entity::mob::spawn::finalize_spawn(
+                        converted,
+                        &world,
+                        Some(SpawnGroupData::Zombie {
+                            baby: false,
+                            can_spawn_jockey: true,
+                            tried_camel_husk: false,
+                        }),
+                        SpawnReason::Conversion,
+                    );
                     if let Some(zombie_villager) = converted.get_mob() {
                         zombie_villager.mob_read_nbt(&villager_nbt);
                     }
@@ -366,7 +414,12 @@ impl ZombieEntityBase {
                     .get_mob_entity()
                     .set_target(Some(target.clone()));
             }
-            crate::entity::mob::spawn::finalize_spawn(&reinforcement, &world, None);
+            crate::entity::mob::spawn::finalize_spawn(
+                &reinforcement,
+                &world,
+                None,
+                crate::entity::mob::spawn::SpawnReason::Reinforcement,
+            );
             if let Some(reinforcement_mob) = reinforcement.get_mob() {
                 charge_reinforcements(
                     reinforcement_mob.get_mob_entity(),
@@ -533,6 +586,44 @@ fn drowning_conversion(entity_type: &EntityType) -> Option<(&'static EntityType,
 }
 
 // zombie family: shared base of any zombie wrapper
+// zombie: baby chicken jockey, nearby or new chicken (Zombie.finalizeSpawn)
+pub fn roll_chicken_jockey(mob_entity: &MobEntity, world: &Arc<World>, random: &mut impl RngExt) {
+    let entity = &mob_entity.living_entity.entity;
+    if random.random::<f32>() < 0.05 {
+        let search = entity.bounding_box.load().expand(5.0, 3.0, 5.0);
+        let chicken = world.get_entities_at_box(&search).into_iter().find(|other| {
+            let other_entity = other.get_entity();
+            other_entity.entity_type == &EntityType::CHICKEN
+                && !other_entity.is_removed()
+                && !other_entity.has_passengers()
+        });
+        if let Some(chicken) = chicken {
+            set_chicken_jockey(chicken.as_ref());
+            mob_entity.set_pending_vehicle(chicken, false);
+        }
+    } else if random.random::<f32>() < 0.05 {
+        let chicken = from_type(
+            &EntityType::CHICKEN,
+            entity.pos.load(),
+            world,
+            uuid::Uuid::new_v4(),
+        );
+        chicken.get_entity().set_rotation(entity.yaw.load(), 0.0);
+        crate::entity::mob::spawn::finalize_spawn(&chicken, world, None, SpawnReason::Jockey);
+        set_chicken_jockey(chicken.as_ref());
+        mob_entity.set_pending_vehicle(chicken, true);
+    }
+}
+
+fn set_chicken_jockey(chicken: &dyn EntityBase) {
+    if let Some(chicken) = chicken
+        .cast_any()
+        .downcast_ref::<crate::entity::passive::chicken::ChickenEntity>()
+    {
+        chicken.set_chicken_jockey(true);
+    }
+}
+
 #[must_use]
 pub fn zombie_base_of(entity: &dyn EntityBase) -> Option<&ZombieEntityBase> {
     let any = entity.cast_any();
