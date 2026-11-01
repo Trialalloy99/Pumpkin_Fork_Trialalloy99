@@ -17,9 +17,9 @@ use crate::entity::ai::target_match::TargetMatch;
 use crate::entity::{
     Entity, EntityBase,
     ai::goal::{
-        active_target::TargetCondition, look_around::RandomLookAroundGoal,
-        look_at_entity::LookAtEntityGoal, revenge::RevengeGoal, spider_attack::SpiderAttackGoal,
-        swim::SwimGoal, wander_around::WanderAroundGoal,
+        active_target::TargetCondition, leap_at_target::LeapAtTargetGoal,
+        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal, revenge::RevengeGoal,
+        spider_attack::SpiderAttackGoal, swim::SwimGoal, wander_around::WanderAroundGoal,
     },
     mob::{
         Mob, MobEntity,
@@ -58,7 +58,13 @@ pub struct SpiderEntity {
 
 impl SpiderEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
-        let mob_entity = MobEntity::new(entity);
+        let mut mob_entity = MobEntity::new(entity);
+        // spider: wall climber navigation (Spider.createNavigation)
+        *mob_entity
+            .navigator
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            crate::entity::ai::pathfinder::Navigator::wall_climber();
         let spider = Self {
             mob_entity,
             is_climbing: AtomicBool::new(false),
@@ -75,8 +81,10 @@ impl SpiderEntity {
 
             goal_selector.add_goal(1, Box::new(SwimGoal::default()));
             fleeing::apply(goal_selector, SPIDER_FLEES);
-            goal_selector.add_goal(3, SpiderAttackGoal::new(1.0, false));
-            goal_selector.add_goal(5, Box::new(WanderAroundGoal::new(0.8)));
+            // spider: leap 3, attack 4 (Spider.registerGoals)
+            goal_selector.add_goal(3, Box::new(LeapAtTargetGoal::new(0.4)));
+            goal_selector.add_goal(4, SpiderAttackGoal::new(1.0, true));
+            goal_selector.add_goal(5, Box::new(WanderAroundGoal::water_avoiding(0.8)));
             goal_selector.add_goal(
                 6,
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 8.0),
@@ -121,12 +129,7 @@ pub fn finalize_spider_spawn(
     if rng.random_range(0..100) == 0 {
         let skeleton = from_type(&EntityType::SKELETON, pos, world, Uuid::new_v4());
         skeleton.get_entity().set_rotation(entity.yaw.load(), 0.0);
-        finalize_spawn(
-            &skeleton,
-            world,
-            None,
-            crate::entity::mob::spawn::SpawnReason::Jockey,
-        );
+        finalize_spawn(&skeleton, world, None, mob.spawn_reason());
         mob.add_pending_rider(skeleton);
     }
 
@@ -182,14 +185,13 @@ impl Mob for SpiderEntity {
         Some(meta)
     }
 
-    fn mob_tick(&self, _caller: &dyn EntityBase) {
+    // spider: climbs while pushing into a wall, after the move (Spider.tick)
+    fn post_tick(&self) {
         let entity = &self.mob_entity.living_entity.entity;
-        if !entity.is_alive() {
-            return;
-        }
+        self.set_climbing(entity.horizontal_collision.load(Ordering::Relaxed));
+    }
 
-        let vel = entity.velocity.load();
-        let is_colliding_horizontally = vel.x.abs() < 1e-4 && vel.z.abs() < 1e-4;
-        self.set_climbing(is_colliding_horizontally);
+    fn climbable_override(&self) -> Option<bool> {
+        Some(self.is_climbing())
     }
 }

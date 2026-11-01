@@ -1164,6 +1164,12 @@ impl LivingEntity {
         {
             return false;
         }
+        // spiders: immune to poison (Spider.canBeAffected)
+        if (entity_type == &EntityType::SPIDER || entity_type == &EntityType::CAVE_SPIDER)
+            && effect.effect_type == &StatusEffect::POISON
+        {
+            return false;
+        }
         // parched: immune to weakness (Parched.canBeAffected)
         if entity_type == &EntityType::PARCHED && effect.effect_type == &StatusEffect::WEAKNESS {
             return false;
@@ -1986,62 +1992,45 @@ impl LivingEntity {
     pub(crate) fn make_move(&self, caller: &dyn EntityBase) {
         self.entity.move_entity(caller, self.entity.velocity.load());
 
-        self.check_climbing();
+        self.check_climbing(caller);
     }
 
-    fn check_climbing(&self) {
-        // If spectator: return false
-
-        // TODO
-        // let mut pos = self.entity.block_pos.load();
-
-        // let world = self.entity.world.read().await;
-
-        // let (block, state) = world.get_block_and_state(&pos);
-
-        // let name = block.properties(state.id).map(|props| props.name());
-
-        // if let Some(name) = name {
-        //     if name == "LadderLikeProperties"
-        //         || name == "ScaffoldingLikeProperties"
-        //         || name == "CaveVinesLikeProperties"
-        //         || name == "CaveVinesPlantLikeProperties"
-        //     {
-        //         self.climbing.store(true, Relaxed);
-
-        //         self.climbing_pos.store(Some(pos));
-
-        //         return;
-        //     }
-
-        //     if name == "OakTrapdoorLikeProperties" {
-        //         let trapdoor = OakTrapdoorLikeProperties::from_state_id(state.id);
-
-        //         pos.0.y -= 1;
-
-        //         let (down_block, down_state) = world.get_block_and_state(&pos);
-
-        //         let is_ladder = down_block
-        //             .properties(down_state.id)
-        //             .is_some_and(|down_props| down_props.name() == "LadderLikeProperties");
-
-        //         if is_ladder {
-        //             let ladder = LadderLikeProperties::from_state_id(down_state.id);
-
-        //             if trapdoor.r#facing == ladder.r#facing {
-        //                 self.climbing.store(true, Relaxed);
-
-        //                 self.climbing_pos.store(Some(pos));
-
-        //                 return;
-        //             }
-        //         }
-        //     }
-        // }
-
-        self.climbing.store(false, Relaxed);
-
-        if self.entity.on_ground.load(SeqCst) {
+    // climbing: #climbable or an open trapdoor over a matching ladder (LivingEntity.onClimbable)
+    fn check_climbing(&self, caller: &dyn EntityBase) {
+        let pos = self.entity.block_pos.load();
+        let climbing = if caller.is_spectator() {
+            false
+        } else if let Some(climbing) = caller
+            .get_mob()
+            .and_then(crate::entity::mob::Mob::climbable_override)
+        {
+            climbing
+        } else {
+            let world = self.entity.world.load();
+            let (block, state) = world.get_block_and_state_id(&pos);
+            if self.entity.fall_flying.load(Relaxed)
+                && block.has_tag(&tag::Block::MINECRAFT_CAN_GLIDE_THROUGH)
+            {
+                false
+            } else if block.has_tag(&tag::Block::MINECRAFT_CLIMBABLE) {
+                true
+            } else if block.has_tag(&tag::Block::MINECRAFT_TRAPDOORS) {
+                let trapdoor = <pumpkin_data::block_properties::OakTrapdoorLikeProperties as pumpkin_data::block_properties::BlockProperties>::from_state_id(state, block);
+                let below = pos.down();
+                let (below_block, below_state) = world.get_block_and_state_id(&below);
+                trapdoor.open
+                    && below_block == &pumpkin_data::Block::LADDER
+                    && <pumpkin_data::block_properties::LadderLikeProperties as pumpkin_data::block_properties::BlockProperties>::from_state_id(below_state, below_block)
+                    .facing
+                        == trapdoor.facing
+            } else {
+                false
+            }
+        };
+        self.climbing.store(climbing, Relaxed);
+        if climbing {
+            self.climbing_pos.store(Some(pos));
+        } else if self.entity.on_ground.load(SeqCst) {
             self.climbing_pos.store(None);
         }
     }

@@ -20,8 +20,9 @@ impl SpiderAttackGoal {
 }
 
 impl Goal for SpiderAttackGoal {
+    // spider attack: not while carrying a rider (SpiderAttackGoal.canUse)
     fn can_start(&mut self, mob: &dyn Mob) -> bool {
-        self.melee_attack_goal.can_start(mob)
+        self.melee_attack_goal.can_start(mob) && !mob.get_entity().has_passengers()
     }
 
     fn should_continue(&mut self, mob: &dyn Mob) -> bool {

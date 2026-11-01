@@ -1615,6 +1615,11 @@ pub trait Mob: EntityBase + Send + Sync {
 
     fn on_attack(&self, _target: &dyn EntityBase) {}
 
+    /// Vanilla `onClimbable` override, e.g. a spider on a wall; `None` checks the block.
+    fn climbable_override(&self) -> Option<bool> {
+        None
+    }
+
     /// End of vanilla `causeFallDamage` (creeper fuse).
     fn on_cause_fall_damage(&self, _fall_distance: f32) {}
 
