@@ -57,7 +57,8 @@ Unser Fortschritt steht auf **https://claude.ai/artifact/KAHK4pXmbbEhd9nXiBuobN*
   - `batch`: Zahl
   - `note`: kurzer Text
   - `updated`: ISO-Zeit
-- **Wann:** Beim Start einer Batch die Einträge auf `wip` setzen, nach dem Commit auf `done`. Vorher lesen und `if_version` mitgeben.
+- **Wann:** Beim Start einer Batch die Einträge auf `wip` setzen. Vorher lesen und `if_version` mitgeben.
+- **Erst fertig, wenn es wirklich fertig ist:** `done` (im Tracker, in der Stand-Tabelle und im Bericht an den Besitzer) nur, wenn **alle Lücken geschlossen sind und sich das Ding wie in Vanilla verhält**. Bekannte Lücken werden in derselben Batch geschlossen, nicht als „später“ notiert. Solange eine Lücke offen ist, bleibt der Eintrag auf `wip`.
 - **Offizielle Daten erneuern:** Die Einträge kommen aus https://github.com/Pumpkin-MC/Pumpkin-Website/blob/master/src/pages/tracker/data.json. Bei Bedarf neu einbetten und die Seite unter derselben URL neu veröffentlichen.
 
 ## Stand
@@ -67,7 +68,7 @@ Unser Fortschritt steht auf **https://claude.ai/artifact/KAHK4pXmbbEhd9nXiBuobN*
 | 1 | Vex (plus die Vex-Beschwörung beim Evoker) | fertig auf `feat/vex-ai` und `playable`; Test im Spiel steht aus |
 | Commands | `/locate` (alle POI-Typen, POIs aus geladenen Chunks), `/perf` | fertig auf `batch-commands` |
 | 2 | Guardian, Elder Guardian, Illusioner, Vindicator, Ravager, Endermite | fertig auf `batch-2`; Test im Spiel steht aus |
-| 3 | Zombie, Husk, Zombie Villager, Zombified Piglin, Enderman, Wolf | fertig auf `batch-3`; Test im Spiel steht aus |
+| 3 | Zombie, Husk, Zombie Villager, Zombified Piglin, Enderman, Wolf | in Arbeit auf `batch-3`: Lücken werden geschlossen |
 
 Aus dem Tracker entfernt, weil Vanilla sie auf einem dedizierten Server nicht hat: `/publish` und `/unpublish` (nur Einzelspieler) sowie `/jfr` (Java Flight Recorder, braucht eine JVM).
 
@@ -78,7 +79,7 @@ Offene Lücken aus Batch 2, als Aufgaben für später:
 - Guardian: Wasser-Malus 0 für das Pathfinding ist nicht gesetzt. Für die Blickglättung beim Schwimmen gibt es eine Annäherung, weil `LookControlTrait` sein Ziel nicht herausgibt.
 - Der Evoker hat noch ein eigenes Zaubersystem. Er sollte auf `mob/spellcaster.rs` umgestellt werden, das der Illusioner schon nutzt.
 
-Offene Lücken aus Batch 3:
+Offene Lücken aus Batch 3 (werden gerade geschlossen, vorher nicht `done`):
 - Zombie: Chicken Jockey fehlt (in `finalize_spawn` gibt es kein `Arc` zum Aufsitzen), dazu `SpearUseGoal` und `MoveThroughVillageGoal`. Baby-Hitbox nicht angepasst. Bei der Verstärkung ist `isUnobstructed` nur angenähert.
 - Zombified Piglin: Verstärkung durch Artgenossen und Lava-Malus fehlen.
 - Enderman: Wasser-Malus fehlt. Der getragene Block wird als Int-ID gespeichert, nicht im Vanilla-Format (BlockState-Codec).
