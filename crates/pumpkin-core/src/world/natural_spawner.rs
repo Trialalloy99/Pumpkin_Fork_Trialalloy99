@@ -551,7 +551,8 @@ pub fn get_random_pos_within(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .get(ChunkHeightmapType::WorldSurface, x, z, chunk.section.min_y)
-        + 1;
+        // spawner: topEmptyY = getHeight(WORLD_SURFACE) + 1, getHeight is the first free block
+        + 2;
     let y = rng.next_inbetween_i32(min_y, temp_y);
     BlockPos::new(x, y, z)
 }
