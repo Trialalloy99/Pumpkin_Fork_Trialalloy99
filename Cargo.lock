@@ -3090,6 +3090,7 @@ dependencies = [
  "uuid",
  "webrtc",
  "xxhash-rust",
+ "zip",
 ]
 
 [[package]]

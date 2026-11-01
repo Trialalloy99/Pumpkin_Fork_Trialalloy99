@@ -78,6 +78,7 @@ base64.workspace = true
 
 # logging
 tracing.workspace = true
+zip.workspace = true
 tracing-subscriber.workspace = true
 
 time = { workspace = true, features = ["parsing", "macros", "local-offset"] }

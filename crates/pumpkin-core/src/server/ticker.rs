@@ -126,6 +126,9 @@ impl Ticker {
             }
 
             server.update_tick_times(tick_duration_nanos);
+            server
+                .metrics_recorder
+                .end_tick(server, tick_duration_nanos);
 
             if server.stop_token.is_cancelled() {
                 break 'ticker;
