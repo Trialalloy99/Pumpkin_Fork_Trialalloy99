@@ -144,4 +144,5 @@ crate::impl_abstract_fish!(
         }
     }
 );
-crate::impl_schooling_fish!(SalmonEntity);
+// salmon: max school size 5 (Salmon.getMaxSchoolSize)
+crate::impl_schooling_fish!(SalmonEntity, max_school_size: 5);

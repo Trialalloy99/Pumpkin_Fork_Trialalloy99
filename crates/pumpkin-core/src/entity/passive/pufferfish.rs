@@ -34,6 +34,7 @@ const PUFF_RANGE: f64 = 2.0;
 const STING_RANGE: f64 = 0.3;
 const POISON_TICKS_PER_STATE: i32 = 60;
 
+// pufferfish: puff stages, inflation/deflation and poison sting (Pufferfish)
 pub struct PufferfishEntity {
     pub mob_entity: MobEntity,
     fish_data: FishData,

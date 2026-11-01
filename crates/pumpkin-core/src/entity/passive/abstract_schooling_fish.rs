@@ -54,10 +54,14 @@ pub trait AbstractSchoolingFish: AbstractFish {
         self.schooling_data().school_size.load(Relaxed) > 1
     }
 
+    // abstract_schooling_fish: max school cluster size (AbstractSchoolingFish.getMaxSchoolSize)
+    fn max_school_size(&self) -> i32 {
+        self.get_entity().entity_type.limit_per_chunk
+    }
+
     fn can_be_followed(&self) -> bool {
         self.has_followers()
-            && self.schooling_data().school_size.load(Relaxed)
-                < self.get_entity().entity_type.limit_per_chunk
+            && self.schooling_data().school_size.load(Relaxed) < self.max_school_size()
     }
 
     fn start_following(&self, leader: &Arc<dyn EntityBase>) {
@@ -89,9 +93,8 @@ pub trait AbstractSchoolingFish: AbstractFish {
     }
 
     fn add_followers(&self, followers: Vec<Arc<dyn EntityBase>>) {
-        let limit = (self.get_entity().entity_type.limit_per_chunk
-            - self.schooling_data().school_size.load(Relaxed))
-        .max(0) as usize;
+        let limit = (self.max_school_size() - self.schooling_data().school_size.load(Relaxed))
+            .max(0) as usize;
         let Some(leader) = self.schooling_data().self_reference.upgrade() else {
             return;
         };
@@ -180,6 +183,20 @@ macro_rules! impl_schooling_fish {
                 &self,
             ) -> &$crate::entity::passive::abstract_schooling_fish::SchoolingFishData {
                 &self.schooling_data
+            }
+        }
+    };
+    ($fish:ty, max_school_size: $max_size:expr) => {
+        impl $crate::entity::passive::abstract_schooling_fish::AbstractSchoolingFish for $fish {
+            fn schooling_data(
+                &self,
+            ) -> &$crate::entity::passive::abstract_schooling_fish::SchoolingFishData {
+                &self.schooling_data
+            }
+
+            // abstract_schooling_fish: override max school cluster size (AbstractSchoolingFish.getMaxSchoolSize)
+            fn max_school_size(&self) -> i32 {
+                $max_size
             }
         }
     };
