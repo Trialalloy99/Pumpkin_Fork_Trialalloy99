@@ -436,6 +436,11 @@ impl CustomSound for AllayEntity {
 }
 
 impl Mob for AllayEntity {
+    // allay: brain pickup only
+    fn uses_mob_looting(&self) -> bool {
+        false
+    }
+
     fn mob_is_flapping(&self) -> bool {
         !self.get_entity().on_ground.load(Ordering::Relaxed)
     }

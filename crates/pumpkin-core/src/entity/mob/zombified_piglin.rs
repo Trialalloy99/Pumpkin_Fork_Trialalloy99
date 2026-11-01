@@ -177,6 +177,11 @@ impl NeutralMob for ZombifiedPiglinEntity {
 }
 
 impl Mob for ZombifiedPiglinEntity {
+    // zombie family: no glow ink sacs (Zombie.wantsToPickUp)
+    fn mob_wants_to_pick_up(&self, stack: &pumpkin_data::item_stack::ItemStack) -> bool {
+        stack.item != &pumpkin_data::item::Item::GLOW_INK_SAC
+    }
+
     fn mob_play_step_sound(&self, _pos: &BlockPos, _state: &BlockState) {
         self.play_entity_sound(Sound::EntityZombieStep, 0.15, 1.0);
     }

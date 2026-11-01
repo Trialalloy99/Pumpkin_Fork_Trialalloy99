@@ -64,6 +64,7 @@ pub mod giant;
 pub mod guardian;
 pub mod hoglin;
 pub mod illusioner;
+pub mod looting;
 pub mod magma_cube;
 pub mod metadata;
 pub mod neutral;
@@ -1483,6 +1484,26 @@ pub trait Mob: EntityBase + Send + Sync {
         false
     }
 
+    /// Generic `Mob.aiStep` looting; mobs with their own pickup (piglin, allay) opt out.
+    fn uses_mob_looting(&self) -> bool {
+        true
+    }
+
+    /// Vanilla `Mob.wantsToPickUp` for the generic looting (default `canHoldItem`).
+    fn mob_wants_to_pick_up(&self, stack: &ItemStack) -> bool {
+        self.can_hold_item(stack)
+    }
+
+    /// Vanilla `Mob.canHoldItem`.
+    fn can_hold_item(&self, _stack: &ItemStack) -> bool {
+        true
+    }
+
+    /// Vanilla `Mob.getPreferredWeaponType`.
+    fn preferred_weapon_type(&self) -> Option<&'static pumpkin_data::tag::Tag> {
+        None
+    }
+
     fn can_pick_up_loot(&self, _brain: Option<&crate::entity::ai::brain::BrainState>) -> bool {
         self.get_mob_entity().can_pick_up_loot()
     }
@@ -2228,6 +2249,7 @@ impl<T: Mob + Send + 'static> EntityBase for T {
         mob_entity.process_navigation_updates();
         mob_entity.living_entity.entity.tick_leash();
         sun_burn::tick(self);
+        looting::tick_looting(self);
 
         if mob_entity.breeding_cooldown.load(Relaxed) > 0 {
             mob_entity.breeding_cooldown.fetch_sub(1, Relaxed);

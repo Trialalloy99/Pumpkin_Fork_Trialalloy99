@@ -999,6 +999,11 @@ impl PiglinEntity {
 }
 
 impl Mob for PiglinEntity {
+    // piglin: own pickup (Piglin.pickUpItem), not the generic Mob looting
+    fn uses_mob_looting(&self) -> bool {
+        false
+    }
+
     fn mob_play_step_sound(&self, _pos: &BlockPos, _state: &BlockState) {
         self.play_entity_sound(Sound::EntityPiglinStep, 0.15, 1.0);
     }

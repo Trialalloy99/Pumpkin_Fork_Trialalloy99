@@ -263,6 +263,11 @@ impl ZombieVillagerEntity {
 }
 
 impl Mob for ZombieVillagerEntity {
+    // zombie family: no glow ink sacs (Zombie.wantsToPickUp)
+    fn mob_wants_to_pick_up(&self, stack: &pumpkin_data::item_stack::ItemStack) -> bool {
+        stack.item != &pumpkin_data::item::Item::GLOW_INK_SAC
+    }
+
     // zombie family: spawn rolls, hit effects, reinforcements, baby xp (Zombie)
     fn finalize_spawn(
         &self,
