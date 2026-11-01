@@ -4,26 +4,25 @@ use std::sync::{
 };
 
 use pumpkin_data::BlockState;
+use pumpkin_data::data_component_impl::EquipmentSlot;
+use pumpkin_data::game_event::GameEvent;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::pig_sound_variant::PigSoundVariant;
 use pumpkin_data::pig_variant::PigVariant;
-use pumpkin_data::data_component_impl::EquipmentSlot;
-use pumpkin_data::game_event::GameEvent;
 use pumpkin_data::sound::{Sound, SoundCategory};
-use pumpkin_util::Difficulty;
-use rand::RngExt;
 use pumpkin_data::{entity::EntityType, item::Item};
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_protocol::codec::var_int::VarInt;
+use pumpkin_util::Difficulty;
 use pumpkin_util::math::position::BlockPos;
+use rand::RngExt;
 
 use crate::entity::EntityBase;
+use crate::entity::custom_sound::CustomSound;
+use crate::entity::item_steerable::{ItemBasedSteering, ItemSteerable};
 use crate::entity::mob::conversion;
 use crate::entity::mob::equipment::RegionalDifficulty;
 use crate::entity::mob::spawn::SpawnGroupData;
-use crate::world::World;
-use crate::entity::custom_sound::CustomSound;
-use crate::entity::item_steerable::{ItemBasedSteering, ItemSteerable};
 use crate::entity::{
     Entity,
     ageable::AgeableMob,
@@ -36,6 +35,7 @@ use crate::entity::{
     passive::animal::Animal,
     player::Player,
 };
+use crate::world::World;
 
 const PIG_FOOD: &[&Item] = &[&Item::CARROT, &Item::POTATO, &Item::BEETROOT];
 const PIG_STICK: &[&Item] = &[&Item::CARROT_ON_A_STICK];

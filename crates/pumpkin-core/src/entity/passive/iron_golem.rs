@@ -14,21 +14,13 @@ use pumpkin_util::GameMode;
 use pumpkin_util::math::position::BlockPos;
 
 use crate::entity::ai::behavior::hunting::{self, Hunt};
-use crate::entity::ai::target_match::TargetMatch;
-use crate::entity::ai::goal::{Controls, Goal, to_goal_ticks};
 use crate::entity::ai::goal::track_target::TrackTargetGoal;
+use crate::entity::ai::goal::{Controls, Goal, to_goal_ticks};
 use crate::entity::ai::pathfinder::NavigatorGoal;
+use crate::entity::ai::target_match::TargetMatch;
 use crate::entity::ai::target_predicate::TargetPredicate;
 use crate::entity::ai::util::{default_random_pos, land_random_pos};
 use crate::entity::passive::villager::VillagerEntity;
-use crate::plugin::api::events::entity::entity_target::TargetReason;
-use crate::world::World;
-use crate::world::village::sections_to_village_in;
-use pumpkin_data::attributes::Attributes;
-use pumpkin_data::damage::DamageType;
-use pumpkin_util::math::boundingbox::BoundingBox;
-use pumpkin_util::math::vector3::Vector3;
-use rand::RngExt;
 use crate::entity::{
     Entity, EntityBase,
     ai::behavior::neutral::apply_targets,
@@ -43,6 +35,14 @@ use crate::entity::{
     },
     player::Player,
 };
+use crate::plugin::api::events::entity::entity_target::TargetReason;
+use crate::world::World;
+use crate::world::village::sections_to_village_in;
+use pumpkin_data::attributes::Attributes;
+use pumpkin_data::damage::DamageType;
+use pumpkin_util::math::boundingbox::BoundingBox;
+use pumpkin_util::math::vector3::Vector3;
+use rand::RngExt;
 
 /// Represents an Iron Golem, a powerful neutral mob that protects villagers and players.
 ///
@@ -440,7 +440,11 @@ impl VillageStrollGoal {
         }
         let mut random = mob.get_random();
         let section = village_sections[random.random_range(0..village_sections.len())];
-        let center = BlockPos::new(section[0] * 16 + 8, section[1] * 16 + 8, section[2] * 16 + 8);
+        let center = BlockPos::new(
+            section[0] * 16 + 8,
+            section[1] * 16 + 8,
+            section[2] * 16 + 8,
+        );
         let pois = world.occupied_pois_in_range(center, 8);
         if pois.is_empty() {
             return None;

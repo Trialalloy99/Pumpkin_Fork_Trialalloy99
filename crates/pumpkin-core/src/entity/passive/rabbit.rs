@@ -28,13 +28,17 @@ use rand::RngExt;
 
 use crate::entity::ai::behavior::hunting::{self, Hunt};
 use crate::entity::ai::goal::revenge::RevengeGoal;
-use crate::world::World;
 use crate::entity::{
     Entity, EntityBase,
     ageable::{AgeableData, AgeableMob},
     ai::behavior::fleeing::{self, Flee},
+    ai::control::{
+        Control, MoveControlTrait,
+        move_control::{MoveControl, Operation},
+    },
     ai::goal::{
-        Controls, Goal, ParentHandle, breed::BreedGoal,
+        Controls, Goal, ParentHandle,
+        breed::BreedGoal,
         climb_on_top_of_powder_snow::ClimbOnTopOfPowderSnowGoal,
         escape_danger::EscapeDangerGoal,
         look_at_entity::LookAtEntityGoal,
@@ -44,17 +48,14 @@ use crate::entity::{
         tempt::TemptGoal,
         wander_around::WanderAroundGoal,
     },
-    ai::control::{
-        Control, MoveControlTrait,
-        move_control::{MoveControl, Operation},
-    },
+    ai::target_match::TargetMatch,
     attributes::{Modifier, ModifierOperation},
     mob::spawn::SpawnGroupData,
-    ai::target_match::TargetMatch,
     mob::{Mob, MobEntity},
     passive::animal::Animal,
     player::Player,
 };
+use crate::world::World;
 
 // rabbit: killer bunny attack bonus (Rabbit.EVIL_ATTACK_POWER_MODIFIER)
 const EVIL_ATTACK_POWER_MODIFIER: &str = "minecraft:evil";
@@ -183,10 +184,7 @@ impl RabbitEntity {
             goal_selector.add_goal(2, BreedGoal::new(0.8));
             goal_selector.add_goal(3, Box::new(TemptGoal::new(1.0, TEMPT_ITEMS, false)));
             fleeing::apply(goal_selector, RABBIT_FLEES);
-            goal_selector.add_goal(
-                5,
-                Box::new(RaidGardenGoal::new(Arc::downgrade(&mob_arc))),
-            );
+            goal_selector.add_goal(5, Box::new(RaidGardenGoal::new(Arc::downgrade(&mob_arc))));
             goal_selector.add_goal(6, Box::new(WanderAroundGoal::water_avoiding(0.6)));
             goal_selector.add_goal(
                 11,
@@ -207,15 +205,25 @@ impl RabbitEntity {
 
     // rabbit: nav + move speed (Rabbit.setSpeedModifier)
     pub fn set_speed_modifier(&self, speed: f64) {
-        self.mob_entity.navigator.lock().unwrap_or_else(std::sync::PoisonError::into_inner).set_speed(speed);
+        self.mob_entity
+            .navigator
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .set_speed(speed);
         let wanted = self.move_wanted.load();
-        self.mob_entity.move_control.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.mob_entity
+            .move_control
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
             .set_wanted_position(wanted.x, wanted.y, wanted.z, speed);
     }
 
     // rabbit: jump flag + jump sound (Rabbit.setJumping)
     fn set_jumping(&self, jump: bool) {
-        self.mob_entity.living_entity.jumping.store(jump, Ordering::SeqCst);
+        self.mob_entity
+            .living_entity
+            .jumping
+            .store(jump, Ordering::SeqCst);
         if jump {
             let mut random = self.get_random();
             let pitch = (random.random::<f32>() - random.random::<f32>()).mul_add(0.2, 1.0) * 0.8;
@@ -358,24 +366,26 @@ impl Mob for RabbitEntity {
         world: &Arc<World>,
         group_data: Option<SpawnGroupData>,
     ) -> Option<SpawnGroupData> {
-        let (variant, group_size) = match group_data {
-            Some(SpawnGroupData::Rabbit {
-                variant,
-                group_size,
-            }) => (RabbitVariant::from_id(variant), group_size),
-            _ => {
-                let biome = world.get_biome(&self.get_entity().block_pos.load());
-                (RabbitVariant::random_for_biome(biome), 0)
-            }
+        let (variant, group_size) = if let Some(SpawnGroupData::Rabbit {
+            variant,
+            group_size,
+        }) = group_data
+        {
+            (RabbitVariant::from_id(variant), group_size)
+        } else {
+            let biome = world.get_biome(&self.get_entity().block_pos.load());
+            (RabbitVariant::random_for_biome(biome), 0)
         };
         self.set_variant(variant);
-        let group_size = match self.finalize_spawn_super(Some(SpawnGroupData::Ageable {
-            group_size,
-            should_spawn_baby: true,
-            baby_spawn_chance: 1.0,
-        })) {
-            Some(SpawnGroupData::Ageable { group_size, .. }) => group_size,
-            _ => group_size + 1,
+        let group_size = if let Some(SpawnGroupData::Ageable { group_size, .. }) = self
+            .finalize_spawn_super(Some(SpawnGroupData::Ageable {
+                group_size,
+                should_spawn_baby: true,
+                baby_spawn_chance: 1.0,
+            })) {
+            group_size
+        } else {
+            group_size + 1
         };
         Some(SpawnGroupData::Rabbit {
             variant: variant.id(),
@@ -394,9 +404,17 @@ impl Mob for RabbitEntity {
     fn jump_power_multiplier(&self) -> f64 {
         let entity = self.get_entity();
         let y = entity.pos.load().y;
-        let mut power: f32 = if self.move_speed.load() <= 0.6 { 0.2 } else { 0.3 };
+        let mut power: f32 = if self.move_speed.load() <= 0.6 {
+            0.2
+        } else {
+            0.3
+        };
         {
-            let navigator = self.mob_entity.navigator.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let navigator = self
+                .mob_entity
+                .navigator
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(path) = navigator.get_path()
                 && !path.is_done()
                 && path
@@ -470,12 +488,11 @@ impl Mob for RabbitEntity {
                 if entity.pos.load().squared_distance_to_vec(&target_pos) < 16.0 {
                     self.face_point(target_pos.x, target_pos.z);
                     let speed = self.move_speed.load();
-                    self.mob_entity.move_control.lock().unwrap_or_else(std::sync::PoisonError::into_inner).set_wanted_position(
-                        target_pos.x,
-                        target_pos.y,
-                        target_pos.z,
-                        speed,
-                    );
+                    self.mob_entity
+                        .move_control
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .set_wanted_position(target_pos.x, target_pos.y, target_pos.z, speed);
                     self.start_jumping();
                     self.was_on_ground.store(true, Ordering::Relaxed);
                 }
@@ -487,11 +504,20 @@ impl Mob for RabbitEntity {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .wants_jump();
             if !wants_jump {
-                let has_wanted = self.mob_entity.move_control.lock().unwrap_or_else(std::sync::PoisonError::into_inner).has_wanted();
+                let has_wanted = self
+                    .mob_entity
+                    .move_control
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .has_wanted();
                 if has_wanted && self.jump_delay_ticks.load(Ordering::Relaxed) == 0 {
                     let mut pos = self.move_wanted.load();
                     {
-                        let navigator = self.mob_entity.navigator.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+                        let navigator = self
+                            .mob_entity
+                            .navigator
+                            .lock()
+                            .unwrap_or_else(std::sync::PoisonError::into_inner);
                         if let Some(path) = navigator.get_path()
                             && !path.is_done()
                             && let Some(next) = path.get_next_entity_pos(entity.width())
@@ -599,7 +625,11 @@ impl RabbitMoveControl {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .set_speed(speed);
-        let (x, y, z) = (self.inner.wanted_x, self.inner.wanted_y, self.inner.wanted_z);
+        let (x, y, z) = (
+            self.inner.wanted_x,
+            self.inner.wanted_y,
+            self.inner.wanted_z,
+        );
         self.set_wanted_position(x, y, z, speed);
     }
 }
@@ -696,7 +726,15 @@ impl Goal for RaidGardenGoal {
             return false;
         };
         if self.inner.cooldown <= 0 {
-            if !mob.get_entity().world.load().level_info.load().game_rules.mob_griefing {
+            if !mob
+                .get_entity()
+                .world
+                .load()
+                .level_info
+                .load()
+                .game_rules
+                .mob_griefing
+            {
                 return false;
             }
             rabbit.can_raid.store(false, Ordering::Relaxed);
@@ -758,7 +796,11 @@ impl Goal for RaidGardenGoal {
         {
             let mut props = WheatLikeProperties::from_state_id(state);
             if props.age == 0 {
-                world.set_block_state(&crops_pos, Block::AIR.default_state.id, BlockFlags::NOTIFY_LISTENERS);
+                world.set_block_state(
+                    &crops_pos,
+                    Block::AIR.default_state.id,
+                    BlockFlags::NOTIFY_LISTENERS,
+                );
                 world.break_block(&crops_pos, None, BlockFlags::empty());
             } else {
                 props.age -= 1;

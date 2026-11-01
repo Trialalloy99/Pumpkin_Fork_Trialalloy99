@@ -363,6 +363,7 @@ impl Mob for MooshroomEntity {
     }
 
     // mooshroom: stew, milk, shear, feed flowers (MushroomCow/AbstractCow.mobInteract)
+    #[expect(clippy::too_many_lines, reason = "mirrors MushroomCow.mobInteract")]
     fn mob_interact(&self, player: &Arc<Player>, item_stack: &mut ItemStack) -> bool {
         let item = item_stack.get_item();
         let entity = self.get_entity();

@@ -18,7 +18,6 @@ use rand::RngExt;
 
 use crate::entity::ai::pathfinder::node::PathType;
 use crate::entity::custom_sound::CustomSound;
-use crate::world::loot::{LootContextParameters, generate_loot_from_handle};
 use crate::entity::{
     Entity, EntityBase,
     ageable::AgeableMob,
@@ -33,6 +32,7 @@ use crate::entity::{
 };
 use crate::plugin::api::events::entity::entity_drop_item::EntityDropItemEvent;
 use crate::world::World;
+use crate::world::loot::{LootContextParameters, generate_loot_from_handle};
 
 const EGG_LAY_TIME: std::ops::Range<i32> = 6000..12000;
 const CHICKEN_JOCKEY_EXPERIENCE_REWARD: u32 = 10;

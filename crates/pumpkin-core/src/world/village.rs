@@ -115,11 +115,7 @@ impl World {
     // village: occupied village poi sections near `pos`, one scan for many lookups (PoiManager.sectionsToVillage)
     #[must_use]
     pub fn occupied_village_sections(&self, pos: &BlockPos, reach_sections: i32) -> Vec<[i32; 3]> {
-        let center = BlockPos::new(
-            (pos.0.x >> 4) * 16 + 8,
-            pos.0.y,
-            (pos.0.z >> 4) * 16 + 8,
-        );
+        let center = BlockPos::new((pos.0.x >> 4) * 16 + 8, pos.0.y, (pos.0.z >> 4) * 16 + 8);
         let radius = (reach_sections + MAX_VILLAGE_DISTANCE) * 16 + 8;
         let mut candidates: Vec<(BlockPos, &'static str)> = Vec::new();
         self.portal_poi

@@ -1,13 +1,13 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 
+use pumpkin_data::Block;
+use pumpkin_data::damage::DamageType;
 use pumpkin_data::entity::EntityType;
+use pumpkin_data::game_event::GameEvent;
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::sound::{Sound, SoundCategory};
-use pumpkin_data::Block;
-use pumpkin_data::damage::DamageType;
-use pumpkin_data::game_event::GameEvent;
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
@@ -66,7 +66,8 @@ impl SnowGolemEntity {
             goal_selector.add_goal(
                 2,
                 Box::new(WanderAroundGoal::water_avoiding_with_probability(
-                    1.0, 1.000_000_1E-5,
+                    1.0,
+                    1.000_000_1E-5,
                 )),
             );
             goal_selector.add_goal(
@@ -240,12 +241,13 @@ impl Mob for SnowGolemEntity {
         let entity = self.get_entity();
         let world = entity.world.load();
         if let Some(server) = world.server.upgrade() {
-            let mut event = crate::plugin::api::events::player::player_shear_entity::PlayerShearEntityEvent {
-                player: player.clone(),
-                entity_id: entity.entity_id,
-                hand: 0,
-                cancelled: false,
-            };
+            let mut event =
+                crate::plugin::api::events::player::player_shear_entity::PlayerShearEntityEvent {
+                    player: player.clone(),
+                    entity_id: entity.entity_id,
+                    hand: 0,
+                    cancelled: false,
+                };
             server.plugin_manager.fire_blocking(&server, &mut event);
             if event.cancelled {
                 return false;
