@@ -51,8 +51,13 @@ impl WaterAvoidingRandomFlyingGoal {
     }
 }
 
-impl Goal for WaterAvoidingRandomFlyingGoal {
-    fn can_start(&mut self, mob: &dyn Mob) -> bool {
+impl WaterAvoidingRandomFlyingGoal {
+    /// `can_start` where a subclass picks the target, given the default one (Parrot.ParrotWanderGoal).
+    pub fn can_start_with(
+        &mut self,
+        mob: &dyn Mob,
+        pick: impl FnOnce(&dyn Mob, Option<Vector3<f64>>) -> Option<Vector3<f64>>,
+    ) -> bool {
         if mob.get_entity().has_passengers() {
             return false;
         }
@@ -61,8 +66,14 @@ impl Goal for WaterAvoidingRandomFlyingGoal {
             return false;
         }
 
-        self.target = Self::get_position(mob);
+        self.target = pick(mob, Self::get_position(mob));
         self.target.is_some()
+    }
+}
+
+impl Goal for WaterAvoidingRandomFlyingGoal {
+    fn can_start(&mut self, mob: &dyn Mob) -> bool {
+        self.can_start_with(mob, |_, default| default)
     }
 
     fn should_continue(&mut self, mob: &dyn Mob) -> bool {

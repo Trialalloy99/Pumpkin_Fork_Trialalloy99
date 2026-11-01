@@ -201,6 +201,7 @@ impl JukeboxBlockEntity {
         self.ticks_since_song_started.store(0, Ordering::Relaxed);
         self.song_length_ticks
             .store(length_in_ticks, Ordering::Relaxed);
+        self.notify_nearby_entities(true);
         self.mark_dirty();
     }
 
@@ -208,6 +209,9 @@ impl JukeboxBlockEntity {
     pub fn stop_playing(&self) {
         self.ticks_since_song_started.store(0, Ordering::Relaxed);
         let playing = self.song_length_ticks.swap(0, Ordering::Relaxed) != 0;
+        if playing {
+            self.notify_nearby_entities(false);
+        }
         if playing && let Some(world) = self.world.get().and_then(Weak::upgrade) {
             world.emit_game_event(
                 pumpkin_data::game_event::GameEvent::JukeboxStopPlay.name(),
@@ -215,6 +219,31 @@ impl JukeboxBlockEntity {
             );
         }
         self.mark_dirty();
+    }
+
+    // jukebox: JukeboxSongPlayer.notifyNearbyEntities, living entities within 3 blocks
+    fn notify_nearby_entities(&self, playing: bool) {
+        let Some(world) = self.world.get().and_then(Weak::upgrade) else {
+            return;
+        };
+        let center = self.position.to_centered_f64();
+        let area = pumpkin_util::math::boundingbox::BoundingBox::new(
+            pumpkin_util::math::vector3::Vector3::new(
+                center.x - 3.5,
+                center.y - 3.5,
+                center.z - 3.5,
+            ),
+            pumpkin_util::math::vector3::Vector3::new(
+                center.x + 3.5,
+                center.y + 3.5,
+                center.z + 3.5,
+            ),
+        );
+        for entity in world.get_entities_at_box(&area) {
+            if let Some(mob) = entity.get_mob() {
+                mob.set_record_playing_nearby(self.position, playing);
+            }
+        }
     }
 
     /// Check if a song is currently playing

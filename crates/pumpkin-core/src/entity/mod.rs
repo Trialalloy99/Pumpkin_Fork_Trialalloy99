@@ -95,6 +95,7 @@ pub mod marker;
 pub mod mob;
 pub mod passive;
 pub mod player;
+mod player_shoulder;
 pub mod projectile;
 pub mod projectile_deflection;
 pub mod spawn_util;

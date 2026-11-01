@@ -431,6 +431,10 @@ pub struct Player {
     pub respawn_point: std::sync::Mutex<Option<RespawnPoint>>,
     /// The player's sleep status
     pub sleeping_since: AtomicCell<Option<u8>>,
+    /// Saved entities riding the left and right shoulder (parrots).
+    pub shoulder_entity_left: std::sync::Mutex<NbtCompound>,
+    pub shoulder_entity_right: std::sync::Mutex<NbtCompound>,
+    pub time_entity_sat_on_shoulder: std::sync::atomic::AtomicI64,
     /// Head position of the bed the player is currently sleeping in.
     pub sleeping_bed_pos: AtomicCell<Option<BlockPos>>,
     /// Whether the player is ignored when calculating the percentage of sleeping players needed to skip the night.
@@ -932,6 +936,9 @@ impl Player {
             // TODO: Send the CPlayerSpawnPosition packet when the client connects with proper values
             respawn_point: std::sync::Mutex::new(None),
             sleeping_since: AtomicCell::new(None),
+            shoulder_entity_left: std::sync::Mutex::new(NbtCompound::new()),
+            shoulder_entity_right: std::sync::Mutex::new(NbtCompound::new()),
+            time_entity_sat_on_shoulder: std::sync::atomic::AtomicI64::new(0),
             sleeping_bed_pos: AtomicCell::new(None),
             sleeping_ignored: AtomicBool::new(false),
             // We want this to be an impossible watched section so that `chunker::update_position`
@@ -3057,6 +3064,7 @@ impl Player {
     #[expect(clippy::too_many_lines)]
     pub fn tick<'a>(&'a self, server: &'a Server) {
         self.process_inbound_packets();
+        self.handle_shoulder_entities();
 
         if self.is_spectator() {
             self.living_entity
@@ -4879,6 +4887,8 @@ impl Player {
         {
             return false;
         }
+        // shoulder: Player.hurtServer drops parrots first
+        self.remove_entities_on_shoulder();
         // TODO: Vanilla `Player.hurtServer` difficulty scaling when `scalesWithDifficulty`
         self.living_entity
             .damage_with_context(caller, amount, damage_type, position, source, cause)
@@ -7506,6 +7516,7 @@ impl EntityBase for Player {
     }
 
     fn write_custom_nbt(&self, nbt: &mut NbtCompound) {
+        self.write_shoulder_nbt(nbt);
         nbt.put_int("DataVersion", DATA_VERSION);
         self.inventory.write_nbt(nbt);
         self.ender_chest_inventory.write_nbt(nbt);
@@ -7619,6 +7630,7 @@ impl EntityBase for Player {
 
     #[expect(clippy::too_many_lines)]
     fn read_custom_nbt(&self, nbt: &NbtCompound) {
+        self.read_shoulder_nbt(nbt);
         self.inventory.read_nbt_non_mut(nbt);
         self.ender_chest_inventory.read_nbt_non_mut(nbt);
         self.living_entity
