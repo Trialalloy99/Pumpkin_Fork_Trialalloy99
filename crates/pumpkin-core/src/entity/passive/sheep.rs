@@ -70,7 +70,7 @@ const COLD_SPAWN_CONFIGURATION: SheepColorSpawnConfiguration = [
 ];
 const COMMON_COLOR_WEIGHT: u32 = 499;
 
-fn find_color_mix_in_recipes(
+pub(crate) fn find_color_mix_in_recipes(
     world: &World,
     color1: DyeColor,
     color2: DyeColor,

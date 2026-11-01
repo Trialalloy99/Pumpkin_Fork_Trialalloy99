@@ -1298,6 +1298,11 @@ pub trait Mob: EntityBase + Send + Sync {
         75.0
     }
 
+    // cat: Animal.canMate partner check (Cat.canMate)
+    fn can_mate(&self, _partner: &dyn EntityBase) -> bool {
+        true
+    }
+
     // bat: Bat.isIgnoringBlockTriggers (pressure plates, tripwires)
     fn ignores_block_triggers(&self) -> bool {
         false

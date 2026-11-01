@@ -5,9 +5,11 @@ use std::sync::{
 
 use pumpkin_data::cat_sound_variant::CatSoundVariant;
 use pumpkin_data::cat_variant::CatVariant;
-use pumpkin_data::entity::{EntityStatus, EntityType};
+use pumpkin_data::dye_color::DyeColor;
+use pumpkin_data::entity::{EntityPose, EntityStatus, EntityType};
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
+use pumpkin_data::sound::SoundCategory;
 use pumpkin_data::tag::{self, Taggable};
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_protocol::bedrock::server::actor_event::ActorEventID;
@@ -15,7 +17,10 @@ use pumpkin_protocol::codec::var_int::VarInt;
 use rand::RngExt;
 use uuid::Uuid;
 
+use crate::entity::ai::goal::tempt::TemptGoal;
 use crate::entity::custom_sound::CustomSound;
+use crate::entity::mob::spawn::SpawnGroupData;
+use crate::entity::passive::cat_goals;
 use crate::entity::{
     Entity, EntityBase,
     ai::behavior::{
@@ -35,6 +40,7 @@ use crate::entity::{
     },
     player::Player,
 };
+use crate::world::World;
 
 const CAT_FLEES: &[Flee] = &[feline::flee_players(4, is_untamed)];
 
@@ -80,13 +86,15 @@ impl CatEntity {
             goal_selector.add_goal(1, EscapeDangerGoal::new(1.5));
             // Goal 2: SitWhenOrderedToGoal
             goal_selector.add_goal(2, Box::new(SitWhenOrderedToGoal::new()));
-            // TODO: CatRelaxOnOwnerGoal at 3, CatLieOnBlockGoal at 5, CatSitOnBlockGoal at 7.
+            goal_selector.add_goal(3, Box::new(cat_goals::CatRelaxOnOwnerGoal::new()));
             // Goal 4: CatTemptGoal
             goal_selector.add_goal(4, feline::tempt_goal());
             // Goal 4: CatAvoidEntityGoal (when untamed)
             fleeing::apply(goal_selector, CAT_FLEES);
+            goal_selector.add_goal(5, Box::new(cat_goals::CatLieOnBlockGoal::new()));
             // Goal 6: FollowOwnerGoal
             goal_selector.add_goal(6, FollowOwnerGoal::new(1.0, 10.0, 5.0));
+            goal_selector.add_goal(7, Box::new(cat_goals::CatSitOnBlockGoal::new()));
             // Goal 8-12: LeapAtTarget, OcelotAttack, Breed, Stroll, LookAtPlayer
             feline::apply_tail(goal_selector, mob_weak, 8);
         };
@@ -165,6 +173,31 @@ impl CatEntity {
         entity.set_synced_data(pumpkin_data::tracked_data::cat::RELAX_STATE_ONE, relax);
     }
 
+    fn set_sound_variant_raw(&self, id: u8) {
+        if let Some(sound_variant) = CatSoundVariant::from_id(id) {
+            self.set_sound_variant(sound_variant);
+        }
+    }
+
+    fn sound_set(&self) -> CatSoundVariant {
+        CatSoundVariant::from_id(self.sound_variant.load(Ordering::Relaxed)).unwrap_or_default()
+    }
+
+    fn is_baby_cat(&self) -> bool {
+        self.get_entity().age.load(Ordering::Relaxed) < 0
+    }
+
+    pub fn hiss(&self) {
+        let entity = self.get_entity();
+        entity.world.load().play_sound_fine(
+            self.sound_set().hiss_sound(self.is_baby_cat()),
+            SoundCategory::Neutral,
+            &entity.pos.load(),
+            1.0,
+            1.0,
+        );
+    }
+
     pub fn set_sound_variant(&self, sound_variant: CatSoundVariant) {
         self.sound_variant
             .store(sound_variant as u8, Ordering::Relaxed);
@@ -199,6 +232,40 @@ impl Animal for CatEntity {
         let sound_variant = CatSoundVariant::from_id(self.sound_variant.load(Ordering::Relaxed))
             .unwrap_or_default();
         Some(sound_variant.eat_sound(is_baby))
+    }
+
+    // cat: offspring variant, owner and collar mix (Cat.getBreedOffspring)
+    fn get_breed_offspring(&self, partner: &dyn EntityBase) -> Arc<dyn EntityBase> {
+        let entity = self.get_entity();
+        let world = entity.world.load_full();
+        let baby = Self::new(Entity::new(
+            world.clone(),
+            entity.pos.load(),
+            &EntityType::CAT,
+        ));
+        if let Some(partner) = partner.cast_any().downcast_ref::<Self>() {
+            let variant = if rand::random::<bool>() {
+                self.variant.load(Ordering::Relaxed)
+            } else {
+                partner.variant.load(Ordering::Relaxed)
+            };
+            baby.set_variant(variant);
+            baby.set_sound_variant_raw(rand::random_range(0..CatSoundVariant::ALL.len()) as u8);
+            if self.is_tame() {
+                baby.set_tame(true, self.get_owner());
+                let first = DyeColor::from(self.get_collar_color());
+                let second = DyeColor::from(partner.get_collar_color());
+                let mixed =
+                    crate::entity::passive::sheep::find_color_mix_in_recipes(&world, first, second)
+                        .unwrap_or(if rand::random::<bool>() {
+                            first
+                        } else {
+                            second
+                        });
+                baby.set_collar_color(mixed.id());
+            }
+        }
+        baby
     }
 
     fn is_food(&self, item_stack: &ItemStack) -> bool {
@@ -406,6 +473,132 @@ impl Mob for CatEntity {
 
         self.mob_entity
             .mob_interact(player, item_stack, self.can_be_leashed())
+    }
+
+    fn can_mate(&self, partner: &dyn EntityBase) -> bool {
+        self.is_tame()
+            && partner
+                .cast_any()
+                .downcast_ref::<Self>()
+                .is_some_and(TamableAnimal::is_tame)
+    }
+
+    fn get_ambient_sound_interval(&self) -> i32 {
+        120
+    }
+
+    // cat: Cat.getAmbientSound
+    fn get_ambient_sound(&self) -> Option<pumpkin_data::sound::Sound> {
+        let sounds = self.sound_set();
+        let baby = self.is_baby_cat();
+        if !self.is_tame() {
+            return Some(sounds.stray_ambient_sound());
+        }
+        if self.mob_entity.is_in_love() {
+            Some(sounds.purr_sound(baby))
+        } else if rand::random_range(0..4) == 0 {
+            Some(sounds.purreow_sound(baby))
+        } else {
+            Some(sounds.ambient_sound(baby))
+        }
+    }
+
+    // cat: coat by spawn conditions, random sound set (Cat.finalizeSpawn)
+    fn finalize_spawn(
+        &self,
+        world: &Arc<World>,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        let group_data = self.finalize_spawn_super(group_data);
+        // cat: all_black needs a full moon (moon_brightness >= 0.9), the rest have no condition
+        let full_moon = matches!(
+            world
+                .environment_attributes()
+                .get_dimension_value_moon_phase(),
+            pumpkin_data::environment_attribute::MoonPhase::FullMoon
+        );
+        let candidates: Vec<CatVariant> = [
+            CatVariant::AllBlack,
+            CatVariant::Black,
+            CatVariant::BritishShorthair,
+            CatVariant::Calico,
+            CatVariant::Jellie,
+            CatVariant::Persian,
+            CatVariant::Ragdoll,
+            CatVariant::Red,
+            CatVariant::Siamese,
+            CatVariant::Tabby,
+            CatVariant::White,
+        ]
+        .into_iter()
+        .filter(|variant| *variant != CatVariant::AllBlack || full_moon)
+        .collect();
+        let variant = candidates[rand::random_range(0..candidates.len())];
+        self.set_variant(variant.id());
+        self.set_sound_variant_raw(rand::random_range(0..CatSoundVariant::ALL.len()) as u8);
+        group_data
+    }
+
+    // cat: BABY_DIMENSIONS
+    fn baby_dimensions(&self) -> Option<pumpkin_util::math::boundingbox::EntityDimensions> {
+        Some(pumpkin_util::math::boundingbox::EntityDimensions {
+            width: 0.3,
+            height: 0.35,
+            eye_height: 0.343_75,
+        })
+    }
+
+    // cat: crouch and sprint follow the move speed (Cat.customServerAiStep)
+    fn custom_server_ai_step(&self, _caller: &dyn EntityBase) {
+        let entity = self.get_entity();
+        let (pose, sprinting) = {
+            let steered = self.mob_entity.steered();
+            let control = steered.move_control();
+            if control.has_wanted() {
+                let speed = control.speed_modifier();
+                if speed == 0.6 {
+                    (EntityPose::Crouching, false)
+                } else if speed == 1.33 {
+                    (EntityPose::Standing, true)
+                } else {
+                    (EntityPose::Standing, false)
+                }
+            } else {
+                (EntityPose::Standing, false)
+            }
+        };
+        entity.set_pose(pose);
+        entity.set_sprinting(sprinting);
+    }
+
+    // cat: begging (Cat.tick) and purring while lying (Cat.handleLieDown)
+    fn mob_tick(&self, _caller: &dyn EntityBase) {
+        let entity = self.get_entity();
+        let tick_count = entity.tick_count.load(Ordering::Relaxed);
+        let sounds = self.sound_set();
+        let baby = self.is_baby_cat();
+        let world = entity.world.load();
+        if !self.is_tame()
+            && tick_count % 100 == 0
+            && self.mob_entity.goals_selector.is_running::<TemptGoal>()
+        {
+            world.play_sound_fine(
+                sounds.beg_for_food_sound(baby),
+                SoundCategory::Neutral,
+                &entity.pos.load(),
+                1.0,
+                1.0,
+            );
+        }
+        if (self.is_lying() || self.is_relax_state_one()) && tick_count % 5 == 0 {
+            world.play_sound_fine(
+                sounds.purr_sound(baby),
+                SoundCategory::Neutral,
+                &entity.pos.load(),
+                0.6 + 0.4 * (rand::random::<f32>() - rand::random::<f32>()),
+                1.0,
+            );
+        }
     }
 
     fn remove_when_far_away(&self, _distance_sq: f64) -> bool {

@@ -9,6 +9,7 @@ pub mod bee;
 pub mod bee_goals;
 pub mod camel;
 pub mod cat;
+pub mod cat_goals;
 pub mod chicken;
 pub mod cod;
 pub mod copper_golem;

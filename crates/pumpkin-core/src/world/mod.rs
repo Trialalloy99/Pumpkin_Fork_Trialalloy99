@@ -22,6 +22,7 @@ use tracing::{debug, error, info, trace, warn};
 
 mod active_chunks;
 pub mod brightness;
+mod cat_spawner;
 pub mod chunker;
 mod entity_index;
 pub(crate) use entity_index::EntityIndex;
@@ -2263,6 +2264,10 @@ impl World {
         let spawn_passives = self.get_world_age() % 400 == 0;
         let spawn_enemies = !peaceful && spawn_monsters && spawn_mobs;
         let spawn_passives = spawn_passives && spawn_mobs;
+
+        if spawn_mobs {
+            self.tick_cat_spawner();
+        }
 
         let spawn_list = Arc::new(natural_spawner::get_filtered_spawning_categories(
             &spawn_state,
