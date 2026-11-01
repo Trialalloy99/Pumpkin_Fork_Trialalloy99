@@ -132,6 +132,19 @@ impl SpringFeatureFeature {
         }
         if valid == self.rock_count && air == self.hole_count {
             chunk.set_block_state(&pos.0, self.state);
+            // spring: start flowing right away (SpringFeature.place scheduleTick)
+            let fluid = if self.state.id == pumpkin_data::Block::LAVA.default_state.id {
+                Some(&pumpkin_data::fluid::Fluid::LAVA)
+            } else if self.state.id == pumpkin_data::Block::WATER.default_state.id {
+                Some(&pumpkin_data::fluid::Fluid::WATER)
+            } else {
+                None
+            };
+            if let Some(fluid) = fluid
+                && let Some(proto) = chunk.get_chunk_mut(pos.0.x >> 4, pos.0.z >> 4)
+            {
+                proto.schedule_fluid_tick(pos.0.x, pos.0.y, pos.0.z, fluid);
+            }
             return true;
         }
         false
