@@ -129,7 +129,9 @@ impl ZombieEntityBase {
             if zombie_behaviour {
                 goal_selector.add_goal(2, SpearUseGoal::new(1.0, 1.0, 10.0, 2.0));
             }
-            goal_selector.add_goal(3, ZombieAttackGoal::new(1.0, false));
+            if zombie_behaviour {
+                goal_selector.add_goal(3, ZombieAttackGoal::new(1.0, false));
+            }
             if zombie_behaviour {
                 goal_selector.add_goal(
                     6,
@@ -138,7 +140,9 @@ impl ZombieEntityBase {
                     }),
                 );
             }
-            goal_selector.add_goal(7, Box::new(WanderAroundGoal::water_avoiding(1.0)));
+            if zombie_behaviour {
+                goal_selector.add_goal(7, Box::new(WanderAroundGoal::water_avoiding(1.0)));
+            }
 
             target_selector.add_goal(1, Box::new(revenge));
             hunting::apply(target_selector, &mob_arc.mob_entity, hunts);

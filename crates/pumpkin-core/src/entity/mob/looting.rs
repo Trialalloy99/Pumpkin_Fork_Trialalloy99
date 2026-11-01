@@ -148,6 +148,9 @@ fn can_replace_current_item(
     if current.is_empty() {
         return true;
     }
+    if mob.keeps_equipped_item(current) {
+        return false;
+    }
     if is_armor_slot(slot) {
         if current.get_enchantment_level(&Enchantment::BINDING_CURSE) > 0 {
             return false;

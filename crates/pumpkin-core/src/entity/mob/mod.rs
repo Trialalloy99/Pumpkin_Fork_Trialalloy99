@@ -1519,6 +1519,11 @@ pub trait Mob: EntityBase + Send + Sync {
         (20, 40)
     }
 
+    /// Vanilla `canReplaceCurrentItem` veto, e.g. the drowned nautilus shell.
+    fn keeps_equipped_item(&self, _current: &ItemStack) -> bool {
+        false
+    }
+
     /// Vanilla `Mob.getPreferredWeaponType`.
     fn preferred_weapon_type(&self) -> Option<&'static pumpkin_data::tag::Tag> {
         None
