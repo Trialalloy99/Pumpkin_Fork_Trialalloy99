@@ -34,9 +34,14 @@ impl DragonEggBlock {
 
             let state = world.get_block_state(&test_pos);
 
-            // dragon egg: target must be air, supported by non-air, within height (DragonEggBlock.teleport)
+            // dragon egg: target must be air, supported by non-air, inside border and height (DragonEggBlock.teleport)
             if state.is_air()
                 && !world.get_block_state(&test_pos.down()).is_air()
+                && world
+                    .worldborder
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .contains(f64::from(test_pos.0.x) + 0.5, f64::from(test_pos.0.z) + 0.5)
                 && world.is_in_build_limit(test_pos)
             {
                 let packed_diff = pos.pack_difference_in_position(
