@@ -37,8 +37,8 @@ pub mod raid;
 pub mod random_sequences;
 pub mod stopwatches;
 pub mod time;
-pub mod villager_poi;
 pub mod village;
+pub mod villager_poi;
 
 use crate::block::RandomTickArgs;
 use crate::world::chunker::is_within_chebyshev_distance;
@@ -5095,7 +5095,9 @@ impl World {
                 self.add_entity_silent(mount.clone());
             }
             if !mount.get_entity().is_removed() {
-                mount.get_entity().add_passenger(mount.clone(), vehicle.clone());
+                mount
+                    .get_entity()
+                    .add_passenger(mount.clone(), vehicle.clone());
             }
             if spawn {
                 self.add_pending_riders(&mount);

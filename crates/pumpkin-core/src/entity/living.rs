@@ -3446,9 +3446,11 @@ impl LivingEntity {
         }
 
         // Check for shield blocking before armor/magic/cooldown
+        // shield: blocks from the direct attacker's position when none is given (DamageSource.getSourcePosition)
         if self.is_blocking()
             && !damage_type.has_tag(&tag::DamageType::MINECRAFT_BYPASSES_SHIELD)
-            && let Some(pos) = position
+            && let Some(pos) =
+                position.or_else(|| source.map(|source| source.get_entity().pos.load()))
         {
             let player_pos = self.entity.pos.load();
             let look_vec = Vector3::rotation_vector(0.0, self.entity.yaw.load() as f64);
@@ -3564,6 +3566,14 @@ impl LivingEntity {
                             world.play_bedrock_level_sound("item.shield.break", &player_pos, 0);
                         }
                     }
+                }
+
+                // shield: attacker reacts to the block (LivingEntity.blockedByItem, ravager stun)
+                if let Some(attacker) =
+                    source.and_then(|source| world.get_entity_by_id(source.get_entity().entity_id))
+                    && let Some(attacker_mob) = attacker.get_mob()
+                {
+                    attacker_mob.blocked_by_item(caller);
                 }
 
                 return false;
@@ -3931,7 +3941,8 @@ impl EntityBase for LivingEntity {
                     .clone();
                 if let Some(item) = item_in_use.as_ref()
                     && item
-                        .get_data_component::<pumpkin_data::data_component_impl::KineticWeaponImpl>()
+                        .get_data_component::<pumpkin_data::data_component_impl::KineticWeaponImpl>(
+                        )
                         .is_some()
                 {
                     crate::item::items::spear::SpearItem::mob_kinetic_tick(

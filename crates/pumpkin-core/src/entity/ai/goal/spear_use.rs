@@ -85,9 +85,8 @@ impl SpearUseGoal {
     fn able_to_attack(mob: &dyn Mob) -> bool {
         let mob_entity = mob.get_mob_entity();
         mob_entity.get_target().is_some()
-            && mob_entity.with_main_hand(|stack| {
-                stack.get_data_component::<KineticWeaponImpl>().is_some()
-            })
+            && mob_entity
+                .with_main_hand(|stack| stack.get_data_component::<KineticWeaponImpl>().is_some())
     }
 
     fn kinetic_weapon_use_duration(&self, mob: &dyn Mob) -> i32 {

@@ -11,17 +11,16 @@ use pumpkin_data::sound::Sound;
 use pumpkin_util::math::position::BlockPos;
 use rand::RngExt;
 
+use crate::entity::ai::pathfinder::node::PathType;
 use crate::entity::ai::util::goal_utils;
 use crate::entity::attributes::{Modifier, ModifierOperation};
-use crate::entity::ai::pathfinder::node::PathType;
 use crate::entity::{
     Entity, EntityBase,
     ai::behavior::neutral::apply_targets,
     ai::goal::{
         break_door::BreakDoorGoal, destroy_egg::DestroyEggGoal, look_around::RandomLookAroundGoal,
         look_at_entity::LookAtEntityGoal, revenge::RevengeGoal, spear_use::SpearUseGoal,
-        wander_around::WanderAroundGoal,
-        zombie_attack::ZombieAttackGoal,
+        wander_around::WanderAroundGoal, zombie_attack::ZombieAttackGoal,
     },
     mob::{
         Mob, MobEntity,
@@ -149,7 +148,9 @@ impl ZombifiedPiglinEntity {
                 .goals_selector
                 .add_goal(1, Box::new(BreakDoorGoal::default()));
         } else {
-            self.mob_entity.goals_selector.remove_goal::<BreakDoorGoal>(self);
+            self.mob_entity
+                .goals_selector
+                .remove_goal::<BreakDoorGoal>(self);
         }
     }
 }

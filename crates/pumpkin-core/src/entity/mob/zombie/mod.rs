@@ -3,16 +3,16 @@ use crate::entity::ai::goal::break_door::BreakDoorGoal;
 use crate::entity::ai::goal::destroy_egg::DestroyEggGoal;
 use crate::entity::ai::goal::look_around::RandomLookAroundGoal;
 use crate::entity::ai::goal::move_through_village::MoveThroughVillageGoal;
-use crate::entity::ai::goal::spear_use::SpearUseGoal;
 use crate::entity::ai::goal::revenge::RevengeGoal;
+use crate::entity::ai::goal::spear_use::SpearUseGoal;
 use crate::entity::ai::goal::wander_around::WanderAroundGoal;
 use crate::entity::ai::goal::zombie_attack::ZombieAttackGoal;
 use crate::entity::attributes::{Modifier, ModifierOperation};
 use crate::entity::mob::conversion;
 use crate::entity::mob::equipment::RegionalDifficulty;
 use crate::entity::mob::spawn::SpawnGroupData;
-use crate::entity::r#type::from_type;
 use crate::entity::mob::spawn::SpawnReason;
+use crate::entity::r#type::from_type;
 use crate::entity::{
     Entity, EntityBase,
     ai::behavior::hunting::{self, Hunt},
@@ -131,9 +131,12 @@ impl ZombieEntityBase {
             }
             goal_selector.add_goal(3, ZombieAttackGoal::new(1.0, false));
             if zombie_behaviour {
-                goal_selector.add_goal(6, MoveThroughVillageGoal::new(1.0, true, 4, |mob| {
+                goal_selector.add_goal(
+                    6,
+                    MoveThroughVillageGoal::new(1.0, true, 4, |mob| {
                         zombie_base_of(mob).is_some_and(ZombieEntityBase::can_break_doors)
-                    }));
+                    }),
+                );
             }
             goal_selector.add_goal(7, Box::new(WanderAroundGoal::water_avoiding(1.0)));
 
@@ -616,12 +619,15 @@ pub fn roll_chicken_jockey(mob_entity: &MobEntity, world: &Arc<World>, random: &
     let entity = &mob_entity.living_entity.entity;
     if random.random::<f32>() < 0.05 {
         let search = entity.bounding_box.load().expand(5.0, 3.0, 5.0);
-        let chicken = world.get_entities_at_box(&search).into_iter().find(|other| {
-            let other_entity = other.get_entity();
-            other_entity.entity_type == &EntityType::CHICKEN
-                && !other_entity.is_removed()
-                && !other_entity.has_passengers()
-        });
+        let chicken = world
+            .get_entities_at_box(&search)
+            .into_iter()
+            .find(|other| {
+                let other_entity = other.get_entity();
+                other_entity.entity_type == &EntityType::CHICKEN
+                    && !other_entity.is_removed()
+                    && !other_entity.has_passengers()
+            });
         if let Some(chicken) = chicken {
             set_chicken_jockey(chicken.as_ref());
             mob_entity.set_pending_vehicle(chicken, false);

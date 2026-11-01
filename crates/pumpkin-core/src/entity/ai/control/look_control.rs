@@ -109,6 +109,10 @@ impl LookControlTrait for LookControl {
         Self::tick(self, mob);
     }
 
+    fn looking_at(&self) -> Option<Vector3<f64>> {
+        (self.look_at_timer > 0).then_some(self.position)
+    }
+
     fn look_at_with_range(
         &mut self,
         x: f64,

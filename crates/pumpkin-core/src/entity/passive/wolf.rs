@@ -4,9 +4,9 @@ use std::sync::{
 };
 
 use pumpkin_data::BlockState;
-use pumpkin_data::data_component_impl::EquipmentSlot;
 use pumpkin_data::attributes::Attributes;
 use pumpkin_data::damage::DamageType;
+use pumpkin_data::data_component_impl::EquipmentSlot;
 use pumpkin_data::entity::{EntityStatus, EntityType};
 use pumpkin_data::game_event::GameEvent;
 use pumpkin_data::item::Item;

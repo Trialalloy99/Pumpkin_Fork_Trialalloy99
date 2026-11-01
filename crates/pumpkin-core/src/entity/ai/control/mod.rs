@@ -35,6 +35,11 @@ pub trait MoveControlTrait: Control {
 pub trait LookControlTrait: Control {
     fn tick(&mut self, mob: &dyn Mob);
 
+    /// Vanilla `getWantedX/Y/Z` while `isLookingAtTarget`, else `None`.
+    fn looking_at(&self) -> Option<Vector3<f64>> {
+        None
+    }
+
     fn look_at_with_range(
         &mut self,
         x: f64,

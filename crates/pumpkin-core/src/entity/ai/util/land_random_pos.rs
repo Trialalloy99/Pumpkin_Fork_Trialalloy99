@@ -1,6 +1,6 @@
 use pumpkin_util::math::position::BlockPos;
-use rand::RngExt;
 use pumpkin_util::math::vector3::Vector3;
+use rand::RngExt;
 
 use super::{goal_utils, random_pos};
 use crate::entity::ai::pathfinder::pathfinding_context::PathfindingContext;
@@ -95,11 +95,7 @@ pub fn get_pos_away(
     let mut rng = mob.get_random();
     let mut dir_away = mob.get_entity().pos.load() - avoid_pos;
     if dir_away.length() == 0.0 {
-        dir_away = Vector3::new(
-            rng.random::<f64>() - 0.5,
-            0.0,
-            rng.random::<f64>() - 0.5,
-        );
+        dir_away = Vector3::new(rng.random::<f64>() - 0.5, 0.0, rng.random::<f64>() - 0.5);
     }
     let restrict = goal_utils::mob_restricted(mob, max_horizontal_dist);
     let world = mob.get_entity().world.load_full();

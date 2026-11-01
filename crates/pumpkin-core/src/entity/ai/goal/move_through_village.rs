@@ -128,9 +128,10 @@ impl Goal for MoveThroughVillageGoal {
         let Some(found) = path else {
             return false;
         };
-        let door_node = found.get_nodes().iter().find(|node| {
-            DoorBlock::is_wooden_door(&world, &node.pos.up())
-        });
+        let door_node = found
+            .get_nodes()
+            .iter()
+            .find(|node| DoorBlock::is_wooden_door(&world, &node.pos.up()));
         self.path = match door_node {
             Some(node) => {
                 let node_pos = node.pos;

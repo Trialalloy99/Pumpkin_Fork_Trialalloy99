@@ -283,7 +283,9 @@ impl MobEntity {
             ambient_sound_time: AtomicI32::new(0),
             pending_riders: std::sync::Mutex::new(Vec::new()),
             pending_vehicle: std::sync::Mutex::new(None),
-            spawn_reason: std::sync::atomic::AtomicU8::new(crate::entity::mob::spawn::SpawnReason::Command as u8),
+            spawn_reason: std::sync::atomic::AtomicU8::new(
+                crate::entity::mob::spawn::SpawnReason::Command as u8,
+            ),
             mob_flags: AtomicU8::new(0),
         }
     }
@@ -533,7 +535,9 @@ impl MobEntity {
         let rotlerp = |from: f32, to: f32, max: f32| {
             from + pumpkin_util::math::wrap_degrees(to - from).clamp(-max, max)
         };
-        entity.pitch.store(rotlerp(entity.pitch.load(), pitch, max_pitch));
+        entity
+            .pitch
+            .store(rotlerp(entity.pitch.load(), pitch, max_pitch));
         entity.yaw.store(rotlerp(entity.yaw.load(), yaw, max_yaw));
     }
 
@@ -1569,6 +1573,12 @@ pub trait Mob: EntityBase + Send + Sync {
     }
 
     fn on_attack(&self, _target: &dyn EntityBase) {}
+
+    /// Start of vanilla `doHurtTarget`, run on every melee attempt even when it misses or is blocked.
+    fn pre_attack(&self, _target: &dyn EntityBase) {}
+
+    /// Vanilla `blockedByItem`: this mob's attack hit a raised shield of `defender`.
+    fn blocked_by_item(&self, _defender: &dyn EntityBase) {}
 
     // getArrow in vanilla, lets skeletons change the arrow before it's shot
     fn get_arrow(&self, arrow: ArrowEntity) -> ArrowEntity {

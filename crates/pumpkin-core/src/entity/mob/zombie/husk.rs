@@ -5,22 +5,22 @@ use std::sync::Arc;
 
 use crate::entity::mob::equipment::RegionalDifficulty;
 use crate::entity::mob::spawn::{SpawnGroupData, SpawnReason, finalize_spawn};
-use crate::entity::r#type::from_type;
-use pumpkin_data::data_component_impl::EquipmentSlot;
-use pumpkin_data::entity::EntityType;
-use pumpkin_data::item::Item;
-use pumpkin_data::item_stack::ItemStack;
-use rand::RngExt;
 use crate::entity::mob::zombie::ZombieEntityBase;
+use crate::entity::r#type::from_type;
 use crate::entity::{
     Entity, EntityBase,
     mob::{Mob, MobEntity},
 };
 use crate::world::World;
 use pumpkin_data::damage::DamageType;
+use pumpkin_data::data_component_impl::EquipmentSlot;
 use pumpkin_data::effect::StatusEffect;
+use pumpkin_data::entity::EntityType;
+use pumpkin_data::item::Item;
+use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::potion::Effect;
 use pumpkin_nbt::compound::NbtCompound;
+use rand::RngExt;
 
 pub struct HuskEntity {
     entity: Arc<ZombieEntityBase>,
@@ -50,7 +50,10 @@ impl HuskEntity {
     // husk: ride a new camel husk with a parched behind, iron spear (Husk.finalizeSpawn)
     fn spawn_camel_husk_jockey(&self, world: &Arc<World>, reason: SpawnReason) {
         let mob_entity = self.get_mob_entity();
-        mob_entity.set_item_slot(&EquipmentSlot::MAIN_HAND, ItemStack::new(1, &Item::IRON_SPEAR));
+        mob_entity.set_item_slot(
+            &EquipmentSlot::MAIN_HAND,
+            ItemStack::new(1, &Item::IRON_SPEAR),
+        );
         let entity = self.get_entity();
         let pos = entity.pos.load();
         let camel_husk = from_type(&EntityType::CAMEL_HUSK, pos, world, uuid::Uuid::new_v4());
@@ -75,7 +78,8 @@ impl Mob for HuskEntity {
         let mut group_data = self.entity.finalize_zombie_spawn(self, world, group_data);
         let mob_entity = self.get_mob_entity();
         let reason = mob_entity.spawn_reason();
-        let multiplier = RegionalDifficulty::at(world, self.get_entity().pos.load()).special_multiplier;
+        let multiplier =
+            RegionalDifficulty::at(world, self.get_entity().pos.load()).special_multiplier;
         let mut random = rand::rng();
         // husk: second loot roll + camel husk jockey (Husk.finalizeSpawn)
         if reason != SpawnReason::Conversion {

@@ -21,6 +21,7 @@ use crate::entity::ai::control::{Control, MoveControlTrait};
 use crate::entity::ai::goal::move_towards_restriction::MoveTowardsRestrictionGoal;
 use crate::entity::ai::goal::{Controls, Goal};
 use crate::entity::ai::pathfinder::Navigator;
+use crate::entity::ai::pathfinder::node::PathType;
 use crate::entity::ai::target_match::TargetMatch;
 use crate::entity::custom_sound::CustomSound;
 use crate::entity::living::LivingEntity;
@@ -93,6 +94,12 @@ impl GuardianEntity {
             .navigator
             .get_mut()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Navigator::water_bound(false);
+        // guardian: no water path malus (Guardian constructor)
+        mob_entity
+            .navigator
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .set_pathfinding_malus(PathType::Water, 0.0);
         if elder {
             mob_entity
                 .persistence_required
@@ -576,7 +583,6 @@ struct GuardianMoveControl {
     wanted: Vector3<f64>,
     speed_modifier: f64,
     operation: Operation,
-    last_look: Option<(Vector3<f64>, i32)>,
 }
 
 impl GuardianMoveControl {
@@ -586,7 +592,6 @@ impl GuardianMoveControl {
             wanted: Vector3::new(0.0, 0.0, 0.0),
             speed_modifier: 0.0,
             operation: Operation::Wait,
-            last_look: None,
         }
     }
 }
@@ -639,18 +644,15 @@ impl MoveControlTrait for GuardianMoveControl {
             entity.get_eye_y() + direction.y / length,
             pos.z + direction.z * 2.0,
         );
-        let now = entity.tick_count.load(Ordering::Relaxed);
-        let old_look = self
-            .last_look
-            .filter(|(_, at)| now - at <= 2)
-            .map_or(new_look, |(look, _)| look);
-        let look = old_look + (new_look - old_look) * 0.125;
-        mob_entity
+        // guardian: ease the look from the current wanted point (GuardianMoveControl.tick)
+        let mut look_control = mob_entity
             .look_control
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .look_at_with_range(look.x, look.y, look.z, 10.0, 40.0);
-        self.last_look = Some((look, now));
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let wanted = look_control.looking_at().unwrap_or(new_look);
+        let look = wanted + (new_look - wanted) * 0.125;
+        look_control.look_at_with_range(look.x, look.y, look.z, 10.0, 40.0);
+        drop(look_control);
         guardian.set_moving(true);
     }
 

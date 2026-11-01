@@ -429,7 +429,9 @@ impl Mob for EndermanEntity {
 
     fn mob_read_nbt(&self, nbt: &NbtCompound) {
         let state = nbt.get_compound("carriedBlockState").and_then(|state| {
-            let name = state.get_string("id").or_else(|| state.get_string("Name"))?;
+            let name = state
+                .get_string("id")
+                .or_else(|| state.get_string("Name"))?;
             let block = pumpkin_data::Block::from_name(name)?;
             let props: Vec<pumpkin_data::Property> = state
                 .get_compound("properties")
@@ -457,7 +459,9 @@ impl Mob for EndermanEntity {
             nbt.get_int("carriedBlockState")
                 .and_then(|id| BlockStateId::new(id as u16))
         });
-        self.set_carried_block(state.filter(|id| !pumpkin_data::Block::from_state_id(*id).is_air()));
+        self.set_carried_block(
+            state.filter(|id| !pumpkin_data::Block::from_state_id(*id).is_air()),
+        );
     }
 
     fn get_mob_entity(&self) -> &MobEntity {

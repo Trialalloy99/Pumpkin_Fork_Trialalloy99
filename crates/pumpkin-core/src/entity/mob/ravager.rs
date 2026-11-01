@@ -47,6 +47,7 @@ fn is_adult(mob: &dyn Mob) -> bool {
 const BASE_MOVEMENT_SPEED: f64 = 0.3;
 const ATTACK_MOVEMENT_SPEED: f64 = 0.35;
 const ATTACK_DURATION: i32 = 10;
+const STUNNED_DURATION: i32 = 40;
 const ROAR_DURATION: i32 = 20;
 const ROAR_AT_TICK: i32 = 10;
 const ROAR_RADIUS: f64 = 4.0;
@@ -251,8 +252,8 @@ impl Mob for RavagerEntity {
             .has_line_of_sight(&self.mob_entity.living_entity.entity, target)
     }
 
-    // ravager: attack cooldown + sound (Ravager.doHurtTarget)
-    fn on_attack(&self, _target: &dyn EntityBase) {
+    // ravager: attack cooldown + sound on every attempt (Ravager.doHurtTarget)
+    fn pre_attack(&self, _target: &dyn EntityBase) {
         self.attack_tick.store(ATTACK_DURATION, Ordering::Relaxed);
         let entity = self.get_entity();
         entity.world.load().send_entity_status(
@@ -261,6 +262,27 @@ impl Mob for RavagerEntity {
             ActorEventID::None,
         );
         self.play_entity_sound(Sound::EntityRavagerAttack, 1.0, 1.0);
+    }
+
+    // ravager: shield block -> 50% stun 40 ticks, else strong knockback (Ravager.blockedByItem)
+    fn blocked_by_item(&self, defender: &dyn EntityBase) {
+        if self.roar_tick.load(Ordering::Relaxed) != 0 {
+            return;
+        }
+        if rand::random::<f64>() < 0.5 {
+            self.stunned_tick.store(STUNNED_DURATION, Ordering::Relaxed);
+            self.play_entity_sound(Sound::EntityRavagerStunned, 1.0, 1.0);
+            let entity = self.get_entity();
+            entity.world.load().send_entity_status(
+                entity,
+                EntityStatus::RavagerStunned,
+                ActorEventID::None,
+            );
+            defender.push(self);
+        } else {
+            self.strong_knockback(defender.get_entity());
+        }
+        defender.get_entity().send_velocity();
     }
 
     // ravager: speed, leaves, roar/attack/stun timers (Ravager.aiStep)
