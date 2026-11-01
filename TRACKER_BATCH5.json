@@ -1,0 +1,12 @@
+[
+  {"cat":"entities","id":"slime","status":"wip","batch":5,"note":"Spawn, Größe, AI, Partikel, Kampf und typbewahrendes Teilen portiert; Spawner-SpawnReason und vollständige Split-Kontextübernahme sind noch offen."},
+  {"cat":"entities","id":"magma_cube","status":"done","batch":5,"note":"Größenattribute, Sprünge, Lava-Bewegung, Feuerstatus, Partikel, Kampf, Sounds und Teilen portiert."},
+  {"cat":"entities","id":"phantom","status":"wip","batch":5,"note":"Größe/NBT, Flug, Kreis- und Sturzangriff, Zielwahl, Katzenabwehr und Sounds portiert; natürlicher Insomnia-Special-Spawner fehlt im Server."},
+  {"cat":"entities","id":"silverfish","status":"done","batch":5,"note":"Infestation, Wake-Up-Friends, Zielwahl, Spawnregeln und Sounds portiert."},
+  {"cat":"entities","id":"blaze","status":"done","batch":5,"note":"Hover-, Nahkampf- und Feuerball-AI, Aufladung, Attribute und Sounds portiert."},
+  {"cat":"entities","id":"pillager","status":"done","batch":5,"note":"Armbrustausrüstung, Raid-Buffs, Banner-/Inventarverhalten und Sounds portiert."},
+  {"cat":"entities","id":"piglin_brute","status":"done","batch":5,"note":"Brain-Ziele, Rache, Heimposition, Goldaxt, Zombifizierung und Sounds portiert."},
+  {"cat":"entities","id":"hoglin","status":"done","batch":5,"note":"Brain-nahe Kampf-, Flucht-, Repellent-, Gruppen-, Alters-, Zucht- und Zombifizierungslogik portiert."},
+  {"cat":"entities","id":"zoglin","status":"done","batch":5,"note":"Zielwahl, Kampfintervalle, Schaden, Rückstoß, Vergeltung, Babyverhalten und Sounds portiert."},
+  {"cat":"entities","id":"polar_bear","status":"done","batch":5,"note":"Jungtierverteidigung, Panik, Warnpose, Nahkampf und Sounds portiert."}
+]
