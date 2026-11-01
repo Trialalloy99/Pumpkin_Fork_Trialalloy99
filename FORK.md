@@ -67,7 +67,7 @@ Unser Fortschritt steht auf **https://claude.ai/artifact/KAHK4pXmbbEhd9nXiBuobN*
 | 1 | Vex (plus die Vex-Beschwörung beim Evoker) | fertig auf `feat/vex-ai` und `playable`; Test im Spiel steht aus |
 | Commands | `/locate` (alle POI-Typen, POIs aus geladenen Chunks), `/perf` | fertig auf `batch-commands` |
 | 2 | Guardian, Elder Guardian, Illusioner, Vindicator, Ravager, Endermite | fertig auf `batch-2`; Test im Spiel steht aus |
-| 3 | Zombie, Husk, Zombie Villager, Zombified Piglin, Enderman, Wolf | als Nächstes |
+| 3 | Zombie, Husk, Zombie Villager, Zombified Piglin, Enderman, Wolf | fertig auf `batch-3`; Test im Spiel steht aus |
 
 Aus dem Tracker entfernt, weil Vanilla sie auf einem dedizierten Server nicht hat: `/publish` und `/unpublish` (nur Einzelspieler) sowie `/jfr` (Java Flight Recorder, braucht eine JVM).
 
@@ -77,6 +77,13 @@ Offene Lücken aus Batch 2, als Aufgaben für später:
 - Ravager: Betäubung, wenn der Angriff auf ein Schild trifft (`blockedByItem`), fehlt, weil Pumpkin keinen Hook dafür hat. `attackTick` wird nur bei einem Treffer gesetzt, Vanilla setzt es bei jedem Versuch.
 - Guardian: Wasser-Malus 0 für das Pathfinding ist nicht gesetzt. Für die Blickglättung beim Schwimmen gibt es eine Annäherung, weil `LookControlTrait` sein Ziel nicht herausgibt.
 - Der Evoker hat noch ein eigenes Zaubersystem. Er sollte auf `mob/spellcaster.rs` umgestellt werden, das der Illusioner schon nutzt.
+
+Offene Lücken aus Batch 3:
+- Zombie: Chicken Jockey fehlt (in `finalize_spawn` gibt es kein `Arc` zum Aufsitzen), dazu `SpearUseGoal` und `MoveThroughVillageGoal`. Baby-Hitbox nicht angepasst. Bei der Verstärkung ist `isUnobstructed` nur angenähert.
+- Zombified Piglin: Verstärkung durch Artgenossen und Lava-Malus fehlen.
+- Enderman: Wasser-Malus fehlt. Der getragene Block wird als Int-ID gespeichert, nicht im Vanilla-Format (BlockState-Codec).
+- Wolf: Absorption durch Wolfsrüstung nicht geprüft. Schütteln wird beim Tod nicht zurückgesetzt.
+- `mob/conversion.rs` übernimmt keine Passagiere, Reittiere und Leinen.
 
 Beim Vex fehlt noch: Vanilla hat ein zweites Umschau-Ziel (`LookAtPlayerGoal` mit `Mob`, Reichweite 8), das bei uns fehlt. `LookAtEntityGoal` kann nur einen einzigen Entity-Typ als Ziel.
 
