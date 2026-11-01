@@ -80,7 +80,7 @@ Offene Lücken aus Batch 2, als Aufgaben für später:
 
 Beim Vex fehlt noch: Vanilla hat ein zweites Umschau-Ziel (`LookAtPlayerGoal` mit `Mob`, Reichweite 8), das bei uns fehlt. `LookAtEntityGoal` kann nur einen einzigen Entity-Typ als Ziel.
 
-Upstream arbeiten andere bereits an: Silverfish (#3886), Phantom (#3715), Spider und Cave Spider (#4368), Witch (#4393), Pufferfish (#4050), Zoglin und Hoglin (#4095), Ausrüstung beim Spawnen (#4391). Den Endermite hat AdmerPRO beansprucht (#4255). Wenn wir diese Mobs anfassen, gibt es beim nächsten Merge von upstream Konflikte. Prüfe deshalb vor jeder Batch die offenen PRs.
+Offene Upstream-PRs sind für die Auswahl egal. Wir bauen unsere eigene spielbare Version und warten auf niemanden. Wichtig sind sie nur als Hinweis, dass es beim Nachziehen von upstream an diesen Stellen Konflikte geben kann. Upstream arbeiten andere bereits an: Silverfish (#3886), Phantom (#3715), Spider und Cave Spider (#4368), Witch (#4393), Pufferfish (#4050), Zoglin und Hoglin (#4095), Ausrüstung beim Spawnen (#4391). Den Endermite hat AdmerPRO beansprucht (#4255). 
 
 ## Wichtig zu wissen
 
