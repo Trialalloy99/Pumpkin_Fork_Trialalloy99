@@ -185,7 +185,7 @@ impl EffectParticle {
     }
 }
 
-fn is_allowed_by_team_rules(
+pub(crate) fn is_allowed_by_team_rules(
     own_team: Option<&crate::world::scoreboard::Team>,
     their_team: Option<&crate::world::scoreboard::Team>,
 ) -> bool {

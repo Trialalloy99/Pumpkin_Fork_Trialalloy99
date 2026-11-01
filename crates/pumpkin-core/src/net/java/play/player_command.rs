@@ -44,8 +44,18 @@ impl JavaClient {
             }
             Action::LeaveBed => player.wake_up(),
 
-            Action::StartHorseJump | Action::StopHorseJump | Action::OpenVehicleInventory => {
+            Action::StartHorseJump | Action::StopHorseJump => {
                 debug!("todo");
+            }
+            // player: open the ridden chest boat (ServerGamePacketListenerImpl OPEN_INVENTORY)
+            Action::OpenVehicleInventory => {
+                if let Some(vehicle) = player.get_entity().get_vehicle()
+                    && let Some(boat) = vehicle
+                        .cast_any()
+                        .downcast_ref::<crate::entity::vehicle::boat::BoatEntity>()
+                {
+                    boat.open_chest(player);
+                }
             }
             Action::StartFlyingElytra => {
                 player.try_start_fall_flying(server);
