@@ -222,6 +222,18 @@ pub const fn ceil_log2(value: u32) -> u8 {
     MULTIPLY_DE_BRUIJN_BIT_POSITION[((((value as u64) * 125613361) >> 27) & 31) as usize]
 }
 
+/// Vanilla `Mth.floor(double)`: integer truncation instead of a libm `floor` call.
+#[inline]
+#[must_use]
+pub const fn floor_i32(value: f64) -> i32 {
+    let truncated = value as i32;
+    if value < truncated as f64 {
+        truncated - 1
+    } else {
+        truncated
+    }
+}
+
 #[must_use]
 pub const fn floor_log2(value: u32) -> u8 {
     ceil_log2(value) - if value.is_power_of_two() { 0 } else { 1 }

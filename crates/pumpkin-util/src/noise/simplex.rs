@@ -138,8 +138,8 @@ impl SimplexNoiseSampler {
     #[expect(clippy::suboptimal_flops)]
     pub fn sample_2d(&self, x: f64, y: f64) -> f64 {
         let d = (x + y) * Self::SKEW_FACTOR_2D;
-        let i = (x + d).floor() as i32;
-        let j = (y + d).floor() as i32;
+        let i = crate::math::floor_i32(x + d);
+        let j = crate::math::floor_i32(y + d);
 
         let e = f64::from(i.wrapping_add(j)) * Self::UNSKEW_FACTOR_2D;
         let f = f64::from(i) - e;
@@ -185,9 +185,9 @@ impl SimplexNoiseSampler {
     pub fn sample_3d(&self, x: f64, y: f64, z: f64) -> f64 {
         let e = (x + y + z) * 0.3333333333333333;
 
-        let i = (x + e).floor() as i32;
-        let j = (y + e).floor() as i32;
-        let k = (z + e).floor() as i32;
+        let i = crate::math::floor_i32(x + e);
+        let j = crate::math::floor_i32(y + e);
+        let k = crate::math::floor_i32(z + e);
 
         let g = f64::from(i.wrapping_add(j).wrapping_add(k)) * 0.16666666666666666;
         let h = f64::from(i) - g;

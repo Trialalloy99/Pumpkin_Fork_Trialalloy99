@@ -282,9 +282,9 @@ impl Noise for PerlinNoise {
         let x = wrap(x) + self.offset_x;
         let y = wrap(y) + self.offset_y;
         let z = wrap(z) + self.offset_z;
-        let floor_x = x.floor() as i32;
-        let floor_y = y.floor() as i32;
-        let floor_z = z.floor() as i32;
+        let floor_x = crate::math::floor_i32(x);
+        let floor_y = crate::math::floor_i32(y);
+        let floor_z = crate::math::floor_i32(z);
         let relative_x = (x - f64::from(floor_x)) as f32;
         let relative_y = (y - f64::from(floor_y)) as f32;
         let relative_z = (z - f64::from(floor_z)) as f32;
@@ -305,12 +305,12 @@ impl Noise for PerlinNoise {
         let mut index = 0;
         for index_z in 0..volume.size_z {
             let z = wrap(f64::from(volume.block_z(index_z)) * xz_scale) + self.offset_z;
-            let floor_z = z.floor() as i32;
+            let floor_z = crate::math::floor_i32(z);
             let relative_z = (z - f64::from(floor_z)) as f32;
             let alpha_z = smoothstep(relative_z);
             for index_x in 0..volume.size_x {
                 let x = wrap(f64::from(volume.block_x(index_x)) * xz_scale) + self.offset_x;
-                let floor_x = x.floor() as i32;
+                let floor_x = crate::math::floor_i32(x);
                 let relative_x = (x - f64::from(floor_x)) as f32;
                 let x0 = self.permute(floor_x);
                 let x1 = self.permute(floor_x + 1);
@@ -318,7 +318,7 @@ impl Noise for PerlinNoise {
                 let mut last_floor_y = i32::MIN;
                 for index_y in 0..volume.size_y {
                     let y = wrap(f64::from(volume.block_y(index_y)) * y_scale) + self.offset_y;
-                    let floor_y = y.floor() as i32;
+                    let floor_y = crate::math::floor_i32(y);
                     let relative_y = (y - f64::from(floor_y)) as f32;
                     let alpha_y = smoothstep(relative_y);
                     if last_floor_y != floor_y {
@@ -372,9 +372,9 @@ impl Noise for SmearedPerlinNoise {
         let x = wrap(x) + self.noise.offset_x;
         let y = wrap(original_y) + self.noise.offset_y;
         let z = wrap(z) + self.noise.offset_z;
-        let floor_x = x.floor() as i32;
-        let floor_y = y.floor() as i32;
-        let floor_z = z.floor() as i32;
+        let floor_x = crate::math::floor_i32(x);
+        let floor_y = crate::math::floor_i32(y);
+        let floor_z = crate::math::floor_i32(z);
         let relative_x = (x - f64::from(floor_x)) as f32;
         let relative_y = y - f64::from(floor_y);
         let relative_z = (z - f64::from(floor_z)) as f32;
@@ -402,12 +402,12 @@ impl Noise for SmearedPerlinNoise {
         let mut index = 0;
         for index_z in 0..volume.size_z {
             let z = wrap(f64::from(volume.block_z(index_z)) * xz_scale) + self.noise.offset_z;
-            let floor_z = z.floor() as i32;
+            let floor_z = crate::math::floor_i32(z);
             let relative_z = (z - f64::from(floor_z)) as f32;
             let alpha_z = smoothstep(relative_z);
             for index_x in 0..volume.size_x {
                 let x = wrap(f64::from(volume.block_x(index_x)) * xz_scale) + self.noise.offset_x;
-                let floor_x = x.floor() as i32;
+                let floor_x = crate::math::floor_i32(x);
                 let relative_x = (x - f64::from(floor_x)) as f32;
                 let x0 = self.noise.permute(floor_x);
                 let x1 = self.noise.permute(floor_x + 1);
@@ -416,7 +416,7 @@ impl Noise for SmearedPerlinNoise {
                 for index_y in 0..volume.size_y {
                     let original_y = f64::from(volume.block_y(index_y)) * y_scale;
                     let y = wrap(original_y) + self.noise.offset_y;
-                    let floor_y = y.floor() as i32;
+                    let floor_y = crate::math::floor_i32(y);
                     let relative_y = y - f64::from(floor_y);
                     let alpha_y = smoothstep(relative_y as f32);
                     if last_floor_y != floor_y {
