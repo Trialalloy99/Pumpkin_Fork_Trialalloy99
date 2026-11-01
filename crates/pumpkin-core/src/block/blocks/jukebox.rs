@@ -93,6 +93,13 @@ impl BlockBehaviour for JukeboxBlock {
             Self::drop_record(args.position, args.world);
             // Stop the music and update block state
             Self::stop_playing(args.block, args.position, args.world);
+            // jukebox: emit block change event and update neighbors (JukeboxBlockEntity.notifyItemChangedInJukebox)
+            args.world.emit_game_event(
+                pumpkin_data::game_event::GameEvent::BlockChange.name(),
+                args.position.to_centered_f64(),
+            );
+            args.world
+                .update_neighbour_for_output_signal(args.position, args.block);
             return BlockActionResult::Success;
         }
 
@@ -155,7 +162,13 @@ impl BlockBehaviour for JukeboxBlock {
             1,
         );
 
-        // TODO: world.emitGameEvent(GameEvent.BLOCK_CHANGE, pos, ...)
+        // jukebox: emit block change event and update neighbors (JukeboxBlockEntity.notifyItemChangedInJukebox)
+        args.world.emit_game_event(
+            pumpkin_data::game_event::GameEvent::BlockChange.name(),
+            args.position.to_centered_f64(),
+        );
+        args.world
+            .update_neighbour_for_output_signal(args.position, args.block);
 
         BlockActionResult::Success
     }
