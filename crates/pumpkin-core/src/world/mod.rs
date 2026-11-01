@@ -393,6 +393,28 @@ impl World {
             let _ = level.rt_handle.set(server_arc.runtime.clone());
         }
 
+        // world: restore clock and weather from the save (ServerLevel.<init>, prepareWeather)
+        let (level_time, weather) = {
+            let info = level_info.load();
+            let mut level_time = LevelTime::new();
+            level_time.load_from(info.day_time, info.game_time);
+            let mut weather = Weather::new();
+            weather.clear_weather_time = info.clear_weather_time.max(0);
+            weather.raining = info.raining;
+            weather.rain_time = info.rain_time;
+            weather.thundering = info.thundering;
+            weather.thunder_time = info.thunder_time;
+            if info.raining {
+                weather.rain_level = 1.0;
+                weather.old_rain_level = 1.0;
+                if info.thundering {
+                    weather.thunder_level = 1.0;
+                    weather.old_thunder_level = 1.0;
+                }
+            }
+            (level_time, weather)
+        };
+
         Self {
             uuid: Uuid::new_v4(),
             level,
@@ -411,9 +433,9 @@ impl World {
                 5,
                 300,
             )),
-            level_time: std::sync::Mutex::new(LevelTime::new()),
+            level_time: std::sync::Mutex::new(level_time),
             dimension,
-            weather: std::sync::Mutex::new(Weather::new()),
+            weather: std::sync::Mutex::new(weather),
             block_registry,
             sea_level: generation_settings.sea_level,
             min_y: i32::from(generation_settings.shape.min_y),

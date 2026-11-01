@@ -282,6 +282,9 @@ fn level_data_from_nbt(data: &NbtCompound, seed: i64) -> LevelData {
     if let Some(day_time) = data.get_long("DayTime") {
         level_data.day_time = day_time;
     }
+    if let Some(game_time) = data.get_long("Time") {
+        level_data.game_time = game_time;
+    }
     if let Some(clear_weather_time) = data.get_int("clearWeatherTime") {
         level_data.clear_weather_time = clear_weather_time;
     }
@@ -291,6 +294,7 @@ fn level_data_from_nbt(data: &NbtCompound, seed: i64) -> LevelData {
 
 fn level_data_to_nbt(info: &LevelData, data: &mut NbtCompound) {
     data.put_bool("allowCommands", info.allow_commands);
+    data.put_long("Time", info.game_time);
     data.put_double("BorderCenterX", info.border_center_x);
     data.put_double("BorderCenterZ", info.border_center_z);
     data.put_double("BorderDamagePerBlock", info.border_damage_per_block);
@@ -414,6 +418,10 @@ impl WorldInfoReader for AnvilLevelInfo {
         {
             let weather = read_weather(level_folder);
             level_data.clear_weather_time = weather.clear_weather_time;
+            level_data.raining = weather.raining;
+            level_data.rain_time = weather.rain_time;
+            level_data.thundering = weather.thundering;
+            level_data.thunder_time = weather.thunder_time;
         }
 
         Ok(level_data)
@@ -489,6 +497,10 @@ impl WorldInfoWriter for AnvilLevelInfo {
         // weather.dat
         let mut weather = read_weather(level_folder);
         weather.clear_weather_time = info.clear_weather_time;
+        weather.raining = info.raining;
+        weather.rain_time = info.rain_time;
+        weather.thundering = info.thundering;
+        weather.thunder_time = info.thunder_time;
         weather.data_version = data_version;
         if let Err(e) = write_weather(level_folder, &weather) {
             error!("Failed to write weather.dat: {e}");
@@ -790,12 +802,17 @@ mod test {
 
         let game_rules_path = minecraft_data_dir(temp_dir.path()).join("game_rules.dat");
         let game_rules = read_gzip_compound_tag(File::open(game_rules_path).unwrap()).unwrap();
+        // Vanilla SavedData keeps DataVersion next to "data", not inside it.
+        assert_eq!(
+            game_rules.get_int("DataVersion"),
+            Some(MAXIMUM_SUPPORTED_WORLD_DATA_VERSION)
+        );
         assert_eq!(
             game_rules
                 .get_compound("data")
                 .unwrap()
                 .get_int("DataVersion"),
-            Some(MAXIMUM_SUPPORTED_WORLD_DATA_VERSION)
+            None
         );
     }
 
@@ -906,6 +923,11 @@ mod test {
             },
             data_version: 4189,
             day_time: 1727,
+            game_time: 0,
+            raining: false,
+            rain_time: 0,
+            thundering: false,
+            thunder_time: 0,
             difficulty: Difficulty::Normal,
             difficulty_locked: false,
             game_rules: GameRuleRegistry {

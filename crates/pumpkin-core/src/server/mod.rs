@@ -569,7 +569,34 @@ impl Server {
         Ok(())
     }
 
+    // server: copy the overworld clock and weather into level data before saving (MinecraftServer.saveAllChunks)
+    fn sync_level_info_from_overworld(&self) {
+        let world = self.get_world_from_dimension(&Dimension::OVERWORLD);
+        let mut info = (**self.level_info.load()).clone();
+        {
+            let level_time = world
+                .level_time
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            info.day_time = level_time.time_of_day;
+            info.game_time = level_time.world_age;
+        }
+        {
+            let weather = world
+                .weather
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            info.clear_weather_time = weather.clear_weather_time;
+            info.raining = weather.raining;
+            info.rain_time = weather.rain_time;
+            info.thundering = weather.thundering;
+            info.thunder_time = weather.thunder_time;
+        }
+        self.level_info.store(Arc::new(info));
+    }
+
     pub fn save_world_info(&self) -> Result<(), WorldInfoError> {
+        self.sync_level_info_from_overworld();
         let level_data = self.level_info.load();
         self.world_info_writer
             .write_world_info(&level_data, &self.basic_config.get_world_path())
@@ -849,6 +876,7 @@ impl Server {
         for world in self.worlds.load().iter() {
             world.shutdown().await;
         }
+        self.sync_level_info_from_overworld();
         let level_data = self.level_info.load();
         // then lets save the world info
 

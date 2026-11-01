@@ -77,9 +77,23 @@ impl Weather {
         }
     }
 
+    // weather: timers run with sky light and advance_weather on (ServerLevel.advanceWeatherCycle)
     pub fn tick_weather(&mut self, world: &World) {
-        if !self.weather_cycle_enabled {
+        if !world.dimension.has_skylight {
+            return;
+        }
+        let was_raining = self.raining;
+        self.weather_cycle_enabled = world.level_info.load().game_rules.advance_weather;
+        if self.weather_cycle_enabled {
             self.advance_weather_cycle();
+        }
+        if was_raining != self.raining {
+            let event = if was_raining {
+                GameEvent::EndRaining
+            } else {
+                GameEvent::BeginRaining
+            };
+            world.broadcast_packet_all(&CGameEvent::new(event, 0.0));
         }
 
         // Update visual transitions
