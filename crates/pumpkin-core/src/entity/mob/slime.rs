@@ -422,7 +422,7 @@ impl Mob for SlimeEntity {
                     .cast_any()
                     .downcast_ref::<crate::entity::mob::magma_cube::MagmaCubeEntity>(
                 ) {
-                    cube.slime.set_size(half_size, true);
+                    cube.set_size(half_size, true);
                 }
                 let child = slime_like.get_entity();
                 child.yaw.store(rand::random_range(0.0..360.0));
