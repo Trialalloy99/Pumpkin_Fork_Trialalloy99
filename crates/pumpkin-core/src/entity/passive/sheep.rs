@@ -375,6 +375,11 @@ impl Mob for SheepEntity {
         &self.mob_entity
     }
 
+    // sheep: ambient (Sheep.getAmbientSound)
+    fn get_ambient_sound(&self) -> Option<Sound> {
+        Some(Sound::EntitySheepAmbient)
+    }
+
     fn on_eating_grass(&self) {
         self.set_sheared(false);
         if self.can_age_up() {
