@@ -14,11 +14,17 @@ use crate::block::entities::campfire::CampfireBlockEntity;
 use crate::{
     block::{
         BlockBehaviour, BlockIsReplacing, GetStateForNeighborUpdateArgs, OnEntityCollisionArgs,
-        OnPlaceArgs, OnProjectileHitArgs, PathComputationType, PlacedArgs, UseWithItemArgs,
-        registry::BlockActionResult,
+        OnPlaceArgs, OnProjectileHitArgs, OnStateReplacedArgs, PathComputationType, PlacedArgs,
+        UseWithItemArgs, registry::BlockActionResult,
     },
     entity::EntityBase,
 };
+use pumpkin_data::game_event::GameEvent;
+use pumpkin_data::item::Item;
+use pumpkin_data::item_stack::ItemStack;
+use pumpkin_data::tag::{Item as ItemTag, Taggable};
+use pumpkin_data::world::WorldEvent;
+use pumpkin_util::GameMode;
 use pumpkin_world::world::BlockFlags;
 use std::sync::Arc;
 
@@ -31,9 +37,51 @@ impl BlockBehaviour for CampfireBlock {
         args.world.add_block_entity(Arc::new(entity));
     }
 
+    fn on_state_replaced(&self, args: OnStateReplacedArgs<'_>) {
+        // campfire: drop remaining food on break (CampfireBlockEntity.preRemoveSideEffects)
+        if let Some(block_entity) = args.world.get_block_entity(args.position)
+            && let Some(campfire) = block_entity.as_any().downcast_ref::<CampfireBlockEntity>()
+        {
+            campfire.drop_all_items(args.world);
+        }
+    }
+
     fn use_with_item(&self, args: UseWithItemArgs<'_>) -> BlockActionResult {
         let state = args.world.get_block_state(args.position);
-        if !CampfireLikeProperties::from_state_id(state.id).lit {
+        let props = CampfireLikeProperties::from_state_id(state.id);
+
+        // campfire: douse with shovel/dousing tool (CampfireBlock.useItemOn)
+        if args
+            .item_stack
+            .item
+            .has_tag(&ItemTag::MINECRAFT_DOUSES_CAMPFIRES)
+            && props.lit
+        {
+            args.world
+                .sync_world_event(WorldEvent::SoundExtinguishFire, *args.position, 0);
+            let mut new_props = props;
+            new_props.lit = false;
+            args.world.set_block_state(
+                args.position,
+                new_props.to_state_id(args.block),
+                BlockFlags::NOTIFY_ALL,
+            );
+            args.world.emit_game_event(
+                GameEvent::BlockChange.name(),
+                args.position.to_centered_f64(),
+            );
+            if args.player.gamemode.load() != GameMode::Creative {
+                let damage = args.item_stack.get_damage() + 1;
+                if damage >= args.item_stack.get_max_damage().unwrap_or(0) {
+                    *args.item_stack = ItemStack::new(0, &Item::AIR);
+                } else {
+                    args.item_stack.set_damage(damage);
+                }
+            }
+            return BlockActionResult::Success;
+        }
+
+        if !props.lit {
             return BlockActionResult::PassToDefaultBlockAction;
         }
 
