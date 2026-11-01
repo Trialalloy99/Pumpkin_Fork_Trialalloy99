@@ -119,7 +119,7 @@ pub struct LivingEntity {
 
     last_hurt_by_mob: AtomicCell<Option<LastHurtByMob>>,
     last_hurt_by_mob_timestamp: AtomicI32,
-    last_damage_type: std::sync::Mutex<Option<DamageType>>,
+    pub(crate) last_damage_type: std::sync::Mutex<Option<DamageType>>,
     /// Entity id of the last damage source's causing entity, 0 when it had none.
     last_damage_attacker: AtomicI32,
     last_damage_stamp: std::sync::atomic::AtomicI64,
@@ -3206,11 +3206,13 @@ impl LivingEntity {
                 .entity_equipment
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
+            // armor value: body slot counts too (wolf/horse armor, LivingEntity.getArmorValue)
             for slot in [
                 EquipmentSlot::HEAD,
                 EquipmentSlot::CHEST,
                 EquipmentSlot::LEGS,
                 EquipmentSlot::FEET,
+                EquipmentSlot::BODY,
             ] {
                 if let Some(stack) = equipment_lock.equipment.get(&slot)
                     && !stack.is_empty()
@@ -3585,15 +3587,19 @@ impl LivingEntity {
 
         // Apply hurt cooldown logic
         let last_damage = self.last_damage_taken.load();
-        let (damage_amount, play_sound) =
+        let (damage_amount, raw_damage, play_sound) =
             if self.hurt_cooldown.load(Relaxed) > 10 && !bypasses_cooldown_protection {
                 if effective_amount <= last_damage {
                     return false;
                 }
-                (effective_amount - last_damage, false)
+                (effective_amount - last_damage, amount - last_damage, false)
             } else {
                 self.hurt_cooldown.store(20, Relaxed);
-                (effective_amount, self.health.load() > effective_amount)
+                (
+                    effective_amount,
+                    amount,
+                    self.health.load() > effective_amount,
+                )
             };
 
         // Finalize state
@@ -3673,6 +3679,16 @@ impl LivingEntity {
                 let resistance = self.get_attribute_value(&Attributes::KNOCKBACK_RESISTANCE);
                 self.entity
                     .apply_knockback(knockback_after_resistance(0.4, resistance), dx, dz);
+            }
+        }
+
+        // mob actuallyHurt override (wolf armor absorbs), else armor durability (hurtArmor)
+        if let Some(mob) = caller.get_mob() {
+            if mob.actually_hurt_override(damage_type, raw_damage) {
+                return true;
+            }
+            if !damage_type.has_tag(&tag::DamageType::MINECRAFT_BYPASSES_ARMOR) {
+                mob.hurt_armor(damage_type, raw_damage);
             }
         }
 

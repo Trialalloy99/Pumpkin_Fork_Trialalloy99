@@ -1547,6 +1547,15 @@ pub trait Mob: EntityBase + Send + Sync {
         self.pre_damage(damage_type, source)
     }
 
+    /// Vanilla `hurtArmor`: equipment durability loss from a hit that armor applies to.
+    fn hurt_armor(&self, _damage_type: DamageType, _damage: f32) {}
+
+    /// Replaces vanilla `actuallyHurt` when it returns `true` (health is then left untouched).
+    /// `raw_damage` is the damage before armor, after the hurt cooldown.
+    fn actually_hurt_override(&self, _damage_type: DamageType, _raw_damage: f32) -> bool {
+        false
+    }
+
     fn on_damage(&self, _damage_type: DamageType, _source: Option<&dyn EntityBase>) {}
 
     fn on_damage_with_context(

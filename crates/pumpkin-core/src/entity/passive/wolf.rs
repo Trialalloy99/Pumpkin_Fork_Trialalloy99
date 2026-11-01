@@ -4,6 +4,7 @@ use std::sync::{
 };
 
 use pumpkin_data::BlockState;
+use pumpkin_data::data_component_impl::EquipmentSlot;
 use pumpkin_data::attributes::Attributes;
 use pumpkin_data::damage::DamageType;
 use pumpkin_data::entity::{EntityStatus, EntityType};
@@ -264,6 +265,10 @@ impl Mob for WolfEntity {
     fn post_tick(&self) {
         let entity = self.get_entity();
         if !entity.is_alive() {
+            // wolf: death clears wet + shake (Wolf.die)
+            self.is_wet.store(false, Ordering::Relaxed);
+            self.is_shaking.store(false, Ordering::Relaxed);
+            self.shake_ticks.store(0, Ordering::Relaxed);
             return;
         }
         if entity.is_in_water_or_rain() {
@@ -303,6 +308,50 @@ impl Mob for WolfEntity {
 
     fn on_damage(&self, _damage_type: DamageType, _source: Option<&dyn EntityBase>) {
         self.order_to_sit(false);
+    }
+
+    // wolf: body armor durability when it does not absorb (Wolf.hurtArmor, doHurtEquipment)
+    fn hurt_armor(&self, damage_type: DamageType, damage: f32) {
+        if damage <= 0.0 || self.can_armor_absorb(damage_type) {
+            return;
+        }
+        let damageable = self
+            .mob_entity
+            .living_entity
+            .entity_equipment
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .equipment
+            .get(&EquipmentSlot::BODY)
+            .is_some_and(ItemStack::is_damageable);
+        if damageable {
+            self.mob_entity
+                .damage_item_in_slot(&EquipmentSlot::BODY, (damage / 4.0).max(1.0) as i32);
+        }
+    }
+
+    // wolf: armor takes the hit, crack sound + scute particles (Wolf.actuallyHurt)
+    fn actually_hurt_override(&self, damage_type: DamageType, raw_damage: f32) -> bool {
+        if !self.can_armor_absorb(damage_type) {
+            return false;
+        }
+        let mob_entity = &self.mob_entity;
+        let crack_before = self.armor_crackiness();
+        mob_entity.damage_item_in_slot(&EquipmentSlot::BODY, raw_damage.ceil() as i32);
+        if crack_before != self.armor_crackiness() {
+            self.play_entity_sound(pumpkin_data::sound::Sound::ItemWolfArmorCrack, 1.0, 1.0);
+            let entity = self.get_entity();
+            let pos = entity.pos.load();
+            send_item_particles(
+                &entity.world.load(),
+                &Item::ARMADILLO_SCUTE,
+                pumpkin_util::math::vector3::Vector3::new(pos.x, pos.y + 1.0, pos.z),
+                20,
+                pumpkin_util::math::vector3::Vector3::new(0.2, 0.1, 0.2),
+                0.1,
+            );
+        }
+        true
     }
 
     fn mob_play_step_sound(&self, _pos: &BlockPos, _state: &BlockState) {
@@ -567,6 +616,16 @@ impl CustomSound for WolfEntity {
     }
 
     fn hurt_sound(&self) -> Option<pumpkin_data::sound::Sound> {
+        // wolf: armor hurt sound when the armor absorbs (Wolf.getHurtSound)
+        let last_damage = *self
+            .mob_entity
+            .living_entity
+            .last_damage_type
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if last_damage.is_some_and(|damage_type| self.can_armor_absorb(damage_type)) {
+            return Some(pumpkin_data::sound::Sound::ItemWolfArmorDamage);
+        }
         let is_baby = self.is_baby();
         let sound_variant = WolfSoundVariant::from_id(self.sound_variant.load(Ordering::Relaxed))
             .unwrap_or_default();
@@ -574,7 +633,85 @@ impl CustomSound for WolfEntity {
     }
 }
 
+/// Vanilla `Crackiness.WOLF_ARMOR` thresholds (low, medium, high).
+const WOLF_ARMOR_CRACKINESS: [f32; 3] = [0.95, 0.69, 0.32];
+
+// item particle: ItemParticleOption payload (ItemStackTemplate: item, count 1, empty patch)
+fn send_item_particles(
+    world: &World,
+    item: &Item,
+    pos: pumpkin_util::math::vector3::Vector3<f64>,
+    count: i32,
+    offset: pumpkin_util::math::vector3::Vector3<f32>,
+    speed: f32,
+) {
+    let mut payload = Vec::with_capacity(6);
+    let mut id = u32::from(item.id);
+    loop {
+        let byte = (id & 0x7F) as u8;
+        id >>= 7;
+        if id == 0 {
+            payload.push(byte);
+            break;
+        }
+        payload.push(byte | 0x80);
+    }
+    payload.extend_from_slice(&[1, 0, 0]);
+    let packet = pumpkin_protocol::java::client::play::CParticle::new(
+        false,
+        false,
+        pos,
+        offset,
+        speed,
+        count,
+        VarInt(i32::from(pumpkin_data::particle::Particle::Item.to_id())),
+        &payload,
+    );
+    world.broadcast_packet_all(&packet);
+}
+
 impl WolfEntity {
+    // wolf: wolf armor equipped and damage not bypassing it (Wolf.canArmorAbsorb)
+    fn can_armor_absorb(&self, damage_type: DamageType) -> bool {
+        !damage_type.has_tag(&tag::DamageType::MINECRAFT_BYPASSES_WOLF_ARMOR)
+            && self
+                .mob_entity
+                .living_entity
+                .entity_equipment
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .equipment
+                .get(&EquipmentSlot::BODY)
+                .is_some_and(|stack| stack.item.id == Item::WOLF_ARMOR.id)
+    }
+
+    // wolf: armor crack level 0..3 (Crackiness.WOLF_ARMOR.byDamage)
+    fn armor_crackiness(&self) -> u8 {
+        let equipment = self
+            .mob_entity
+            .living_entity
+            .entity_equipment
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(stack) = equipment.equipment.get(&EquipmentSlot::BODY) else {
+            return 0;
+        };
+        let Some(max_damage) = stack.get_max_damage().filter(|_| stack.is_damageable()) else {
+            return 0;
+        };
+        let fraction = (max_damage - stack.get_damage()) as f32 / max_damage as f32;
+        let [low, medium, high] = WOLF_ARMOR_CRACKINESS;
+        if fraction < high {
+            3
+        } else if fraction < medium {
+            2
+        } else if fraction < low {
+            1
+        } else {
+            0
+        }
+    }
+
     pub fn get_collar_color(&self) -> u8 {
         self.collar_color.load(Ordering::Relaxed)
     }
