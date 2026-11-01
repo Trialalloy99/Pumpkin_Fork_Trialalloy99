@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicI64, Ordering};
 
 use crossbeam::atomic::AtomicCell;
 use pumpkin_data::{Block, BlockDirection, BlockState};
@@ -16,6 +16,8 @@ pub struct PistonBlockEntity {
     pub facing: BlockDirection,
     pub current_progress: AtomicCell<f32>,
     pub last_progress: AtomicCell<f32>,
+    // piston: game time of the last tick (PistonMovingBlockEntity.lastTicked)
+    pub last_ticked: AtomicI64,
     pub extending: bool,
     pub source: bool,
 }
@@ -211,6 +213,7 @@ const FACING: &str = "facing";
 const LAST_PROGRESS: &str = "progress";
 const EXTENDING: &str = "extending";
 const SOURCE: &str = "source";
+const BLOCK_STATE: &str = "blockState";
 
 impl BlockEntity for PistonBlockEntity {
     fn resource_location(&self) -> &'static str {
@@ -222,6 +225,8 @@ impl BlockEntity for PistonBlockEntity {
     }
 
     fn tick(&self, world: &Arc<World>) {
+        self.last_ticked
+            .store(world.get_world_age(), Ordering::Relaxed);
         let current_progress = self.current_progress.load();
         self.last_progress.store(current_progress);
         if current_progress >= 1.0 {
@@ -256,8 +261,10 @@ impl BlockEntity for PistonBlockEntity {
     where
         Self: Sized,
     {
-        // TODO
-        let pushed_block_state = Block::AIR.default_state;
+        let pushed_block_state = nbt
+            .get_compound(BLOCK_STATE)
+            .and_then(crate::block::read_block_state_nbt)
+            .map_or(Block::AIR.default_state, BlockState::from_id);
         let facing = nbt.get_byte(FACING).unwrap_or(0);
         let last_progress = nbt.get_float(LAST_PROGRESS).unwrap_or(0.0);
         let extending = nbt.get_bool(EXTENDING).unwrap_or(false);
@@ -268,13 +275,17 @@ impl BlockEntity for PistonBlockEntity {
             facing: BlockDirection::from_index(facing as u8).unwrap_or(BlockDirection::Down),
             current_progress: last_progress.into(),
             last_progress: last_progress.into(),
+            last_ticked: AtomicI64::new(0),
             extending,
             source,
         }
     }
 
     fn write_nbt(&self, nbt: &mut NbtCompound) {
-        // TODO: pushed_block_state
+        nbt.put_compound(
+            BLOCK_STATE,
+            crate::block::write_block_state_nbt(self.pushed_block_state.id),
+        );
         nbt.put_byte(FACING, self.facing.to_index() as i8);
         nbt.put_float(LAST_PROGRESS, self.last_progress.load());
         nbt.put_bool(EXTENDING, self.extending);

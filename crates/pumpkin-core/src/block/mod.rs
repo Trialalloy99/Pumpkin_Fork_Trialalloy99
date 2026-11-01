@@ -630,3 +630,61 @@ pub fn calculate_comparator_output(inventory: &dyn pumpkin_inventory::Inventory)
     let output = 1.0 + percentage * 14.0;
     output.floor() as u8
 }
+
+// block state nbt {id, properties} (BlockState.CODEC)
+#[must_use]
+pub fn write_block_state_nbt(
+    block_state: pumpkin_data::BlockStateId,
+) -> pumpkin_nbt::compound::NbtCompound {
+    use pumpkin_nbt::compound::NbtCompound;
+    let block = pumpkin_data::Block::from_state_id(block_state);
+    let mut state = NbtCompound::new();
+    let name = if block.name.starts_with("minecraft:") {
+        block.name.to_string()
+    } else {
+        format!("minecraft:{}", block.name)
+    };
+    state.put_string("id", name);
+    if let Some(properties) = block.properties(block_state) {
+        let props = properties.to_props();
+        if !props.is_empty() {
+            let mut compound = NbtCompound::new();
+            for prop in props {
+                compound.put_string(prop.key_str(), prop.value_str().to_string());
+            }
+            state.put_compound("properties", compound);
+        }
+    }
+    state
+}
+
+// block state nbt, also legacy {Name, Properties} (BlockState.CODEC)
+#[must_use]
+pub fn read_block_state_nbt(
+    state: &pumpkin_nbt::compound::NbtCompound,
+) -> Option<pumpkin_data::BlockStateId> {
+    let name = state
+        .get_string("id")
+        .or_else(|| state.get_string("Name"))?;
+    let block = pumpkin_data::Block::from_name(name)?;
+    let props: Vec<pumpkin_data::Property> = state
+        .get_compound("properties")
+        .or_else(|| state.get_compound("Properties"))
+        .map_or_else(Vec::new, |props| {
+            props
+                .child_tags
+                .iter()
+                .filter_map(|(key, value)| match value {
+                    pumpkin_nbt::tag::NbtTag::String(value) => {
+                        pumpkin_data::Property::from_str_pair(key, value)
+                    }
+                    _ => None,
+                })
+                .collect()
+        });
+    if props.is_empty() || block.properties(block.default_state.id).is_none() {
+        Some(block.default_state.id)
+    } else {
+        Some(block.from_properties(&props).to_state_id(block))
+    }
+}

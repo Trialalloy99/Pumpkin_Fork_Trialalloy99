@@ -36,16 +36,35 @@ impl BlockMetadata for PistonBlock {
 
 impl PistonBlock {
     #[must_use]
+    // piston: pushability incl. height and border limits (PistonBaseBlock.isPushable)
     pub fn is_movable(
+        world: &World,
+        pos: &BlockPos,
         block: &Block,
         state: &BlockState,
         dir: BlockDirection,
         can_break: bool,
         piston_dir: BlockDirection,
     ) -> bool {
-        // TODO: more checks
+        let min_y = world.dimension.min_y;
+        let max_y = min_y + world.dimension.height - 1;
+        let y = pos.0.y;
+        if y < min_y
+            || y > max_y
+            || !world
+                .worldborder
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains(f64::from(pos.0.x) + 0.5, f64::from(pos.0.z) + 0.5)
+        {
+            return false;
+        }
         if state.is_air() {
             return true;
+        }
+        if (dir == BlockDirection::Down && y == min_y) || (dir == BlockDirection::Up && y == max_y)
+        {
+            return false;
         }
         // Vanilla hardcoded them aswell
         if block == &Block::OBSIDIAN
@@ -218,6 +237,7 @@ impl PistonBlock {
             pushed_block_state: BlockState::from_id(props.to_state_id(block)),
             current_progress: 0.0.into(),
             last_progress: 0.0.into(),
+            last_ticked: std::sync::atomic::AtomicI64::new(0),
             extending: false,
             source: true,
         }));
@@ -233,16 +253,14 @@ impl PistonBlock {
                 && piston.facing == dir
                 && piston.extending
             {
-                if piston.last_progress.load() < 0.5 {
-                    dropped = true;
-                }
                 piston.finish(world);
+                dropped = true;
             }
             if !dropped {
                 let (block, state) = world.get_block_and_state(&pull_pos);
                 if r#type == 1
                     && !state.is_air()
-                    && Self::is_movable(block, state, dir.opposite(), false, dir)
+                    && Self::is_movable(world, &pull_pos, block, state, dir.opposite(), false, dir)
                     && (state.piston_behavior == PistonBehavior::Normal
                         || block == &Block::PISTON
                         || block == &Block::STICKY_PISTON)
@@ -329,8 +347,14 @@ pub fn try_move(world: &Arc<World>, _block: &Block, block_pos: &BlockPos) {
                 let Some(piston) = entity.as_any().downcast_ref::<PistonBlockEntity>() else {
                     return;
                 };
-                if piston.extending && piston.current_progress.load() < 0.5
-                // TODO: more stuff...
+                // piston: 0-tick retract drops the block (PistonBaseBlock.checkIfExtend)
+                if piston.extending
+                    && (piston.current_progress.load() < 0.5
+                        || world.get_world_age()
+                            == piston
+                                .last_ticked
+                                .load(std::sync::atomic::Ordering::Relaxed)
+                        || world.is_handling_tick())
                 {
                     // Piston reduced too quickly, if its a stick piston no blocks will be dragged
                     r#type = 2;
@@ -410,6 +434,7 @@ fn move_piston(
                 pushed_block_state: moved_state,
                 current_progress: 0.0.into(),
                 last_progress: 0.0.into(),
+                last_ticked: std::sync::atomic::AtomicI64::new(0),
                 extending: extend,
                 source: false,
             }));
@@ -441,6 +466,7 @@ fn move_piston(
             pushed_block_state: BlockState::from_id(props.to_state_id(&Block::PISTON_HEAD)),
             current_progress: 0.0.into(),
             last_progress: 0.0.into(),
+            last_ticked: std::sync::atomic::AtomicI64::new(0),
             extending: true,
             source: true,
         }));

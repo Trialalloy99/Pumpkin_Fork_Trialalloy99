@@ -242,6 +242,7 @@ pub struct World {
     pub scoreboard: std::sync::Mutex<Scoreboard>,
     /// The world's worldborder, defining the playable area and controlling its expansion or contraction.
     pub worldborder: std::sync::Mutex<Worldborder>,
+    handling_tick: std::sync::atomic::AtomicBool,
     /// The world's time, including counting ticks for weather, time cycles, and statistics.
     pub level_time: std::sync::Mutex<LevelTime>,
     /// The type of dimension the world is in.
@@ -401,6 +402,7 @@ impl World {
             entity_index: Arc::default(),
             island_schedule: std::sync::Mutex::default(),
             scoreboard: std::sync::Mutex::new(Scoreboard::default()),
+            handling_tick: std::sync::atomic::AtomicBool::new(false),
             worldborder: std::sync::Mutex::new(Worldborder::new(
                 0.0,
                 0.0,
@@ -2145,6 +2147,8 @@ impl World {
             .clone();
         let tick_data = self.level.get_tick_data(&active_chunks, random_tick_speed);
 
+        // world: scheduled ticks running (ServerLevel.handlingTick)
+        self.handling_tick.store(true, Ordering::Relaxed);
         // 1. Parallel Block Ticks via Rayon
         let world = self.clone();
         tick_data
@@ -2180,6 +2184,8 @@ impl World {
                     }
                 }
             });
+
+        self.handling_tick.store(false, Ordering::Relaxed);
 
         // 3. Parallel Random Ticks via Rayon
         let world = self.clone();
@@ -5675,6 +5681,11 @@ impl World {
     #[must_use]
     pub const fn environment_attributes(&self) -> EnvironmentAttributes<'_> {
         EnvironmentAttributes::new(self)
+    }
+
+    #[must_use]
+    pub fn is_handling_tick(&self) -> bool {
+        self.handling_tick.load(Ordering::Relaxed)
     }
 
     #[must_use]

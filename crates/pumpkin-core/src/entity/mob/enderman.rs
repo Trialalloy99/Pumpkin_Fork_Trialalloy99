@@ -405,56 +405,17 @@ impl Mob for EndermanEntity {
     // enderman: carried block as {id, properties} (Enderman.addAdditionalSaveData, BlockState.CODEC)
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
         if let Some(block_state) = self.carried_block.load() {
-            let block = pumpkin_data::Block::from_state_id(block_state);
-            let mut state = NbtCompound::new();
-            let name = if block.name.starts_with("minecraft:") {
-                block.name.to_string()
-            } else {
-                format!("minecraft:{}", block.name)
-            };
-            state.put_string("id", name);
-            if let Some(properties) = block.properties(block_state) {
-                let props = properties.to_props();
-                if !props.is_empty() {
-                    let mut compound = NbtCompound::new();
-                    for prop in props {
-                        compound.put_string(prop.key_str(), prop.value_str().to_string());
-                    }
-                    state.put_compound("properties", compound);
-                }
-            }
-            nbt.put_compound("carriedBlockState", state);
+            nbt.put_compound(
+                "carriedBlockState",
+                crate::block::write_block_state_nbt(block_state),
+            );
         }
     }
 
     fn mob_read_nbt(&self, nbt: &NbtCompound) {
-        let state = nbt.get_compound("carriedBlockState").and_then(|state| {
-            let name = state
-                .get_string("id")
-                .or_else(|| state.get_string("Name"))?;
-            let block = pumpkin_data::Block::from_name(name)?;
-            let props: Vec<pumpkin_data::Property> = state
-                .get_compound("properties")
-                .or_else(|| state.get_compound("Properties"))
-                .map_or_else(Vec::new, |props| {
-                    props
-                        .child_tags
-                        .iter()
-                        .filter_map(|(key, value)| match value {
-                            pumpkin_nbt::tag::NbtTag::String(value) => {
-                                pumpkin_data::Property::from_str_pair(key, value)
-                            }
-                            _ => None,
-                        })
-                        .collect()
-                });
-            let id = if props.is_empty() || block.properties(block.default_state.id).is_none() {
-                block.default_state.id
-            } else {
-                block.from_properties(&props).to_state_id(block)
-            };
-            Some(id)
-        });
+        let state = nbt
+            .get_compound("carriedBlockState")
+            .and_then(crate::block::read_block_state_nbt);
         let state = state.or_else(|| {
             nbt.get_int("carriedBlockState")
                 .and_then(|id| BlockStateId::new(id as u16))
