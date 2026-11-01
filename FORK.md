@@ -66,11 +66,11 @@ Unser Fortschritt steht auf **https://claude.ai/artifact/KAHK4pXmbbEhd9nXiBuobN*
 | Batch | Inhalt | Stand |
 |---|---|---|
 | 1 | Vex (plus die Vex-Beschwörung beim Evoker) | fertig auf `feat/vex-ai` und `playable`; Test im Spiel steht aus |
-| Commands | `/locate` (alle POI-Typen, POIs aus geladenen Chunks), `/perf` | fertig auf `batch-commands` |
-| 2 | Guardian, Elder Guardian, Illusioner, Vindicator, Ravager, Endermite | fertig (Lücken in `batch-3` geschlossen); Test im Spiel steht aus |
-| 3 | Zombie, Husk, Zombie Villager, Zombified Piglin, Enderman, Wolf | fertig auf `batch-3` (Husk erst mit dem Kamel-Husk aus Batch 4 komplett); Test im Spiel steht aus |
+| Commands | `/locate` (alle POI-Typen, POIs aus geladenen Chunks), `/perf` | fertig, in `playable` gemergt |
+| 2 | Guardian, Elder Guardian, Illusioner, Vindicator, Ravager, Endermite | fertig, in `playable` gemergt; Test im Spiel steht aus |
+| 3 | Zombie, Husk, Zombie Villager, Zombified Piglin, Enderman, Wolf | fertig, in `playable` gemergt (Husk erst mit dem Kamel-Husk aus Batch 4 komplett); Test im Spiel steht aus |
 | 5 (Codex) | Slime, Magma Cube, Phantom, Silverfish, Blaze, Pillager, Piglin Brute, Hoglin, Zoglin, Polar Bear | Auftrag in `CODEX_BATCH5.md`, Branch `batch-5-codex` |
-| 4 | Parched, Skeleton, Stray, Bogged, Creeper, Spider, Cave Spider, Drowned, Witch | fertig auf `batch-4` (von `batch-3` abgezweigt); Test im Spiel steht aus. Camel Husk verschoben (braucht das ganze Kamel) |
+| 4 | Parched, Skeleton, Stray, Bogged, Creeper, Spider, Cave Spider, Drowned, Witch | fertig, in `playable` gemergt; Test im Spiel steht aus. Camel Husk verschoben (braucht das ganze Kamel) |
 
 Aus dem Tracker entfernt, weil Vanilla sie auf einem dedizierten Server nicht hat: `/publish` und `/unpublish` (nur Einzelspieler) sowie `/jfr` (Java Flight Recorder, braucht eine JVM).
 
