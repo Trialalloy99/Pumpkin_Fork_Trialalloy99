@@ -3,6 +3,7 @@ use pumpkin_data::{
     block_properties::{DriedGhastLikeProperties, HorizontalFacing},
     entity::EntityType,
     fluid::Fluid,
+    game_event::GameEvent,
     sound::{Sound, SoundCategory},
 };
 use pumpkin_macros::pumpkin_block;
@@ -102,6 +103,11 @@ impl BlockBehaviour for DriedGhastBlock {
                     props.to_state_id(args.block),
                     BlockFlags::NOTIFY_LISTENERS,
                 );
+                // dried ghast: emit block change event (DriedGhastBlock.tickWaterlogged)
+                args.world.emit_game_event(
+                    GameEvent::BlockChange.name(),
+                    args.position.to_centered_f64(),
+                );
             } else {
                 args.world
                     .break_block(args.position, None, BlockFlags::SKIP_DROPS);
@@ -132,6 +138,11 @@ impl BlockBehaviour for DriedGhastBlock {
                 args.position,
                 props.to_state_id(args.block),
                 BlockFlags::NOTIFY_LISTENERS,
+            );
+            // dried ghast: emit block change event on dehydration (DriedGhastBlock.tick)
+            args.world.emit_game_event(
+                GameEvent::BlockChange.name(),
+                args.position.to_centered_f64(),
             );
         }
     }
