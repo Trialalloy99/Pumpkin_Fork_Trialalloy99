@@ -38,8 +38,13 @@ impl PotentSulfurBlock {
         ) {
             world.add_synced_block_event(*pos, 0, 0);
             if let Some(sound) = Self::get_eruption_start_sound(state) {
-                world.play_sound(sound, SoundCategory::Blocks, &pos.to_f64());
+                world.play_sound(sound, SoundCategory::Blocks, &pos.to_centered_f64());
             }
+            // potent_sulfur: emit block activate game event (PotentSulfurBlock.onPlace)
+            world.emit_game_event(
+                pumpkin_data::game_event::GameEvent::BlockActivate.name(),
+                pos.to_centered_f64(),
+            );
         }
     }
 
