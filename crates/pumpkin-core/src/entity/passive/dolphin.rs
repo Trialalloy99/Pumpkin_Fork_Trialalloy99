@@ -3,6 +3,7 @@ use std::sync::{
     atomic::{AtomicBool, AtomicI32, Ordering::Relaxed},
 };
 
+use pumpkin_data::structures::StructureSet;
 use pumpkin_data::{
     damage::DamageType,
     effect::StatusEffect,
@@ -14,7 +15,13 @@ use pumpkin_data::{
     sound::{Sound, SoundCategory},
 };
 use pumpkin_nbt::compound::NbtCompound;
-use pumpkin_util::math::vector3::Vector3;
+use pumpkin_util::math::{position::BlockPos, vector3::Vector3};
+use pumpkin_world::generation::generator::structure_finder::{
+    StructureSearch, find_nearest_structure,
+};
+
+use crate::entity::ai::goal::to_goal_ticks;
+use crate::entity::ai::util::default_random_pos;
 use rand::RngExt;
 
 use crate::entity::ai::behavior::fleeing::{self, Flee};
@@ -47,6 +54,8 @@ pub struct DolphinEntity {
     pub mob_entity: MobEntity,
     pub got_fish: AtomicBool,
     pub moistness_level: AtomicI32,
+    // dolphin: Dolphin.treasurePos
+    pub treasure_pos: crossbeam::atomic::AtomicCell<Option<BlockPos>>,
 }
 
 impl DolphinEntity {
@@ -71,6 +80,7 @@ impl DolphinEntity {
             mob_entity,
             got_fish: AtomicBool::new(false),
             moistness_level: AtomicI32::new(MAX_MOISTNESS),
+            treasure_pos: crossbeam::atomic::AtomicCell::new(None),
         };
         let mob_arc = Arc::new(dolphin);
         let mob_weak: Weak<dyn Mob> = {
@@ -85,7 +95,7 @@ impl DolphinEntity {
             goal_selector.add_goal(0, Box::new(TryFindWaterGoal));
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
             // dolphin: swim to treasure goal (Dolphin.DolphinSwimToTreasureGoal)
-            goal_selector.add_goal(1, Box::new(DolphinSwimToTreasureGoal));
+            goal_selector.add_goal(1, Box::new(DolphinSwimToTreasureGoal::default()));
             // dolphin: swim with player granting Dolphin's Grace (Dolphin.DolphinSwimWithPlayerGoal)
             goal_selector.add_goal(2, Box::new(DolphinSwimWithPlayerGoal::new(4.0)));
             goal_selector.add_goal(3, EscapeDangerGoal::new(1.6));
@@ -424,9 +434,53 @@ impl Goal for DolphinJumpGoal {
     }
 }
 
-// dolphin: treasure navigation (Dolphin.DolphinSwimToTreasureGoal)
-// Note: runtime structure search in world is currently not implemented in Pumpkin (known gap).
-struct DolphinSwimToTreasureGoal;
+// dolphin: Dolphin.DolphinSwimToTreasureGoal, leads to the nearest ocean ruin or shipwreck
+#[derive(Default)]
+struct DolphinSwimToTreasureGoal {
+    stuck: bool,
+}
+
+impl DolphinSwimToTreasureGoal {
+    fn reached(dolphin: &DolphinEntity, treasure: BlockPos) -> bool {
+        let pos = dolphin.get_entity().pos.load();
+        let center = Vector3::new(
+            f64::from(treasure.0.x) + 0.5,
+            pos.y.floor() + 0.5,
+            f64::from(treasure.0.z) + 0.5,
+        );
+        center.squared_distance_to_vec(&pos) < 16.0
+    }
+
+    // dolphin: StructureTags.DOLPHIN_LOCATED (ocean ruins, shipwrecks), radius 50
+    fn find_treasure(dolphin: &DolphinEntity) -> Option<BlockPos> {
+        let entity = dolphin.get_entity();
+        let world = entity.world.load();
+        let level = &world.level;
+        let generator = level.world_gen();
+        let global_cache = generator.global_structure_cache()?;
+        let ruins = StructureSet::get("ocean_ruins")?;
+        let wrecks = StructureSet::get("shipwrecks")?;
+        match find_nearest_structure(
+            entity.block_pos.load(),
+            &[&ruins.placement, &wrecks.placement],
+            50,
+            level.seed.0 as i64,
+            global_cache,
+        ) {
+            StructureSearch::Found(pos) => Some(pos),
+            StructureSearch::NotFound | StructureSearch::Pending => None,
+        }
+    }
+
+    fn signal(dolphin: &DolphinEntity) {
+        let entity = dolphin.get_entity();
+        entity.world.load().send_entity_status(
+            entity,
+            pumpkin_data::entity::EntityStatus::DolphinLookingForTreasure,
+            pumpkin_protocol::bedrock::server::actor_event::ActorEventID::None,
+        );
+    }
+}
 
 impl Goal for DolphinSwimToTreasureGoal {
     fn can_start(&mut self, mob: &dyn Mob) -> bool {
@@ -434,5 +488,122 @@ impl Goal for DolphinSwimToTreasureGoal {
             return false;
         };
         dolphin.got_fish() && dolphin.get_entity().air_supply.load(Relaxed) >= 100
+    }
+
+    fn should_continue(&mut self, mob: &dyn Mob) -> bool {
+        let Some(dolphin) = mob.cast_any().downcast_ref::<DolphinEntity>() else {
+            return false;
+        };
+        dolphin.treasure_pos.load().is_some_and(|treasure| {
+            !Self::reached(dolphin, treasure)
+                && !self.stuck
+                && dolphin.get_entity().air_supply.load(Relaxed) >= 100
+        })
+    }
+
+    fn start(&mut self, mob: &dyn Mob) {
+        let Some(dolphin) = mob.cast_any().downcast_ref::<DolphinEntity>() else {
+            return;
+        };
+        self.stuck = false;
+        dolphin.mob_entity.steered().navigator().stop();
+        if let Some(treasure) = Self::find_treasure(dolphin) {
+            dolphin.treasure_pos.store(Some(treasure));
+            Self::signal(dolphin);
+        } else {
+            self.stuck = true;
+        }
+    }
+
+    fn stop(&mut self, mob: &dyn Mob) {
+        let Some(dolphin) = mob.cast_any().downcast_ref::<DolphinEntity>() else {
+            return;
+        };
+        if dolphin
+            .treasure_pos
+            .load()
+            .is_none_or(|treasure| Self::reached(dolphin, treasure))
+            || self.stuck
+        {
+            dolphin.set_got_fish(false);
+        }
+    }
+
+    fn tick(&mut self, mob: &dyn Mob) {
+        let Some(dolphin) = mob.cast_any().downcast_ref::<DolphinEntity>() else {
+            return;
+        };
+        let Some(treasure) = dolphin.treasure_pos.load() else {
+            return;
+        };
+        let entity = dolphin.get_entity();
+        let pos = entity.pos.load();
+        let close_to_next = {
+            let steered = dolphin.mob_entity.steered();
+            let navigator = steered.navigator();
+            navigator.is_done()
+                || navigator.get_target_pos().is_none_or(|target| {
+                    target.to_centered_f64().squared_distance_to_vec(&pos) < 144.0
+                })
+        };
+        if !close_to_next {
+            return;
+        }
+        let target = treasure.to_centered_f64();
+        let mut next =
+            default_random_pos::get_pos_towards(mob, 16, 1, target, std::f64::consts::PI / 8.0)
+                .or_else(|| {
+                    default_random_pos::get_pos_towards(
+                        mob,
+                        8,
+                        4,
+                        target,
+                        std::f64::consts::PI / 2.0,
+                    )
+                });
+        if let Some(candidate) = next {
+            let block = BlockPos::floored_v(candidate);
+            let world = entity.world.load();
+            // dolphin: next step must be water (FluidTags.WATER)
+            let in_water = world.get_block(&block) == &pumpkin_data::Block::WATER
+                || world.get_block_state(&block).is_waterlogged();
+            if !in_water {
+                next = default_random_pos::get_pos_towards(
+                    mob,
+                    8,
+                    5,
+                    target,
+                    std::f64::consts::PI / 2.0,
+                );
+            }
+        }
+        let Some(next) = next else {
+            self.stuck = true;
+            return;
+        };
+        dolphin
+            .mob_entity
+            .look_control
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .look_at(mob, next.x, next.y, next.z);
+        dolphin.mob_entity.steered().navigator().move_to_coords(
+            next.x,
+            next.y,
+            next.z,
+            1.3,
+            &dolphin.mob_entity.living_entity,
+        );
+        if rand::random_range(0..to_goal_ticks(80)) == 0 {
+            Self::signal(dolphin);
+        }
+    }
+
+    fn can_stop(&self) -> bool {
+        false
+    }
+
+    fn controls(&self) -> Controls {
+        Controls::MOVE | Controls::LOOK
     }
 }
