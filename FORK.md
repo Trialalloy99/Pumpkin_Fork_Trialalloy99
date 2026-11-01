@@ -32,6 +32,7 @@ Tempo ist wichtig. Ein einfacher Mob wie der Vex hat etwa 10 Minuten Coding gebr
   - Ein Commit pro Mob, Conventional Commits mit Scope, z. B. `feat(entity): port guardian attack goal`.
   - Autor ist `Trialalloy99 <maxi.ratnik@gmail.com>`. Keine `Co-Authored-By`- oder Tool-Zeilen.
 - **Code:** Keine Kommentare im Code, außer wenn sonst niemand eine Vanilla-Eigenheit verstehen würde. Der Code soll aussehen wie der Rest des Projekts.
+- **Geschwindigkeitstests:** Nur nach großen Features, im Vergleich mit Vanilla und Paper auf demselben Seed. Wenn der optimierte Build länger als 10 Minuten braucht, fällt der Geschwindigkeitstest weg. Das Skript dafür steht unten.
 - **Push:** Nach jeder Batch auf den Fork pushen.
 
 ## Eigener Tracker
@@ -53,7 +54,10 @@ Unser Fortschritt steht auf **https://claude.ai/artifact/KAHK4pXmbbEhd9nXiBuobN*
 | Batch | Inhalt | Stand |
 |---|---|---|
 | 1 | Vex (plus die Vex-Beschwörung beim Evoker) | fertig auf `feat/vex-ai` und `playable`; Test im Spiel steht aus |
+| Commands | `/locate` (alle POI-Typen, POIs aus geladenen Chunks), `/perf` | fertig auf `batch-commands` |
 | 2 | Guardian, Elder Guardian, Illusioner, Vindicator, Ravager, Endermite | als Nächstes |
+
+Aus dem Tracker entfernt, weil Vanilla sie auf einem dedizierten Server nicht hat: `/publish` und `/unpublish` (nur Einzelspieler) sowie `/jfr` (Java Flight Recorder, braucht eine JVM).
 
 Beim Vex fehlt noch: Vanilla hat ein zweites Umschau-Ziel (`LookAtPlayerGoal` mit `Mob`, Reichweite 8), das bei uns fehlt. `LookAtEntityGoal` kann nur einen einzigen Entity-Typ als Ziel.
 
