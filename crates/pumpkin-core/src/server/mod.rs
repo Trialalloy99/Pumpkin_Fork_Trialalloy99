@@ -573,25 +573,23 @@ impl Server {
     fn sync_level_info_from_overworld(&self) {
         let world = self.get_world_from_dimension(&Dimension::OVERWORLD);
         let mut info = (**self.level_info.load()).clone();
-        {
-            let level_time = world
-                .level_time
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            info.day_time = level_time.time_of_day;
-            info.game_time = level_time.world_age;
-        }
-        {
-            let weather = world
-                .weather
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            info.clear_weather_time = weather.clear_weather_time;
-            info.raining = weather.raining;
-            info.rain_time = weather.rain_time;
-            info.thundering = weather.thundering;
-            info.thunder_time = weather.thunder_time;
-        }
+        let level_time = world
+            .level_time
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        info.day_time = level_time.time_of_day;
+        info.game_time = level_time.world_age;
+        drop(level_time);
+        let weather = world
+            .weather
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        info.clear_weather_time = weather.clear_weather_time;
+        info.raining = weather.raining;
+        info.rain_time = weather.rain_time;
+        info.thundering = weather.thundering;
+        info.thunder_time = weather.thunder_time;
+        drop(weather);
         self.level_info.store(Arc::new(info));
     }
 

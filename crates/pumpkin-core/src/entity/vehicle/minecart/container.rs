@@ -16,7 +16,7 @@ use pumpkin_util::text::TextComponent;
 
 use crate::entity::{Entity, player::Player};
 
-pub(crate) struct MinecartInventory {
+pub struct MinecartInventory {
     items: RwLock<Vec<ItemStack>>,
     size: usize,
     loot_table: Mutex<Option<(String, i64)>>,
@@ -24,7 +24,7 @@ pub(crate) struct MinecartInventory {
 }
 
 impl MinecartInventory {
-    pub(crate) fn new(size: usize) -> Self {
+    pub fn new(size: usize) -> Self {
         Self {
             items: RwLock::new(vec![ItemStack::EMPTY.clone(); size]),
             size,
@@ -33,11 +33,11 @@ impl MinecartInventory {
         }
     }
 
-    pub(crate) fn claim_drops(&self) -> bool {
+    pub fn claim_drops(&self) -> bool {
         !self.drops_claimed.swap(true, Ordering::AcqRel)
     }
 
-    pub(crate) fn read_nbt(&self, nbt: &NbtCompound) {
+    pub fn read_nbt(&self, nbt: &NbtCompound) {
         let loot_table = nbt.get_string("LootTable").map(|loot_table| {
             (
                 loot_table.to_owned(),
@@ -55,7 +55,7 @@ impl MinecartInventory {
         }
     }
 
-    pub(crate) fn write_nbt(&self, nbt: &mut NbtCompound) {
+    pub fn write_nbt(&self, nbt: &mut NbtCompound) {
         let loot_table = self
             .loot_table
             .try_lock()
@@ -80,17 +80,14 @@ impl MinecartInventory {
         }
     }
 
-    pub(crate) fn has_loot_table(&self) -> bool {
+    pub fn has_loot_table(&self) -> bool {
         self.loot_table
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .is_some()
     }
 
-    pub(crate) fn unpack_loot(
-        self: &Arc<Self>,
-        params: &crate::world::loot::LootContextParameters<'_>,
-    ) {
+    pub fn unpack_loot(self: &Arc<Self>, params: &crate::world::loot::LootContextParameters<'_>) {
         let loot_table = self
             .loot_table
             .lock()
@@ -202,7 +199,7 @@ impl ScreenHandlerFactory for MinecartScreenFactory {
     }
 }
 
-pub(crate) fn open(
+pub fn open(
     entity: &Entity,
     player: &Arc<Player>,
     inventory: &Arc<MinecartInventory>,
@@ -235,7 +232,7 @@ pub(crate) fn open(
         .is_some()
 }
 
-pub(crate) fn velocity(
+pub fn velocity(
     entity: &Entity,
     inventory: &MinecartInventory,
     velocity: Vector3<f64>,

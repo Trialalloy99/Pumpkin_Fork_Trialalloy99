@@ -304,7 +304,7 @@ pub fn update_power_strength(world: &Arc<World>, pos: &BlockPos) {
 }
 
 // wire: bucket of a BlockPos in a default java HashSet (Vec3i.hashCode, HashMap.hash, 16 buckets)
-fn java_hash_set_bucket(pos: &BlockPos) -> i32 {
+const fn java_hash_set_bucket(pos: &BlockPos) -> i32 {
     let hash = pos
         .0
         .y

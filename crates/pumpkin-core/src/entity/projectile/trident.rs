@@ -112,7 +112,11 @@ impl TridentEntity {
             return false;
         };
         let owner_entity = owner.get_entity();
-        if !owner_entity.is_alive() || owner.get_player().is_some_and(|p| p.is_spectator()) {
+        if !owner_entity.is_alive()
+            || owner
+                .get_player()
+                .is_some_and(crate::entity::player::Player::is_spectator)
+        {
             if self.pickup == ArrowPickup::Allowed {
                 let stack = self
                     .item_stack
@@ -259,6 +263,7 @@ impl EntityBase for TridentEntity {
         Some(&self.owner)
     }
 
+    #[expect(clippy::too_many_lines, reason = "mirrors AbstractArrow.tick")]
     fn tick(&self, caller: &dyn EntityBase, _server: &Server) {
         let entity = self.get_entity();
         let world = entity.world.load();

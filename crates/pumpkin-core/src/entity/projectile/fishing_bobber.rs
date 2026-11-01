@@ -269,6 +269,7 @@ impl FishingBobberEntity {
     }
 
     // fishing hook: state machine, bobbing and catching (FishingHook.tick)
+    #[expect(clippy::too_many_lines, reason = "mirrors FishingHook.tick")]
     pub fn process_tick(&self, caller: &dyn EntityBase) {
         let entity = self.get_entity();
         let world = entity.world.load();
@@ -446,6 +447,7 @@ impl FishingBobberEntity {
     }
 
     // fishing hook: lure, approach and bite timers (FishingHook.catchingFish)
+    #[expect(clippy::too_many_lines, reason = "mirrors FishingHook.catchingFish")]
     fn catching_fish(&self, state: &mut FishingState, world: &Arc<World>, block_pos: &BlockPos) {
         let entity = &self.entity;
         let mut rng = rand::rng();

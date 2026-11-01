@@ -228,7 +228,7 @@ impl Explosion {
 
     // explosion: destroys blocks (ServerExplosion.interactsWithBlocks)
     #[must_use]
-    pub fn interacts_with_blocks(&self) -> bool {
+    pub const fn interacts_with_blocks(&self) -> bool {
         matches!(
             self.block_interaction,
             BlockInteraction::Destroy | BlockInteraction::DestroyWithDecay

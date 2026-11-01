@@ -98,6 +98,10 @@ impl<'a> PistonHandler<'a> {
             || (!self.retracted && pos == self.pos_from.offset(self.piston_direction.to_offset()))
     }
 
+    #[expect(
+        clippy::too_many_lines,
+        reason = "mirrors PistonStructureResolver.addBlockLine"
+    )]
     fn try_move(&mut self, pos: BlockPos, dir: BlockDirection) -> bool {
         let (mut block, block_state) = self.world.get_block_and_state(&pos);
         if block_state.is_air() {

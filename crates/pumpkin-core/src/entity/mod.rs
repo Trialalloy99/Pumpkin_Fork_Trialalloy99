@@ -5341,6 +5341,58 @@ impl Flag {
     }
 }
 
+// entity: push two touching entities apart (Entity.push(Entity))
+pub(crate) fn default_push<T: EntityBase + ?Sized>(this: &T, entity: &dyn EntityBase) {
+    let self_entity = this.get_entity();
+    let other_entity = entity.get_entity();
+
+    if self_entity.no_physics.load(Ordering::Relaxed)
+        || other_entity.no_physics.load(Ordering::Relaxed)
+    {
+        return;
+    }
+
+    if self_entity.has_passenger(other_entity.entity_id)
+        || other_entity.has_passenger(self_entity.entity_id)
+    {
+        return;
+    }
+
+    let mut dx = other_entity.pos.load().x - self_entity.pos.load().x;
+    let mut dz = other_entity.pos.load().z - self_entity.pos.load().z;
+    let mut d = dx.abs().max(dz.abs());
+    if d >= 0.01 {
+        d = d.sqrt();
+        dx /= d;
+        dz /= d;
+        let mut d2 = 1.0 / d;
+        if d2 > 1.0 {
+            d2 = 1.0;
+        }
+        dx *= d2;
+        dz *= d2;
+        dx *= PUSH_STRENGTH;
+        dz *= PUSH_STRENGTH;
+
+        // push: players move client-side, server never sends them push velocity
+        if !self_entity.has_passengers() && this.is_pushable() && this.get_player().is_none() {
+            let mut vel = self_entity.velocity.load();
+            vel.x -= dx;
+            vel.z -= dz;
+            self_entity.velocity.store(vel);
+            self_entity.velocity_dirty.store(true, Ordering::SeqCst);
+        }
+
+        if !other_entity.has_passengers() && entity.is_pushable() && entity.get_player().is_none() {
+            let mut vel = other_entity.velocity.load();
+            vel.x += dx;
+            vel.z += dz;
+            other_entity.velocity.store(vel);
+            other_entity.velocity_dirty.store(true, Ordering::SeqCst);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5399,57 +5451,5 @@ mod tests {
             "minecraft:zombie_villager_v2"
         );
         assert_eq!(entity_type_to_bedrock_identifier(&EntityType::COW), "cow");
-    }
-}
-
-// entity: push two touching entities apart (Entity.push(Entity))
-pub(crate) fn default_push<T: EntityBase + ?Sized>(this: &T, entity: &dyn EntityBase) {
-    let self_entity = this.get_entity();
-    let other_entity = entity.get_entity();
-
-    if self_entity.no_physics.load(Ordering::Relaxed)
-        || other_entity.no_physics.load(Ordering::Relaxed)
-    {
-        return;
-    }
-
-    if self_entity.has_passenger(other_entity.entity_id)
-        || other_entity.has_passenger(self_entity.entity_id)
-    {
-        return;
-    }
-
-    let mut dx = other_entity.pos.load().x - self_entity.pos.load().x;
-    let mut dz = other_entity.pos.load().z - self_entity.pos.load().z;
-    let mut d = dx.abs().max(dz.abs());
-    if d >= 0.01 {
-        d = d.sqrt();
-        dx /= d;
-        dz /= d;
-        let mut d2 = 1.0 / d;
-        if d2 > 1.0 {
-            d2 = 1.0;
-        }
-        dx *= d2;
-        dz *= d2;
-        dx *= PUSH_STRENGTH;
-        dz *= PUSH_STRENGTH;
-
-        // push: players move client-side, server never sends them push velocity
-        if !self_entity.has_passengers() && this.is_pushable() && this.get_player().is_none() {
-            let mut vel = self_entity.velocity.load();
-            vel.x -= dx;
-            vel.z -= dz;
-            self_entity.velocity.store(vel);
-            self_entity.velocity_dirty.store(true, Ordering::SeqCst);
-        }
-
-        if !other_entity.has_passengers() && entity.is_pushable() && entity.get_player().is_none() {
-            let mut vel = other_entity.velocity.load();
-            vel.x += dx;
-            vel.z += dz;
-            other_entity.velocity.store(vel);
-            other_entity.velocity_dirty.store(true, Ordering::SeqCst);
-        }
     }
 }

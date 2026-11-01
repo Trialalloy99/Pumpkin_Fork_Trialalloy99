@@ -246,16 +246,17 @@ impl PistonBlock {
         if sticky {
             let pull_pos = pos.offset_dir(dir.to_offset(), 2);
             let (block, _) = world.get_block_and_state(&pull_pos);
-            let mut dropped = false;
-            if block == &Block::MOVING_PISTON
+            let dropped = if block == &Block::MOVING_PISTON
                 && let Some(entity) = world.get_block_entity(&pull_pos)
                 && let Some(piston) = entity.as_any().downcast_ref::<PistonBlockEntity>()
                 && piston.facing == dir
                 && piston.extending
             {
                 piston.finish(world);
-                dropped = true;
-            }
+                true
+            } else {
+                false
+            };
             if !dropped {
                 let (block, state) = world.get_block_and_state(&pull_pos);
                 if r#type == 1

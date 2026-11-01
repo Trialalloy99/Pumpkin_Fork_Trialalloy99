@@ -132,21 +132,25 @@ impl SpringFeatureFeature {
         }
         if valid == self.rock_count && air == self.hole_count {
             chunk.set_block_state(&pos.0, self.state);
-            // spring: start flowing right away (SpringFeature.place scheduleTick)
-            let fluid = if self.state.id == pumpkin_data::Block::LAVA.default_state.id {
-                Some(&pumpkin_data::fluid::Fluid::LAVA)
-            } else if self.state.id == pumpkin_data::Block::WATER.default_state.id {
-                Some(&pumpkin_data::fluid::Fluid::WATER)
-            } else {
-                None
-            };
-            if let Some(fluid) = fluid
-                && let Some(proto) = chunk.get_chunk_mut(pos.0.x >> 4, pos.0.z >> 4)
-            {
-                proto.schedule_fluid_tick(pos.0.x, pos.0.y, pos.0.z, fluid);
-            }
+            Self::schedule_flow(chunk, pos, self.state);
             return true;
         }
         false
+    }
+}
+
+impl SpringFeatureFeature {
+    // spring: start flowing right away (SpringFeature.place scheduleTick)
+    fn schedule_flow<T: GenerationCache>(chunk: &mut T, pos: BlockPos, state: &BlockState) {
+        let fluid = if state.id == pumpkin_data::Block::LAVA.default_state.id {
+            &pumpkin_data::fluid::Fluid::LAVA
+        } else if state.id == pumpkin_data::Block::WATER.default_state.id {
+            &pumpkin_data::fluid::Fluid::WATER
+        } else {
+            return;
+        };
+        if let Some(proto) = chunk.get_chunk_mut(pos.0.x >> 4, pos.0.z >> 4) {
+            proto.schedule_fluid_tick(pos.0.x, pos.0.y, pos.0.z, fluid);
+        }
     }
 }

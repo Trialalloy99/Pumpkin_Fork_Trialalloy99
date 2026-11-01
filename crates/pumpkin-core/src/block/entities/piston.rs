@@ -76,7 +76,7 @@ impl PistonBlockEntity {
                 .map(|shape| shape.shift(origin))
                 .collect()
         };
-        let Some(bounds) = shapes.iter().copied().reduce(|a, b| Self::minmax(a, b)) else {
+        let Some(bounds) = shapes.iter().copied().reduce(Self::minmax) else {
             return;
         };
 
@@ -171,7 +171,7 @@ impl PistonBlockEntity {
     }
 
     // piston: box around both (AABB.minmax)
-    fn minmax(a: BoundingBox, b: BoundingBox) -> BoundingBox {
+    const fn minmax(a: BoundingBox, b: BoundingBox) -> BoundingBox {
         BoundingBox::new(
             Vector3::new(
                 a.min.x.min(b.min.x),

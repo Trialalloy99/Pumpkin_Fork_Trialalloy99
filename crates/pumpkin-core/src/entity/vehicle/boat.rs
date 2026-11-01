@@ -618,24 +618,23 @@ impl EntityBase for BoatEntity {
             .first_passenger()
             .is_some_and(|passenger| passenger.get_player().is_some());
         let has_controller = self.first_passenger().is_some();
-        {
-            let mut state = self.lock_state();
-            if player_controlled {
-                entity.velocity.store(Vector3::default());
-            } else {
-                if self.left_paddle_moving.load(Ordering::Relaxed)
-                    || self.right_paddle_moving.load(Ordering::Relaxed)
-                {
-                    self.set_paddles(false, false);
-                }
-                self.float_boat(&world, &mut state, player_controlled);
-                let velocity = entity.velocity.load();
-                state.last_yd = velocity.y;
-                entity.move_entity(caller, velocity);
+        let mut state = self.lock_state();
+        if player_controlled {
+            entity.velocity.store(Vector3::default());
+        } else {
+            if self.left_paddle_moving.load(Ordering::Relaxed)
+                || self.right_paddle_moving.load(Ordering::Relaxed)
+            {
+                self.set_paddles(false, false);
             }
-            self.tick_bubble_column(&mut state);
-            self.tick_paddles(&world, &mut state, has_controller);
+            self.float_boat(&world, &mut state, player_controlled);
+            let velocity = entity.velocity.load();
+            state.last_yd = velocity.y;
+            entity.move_entity(caller, velocity);
         }
+        self.tick_bubble_column(&mut state);
+        self.tick_paddles(&world, &mut state, has_controller);
+        drop(state);
 
         self.pick_up_or_push(&world, player_controlled);
         self.clamp_mob_passengers();
