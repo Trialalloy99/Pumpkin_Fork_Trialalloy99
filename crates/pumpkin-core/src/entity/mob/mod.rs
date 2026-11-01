@@ -922,6 +922,9 @@ impl MobEntity {
         let attack_damage: f32 =
             self.living_entity
                 .get_attribute_value(&Attributes::ATTACK_DAMAGE) as f32;
+        let attack_damage = caller.get_mob().map_or(attack_damage, |mob| {
+            mob.outgoing_attack_damage(attack_damage)
+        });
 
         let damaged = target.damage_with_context(
             target,
@@ -1644,6 +1647,11 @@ pub trait Mob: EntityBase + Send + Sync {
 
     /// Start of vanilla `doHurtTarget`, run on every melee attempt even when it misses or is blocked.
     fn pre_attack(&self, _target: &dyn EntityBase) {}
+
+    // melee attack: species damage roll (HoglinBase.hurtAndThrowTarget)
+    fn outgoing_attack_damage(&self, base_damage: f32) -> f32 {
+        base_damage
+    }
 
     // melee attack: species preparation (PolarBearMeleeAttackGoal)
     fn melee_attack_cooldown_tick(

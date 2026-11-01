@@ -238,21 +238,37 @@ impl Mob for HoglinEntity {
     }
 
     fn on_attack(&self, target: &dyn EntityBase) {
-        throw_target(&self.mob_entity.living_entity.entity, target);
+        throw_target(&self.mob_entity.living_entity, target);
     }
 }
 
 /// Vanilla `HoglinBase.throwTarget`, shared with zoglins.
-pub fn throw_target(attacker: &Entity, target: &dyn EntityBase) {
-    let my_pos = attacker.pos.load();
+pub fn throw_target(attacker: &crate::entity::living::LivingEntity, target: &dyn EntityBase) {
+    let attacker_entity = &attacker.entity;
+    let Some(target_living) = target.get_living_entity() else {
+        return;
+    };
+    let effective_power = attacker.get_attribute_value(&Attributes::ATTACK_KNOCKBACK)
+        - target_living.get_attribute_value(&Attributes::KNOCKBACK_RESISTANCE);
+    if effective_power <= 0.0 {
+        return;
+    }
+    let my_pos = attacker_entity.pos.load();
     let target_pos = target.get_entity().pos.load();
     let dx = target_pos.x - my_pos.x;
     let dz = target_pos.z - my_pos.z;
     let dist = dx.hypot(dz).max(0.001);
+    let angle = f64::from(rand::random_range(-10..=10));
+    let scale = effective_power * f64::from(rand::random::<f32>().mul_add(0.5, 0.2));
+    let base_x = dx / dist * scale;
+    let base_z = dz / dist * scale;
+    let push_x = base_x.mul_add(angle.cos(), base_z * angle.sin());
+    let push_z = (-base_x).mul_add(angle.sin(), base_z * angle.cos());
+    let push_y = effective_power * f64::from(rand::random::<f32>()) * 0.5;
     let vel = target.get_entity().velocity.load();
     target.get_entity().velocity.store(Vector3::new(
-        vel.x + (dx / dist) * 0.5,
-        0.5,
-        vel.z + (dz / dist) * 0.5,
+        vel.x + push_x,
+        vel.y + push_y,
+        vel.z + push_z,
     ));
 }
