@@ -14,7 +14,6 @@ use pumpkin_data::data_component_impl::PotionDurationScaleImpl;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
-use pumpkin_data::particle::Particle;
 use pumpkin_data::sound::{Sound, SoundCategory};
 use pumpkin_protocol::IdOr;
 use pumpkin_protocol::java::client::play::{CEntityVelocity, CSoundEffect, Metadata};
@@ -654,18 +653,15 @@ impl EntityBase for ArrowEntity {
         let start_pos = entity.pos.load();
         let mut velocity = entity.velocity.load();
 
-        // Apply gravity
-        velocity.y -= Self::GRAVITY;
-
-        // Apply inertia (air resistance or water drag)
-        let inertia = if in_water {
-            Self::WATER_INERTIA
-        } else {
-            Self::AIR_INERTIA
-        };
-        velocity = velocity.multiply(inertia, inertia, inertia);
-
-        entity.velocity.store(velocity);
+        // arrow: water drag before the move, air drag and gravity after it (AbstractArrow.tick)
+        if in_water {
+            velocity = velocity.multiply(
+                Self::WATER_INERTIA,
+                Self::WATER_INERTIA,
+                Self::WATER_INERTIA,
+            );
+            entity.velocity.store(velocity);
+        }
 
         // Update rotation based on velocity
         let len = velocity.horizontal_length();
@@ -677,55 +673,6 @@ impl EntityBase for ArrowEntity {
         // Move arrow
         let new_pos = start_pos.add(&velocity);
         entity.set_pos(new_pos);
-
-        // Spawn particles while arrow is flying
-        if in_water {
-            for i in 0..4 {
-                let factor = 0.25 * f64::from(i);
-                world.spawn_particle(
-                    Vector3::new(
-                        new_pos.x - velocity.x * factor,
-                        new_pos.y - velocity.y * factor,
-                        new_pos.z - velocity.z * factor,
-                    ),
-                    Vector3::new(velocity.x as f32, velocity.y as f32, velocity.z as f32),
-                    0.0,
-                    1,
-                    Particle::Bubble,
-                );
-            }
-        }
-
-        if is_on_fire {
-            world.spawn_particle(
-                entity.pos.load(),
-                Vector3::new(0.0f32, 0.0f32, 0.0f32),
-                0.0,
-                1,
-                Particle::Flame,
-            );
-        }
-
-        if self.is_critical.load(Ordering::Relaxed) {
-            for i in 0..4 {
-                let factor = f64::from(i) / 4.0;
-                world.spawn_particle(
-                    Vector3::new(
-                        start_pos.x + velocity.x * factor,
-                        start_pos.y + velocity.y * factor,
-                        start_pos.z + velocity.z * factor,
-                    ),
-                    Vector3::new(
-                        -velocity.x as f32,
-                        (-velocity.y + 0.2) as f32,
-                        -velocity.z as f32,
-                    ),
-                    0.0,
-                    1,
-                    Particle::Crit,
-                );
-            }
-        }
 
         // Broadcast velocity update
         let packet = CEntityVelocity::new(entity.entity_id.into(), velocity);
@@ -801,10 +748,9 @@ impl EntityBase for ArrowEntity {
         if let Some(h) = hit {
             match h {
                 ProjectileHit::Block { .. } => {
-                    if self.has_hit.swap(true, Ordering::SeqCst) {
-                        return;
+                    if !self.has_hit.swap(true, Ordering::SeqCst) {
+                        caller.on_hit(h);
                     }
-                    caller.on_hit(h);
                 }
                 ProjectileHit::Entity { .. } => {
                     let pierce = self.pierce_level.load(Ordering::Relaxed);
@@ -813,13 +759,23 @@ impl EntityBase for ArrowEntity {
                         .read()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .len();
-                    if pierced_len >= pierce as usize && self.has_hit.swap(true, Ordering::SeqCst) {
-                        return;
+                    if pierced_len < pierce as usize || !self.has_hit.swap(true, Ordering::SeqCst) {
+                        caller.on_hit(h);
                     }
-                    caller.on_hit(h);
                 }
             }
         }
+
+        if !self.in_ground.load(Ordering::Relaxed) && !entity.is_removed() {
+            let mut velocity = entity.velocity.load();
+            if !in_water {
+                velocity =
+                    velocity.multiply(Self::AIR_INERTIA, Self::AIR_INERTIA, Self::AIR_INERTIA);
+            }
+            velocity.y -= Self::GRAVITY;
+            entity.velocity.store(velocity);
+        }
+        entity.update_fluid_state(caller);
     }
 
     #[allow(clippy::too_many_lines)]

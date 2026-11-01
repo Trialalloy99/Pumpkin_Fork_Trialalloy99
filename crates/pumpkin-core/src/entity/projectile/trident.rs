@@ -35,7 +35,7 @@ pub struct TridentEntity {
 impl TridentEntity {
     const BASE_DAMAGE: f64 = 8.0;
     const AIR_INERTIA: f64 = 0.99;
-    const WATER_INERTIA: f64 = 0.9;
+    const WATER_INERTIA: f64 = 0.99;
     const GRAVITY: f64 = 0.05;
     const DESPAWN_TIME: u32 = 1200;
 
@@ -191,18 +191,16 @@ impl EntityBase for TridentEntity {
         let start_pos = entity.pos.load();
         let mut velocity = entity.velocity.load();
 
-        // Apply gravity
-        velocity.y -= Self::GRAVITY;
-
-        // Apply inertia (air resistance or water drag)
-        let inertia = if entity.touching_water.load(Ordering::Relaxed) {
-            Self::WATER_INERTIA
-        } else {
-            Self::AIR_INERTIA
-        };
-        velocity = velocity.multiply(inertia, inertia, inertia);
-
-        entity.velocity.store(velocity);
+        // trident: water drag before the move, air drag and gravity after it (AbstractArrow.tick)
+        let in_water = entity.touching_water.load(Ordering::Relaxed);
+        if in_water {
+            velocity = velocity.multiply(
+                Self::WATER_INERTIA,
+                Self::WATER_INERTIA,
+                Self::WATER_INERTIA,
+            );
+            entity.velocity.store(velocity);
+        }
 
         // Update rotation based on velocity
         let len = velocity.horizontal_length();
@@ -290,6 +288,17 @@ impl EntityBase for TridentEntity {
         {
             caller.on_hit(h);
         }
+
+        if !self.in_ground.load(Ordering::Relaxed) && !entity.is_removed() {
+            let mut velocity = entity.velocity.load();
+            if !in_water {
+                velocity =
+                    velocity.multiply(Self::AIR_INERTIA, Self::AIR_INERTIA, Self::AIR_INERTIA);
+            }
+            velocity.y -= Self::GRAVITY;
+            entity.velocity.store(velocity);
+        }
+        entity.update_fluid_state(caller);
     }
 
     fn get_entity(&self) -> &Entity {

@@ -166,6 +166,8 @@ impl ThrownItemEntity {
         // Update position
         let new_pos = start_pos.add(&delta);
         entity.set_pos(new_pos);
+        // throwable: water state for next tick's drag (ThrowableProjectile.tick super.tick)
+        entity.update_fluid_state(caller);
 
         // Send updated velocity to clients
         let packet = CEntityVelocity::new(entity.entity_id.into(), velocity);

@@ -2326,7 +2326,7 @@ impl Entity {
 
     // updateWaterState() in yarn
 
-    fn update_fluid_state(&self, caller: &dyn EntityBase) {
+    pub(crate) fn update_fluid_state(&self, caller: &dyn EntityBase) {
         let world = self.world.load();
         for fluid in self.update_fluid_interaction(caller) {
             world
