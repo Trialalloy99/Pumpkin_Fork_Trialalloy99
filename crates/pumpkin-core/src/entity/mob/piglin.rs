@@ -170,8 +170,13 @@ impl PiglinEntity {
                     10,
                     true,
                     false,
-                    Some(move |_target: &LivingEntity, _world: &World| {
-                        piglin_clone.is_adult() && piglin_clone.can_hunt()
+                    Some(move |target: &LivingEntity, world: &World| {
+                        piglin_clone.is_adult()
+                            && piglin_clone.can_hunt()
+                            && world
+                                .get_entity_by_id(target.entity.entity_id)
+                                .and_then(|entity| entity.get_mob().map(Mob::can_be_hunted))
+                                .unwrap_or(true)
                     }),
                 )),
             );
@@ -999,6 +1004,10 @@ impl PiglinEntity {
 }
 
 impl Mob for PiglinEntity {
+    fn is_baby_mob(&self) -> bool {
+        self.is_baby()
+    }
+
     // piglin: own pickup (Piglin.pickUpItem), not the generic Mob looting
     fn uses_mob_looting(&self) -> bool {
         false

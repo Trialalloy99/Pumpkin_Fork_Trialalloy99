@@ -922,9 +922,9 @@ impl MobEntity {
         let attack_damage: f32 =
             self.living_entity
                 .get_attribute_value(&Attributes::ATTACK_DAMAGE) as f32;
-        let attack_damage = caller
-            .get_mob()
-            .map_or(attack_damage, |mob| mob.mob_attack_damage(attack_damage));
+        let attack_damage = caller.get_mob().map_or(attack_damage, |mob| {
+            mob.outgoing_attack_damage(mob.mob_attack_damage(attack_damage))
+        });
 
         let damaged = target.damage_with_context(
             target,
@@ -1486,6 +1486,15 @@ pub trait Mob: EntityBase + Send + Sync {
         self.can_hold_item(stack)
     }
 
+    /// Species inventory pickup before generic equipment looting.
+    fn mob_pick_up_item(
+        &self,
+        _item: &crate::entity::item::ItemEntity,
+        _stack: &ItemStack,
+    ) -> bool {
+        false
+    }
+
     /// Vanilla `Mob.canHoldItem`.
     fn can_hold_item(&self, _stack: &ItemStack) -> bool {
         true
@@ -1639,6 +1648,25 @@ pub trait Mob: EntityBase + Send + Sync {
     /// Start of vanilla `doHurtTarget`, run on every melee attempt even when it misses or is blocked.
     fn pre_attack(&self, _target: &dyn EntityBase) {}
 
+    // melee attack: species damage roll (HoglinBase.hurtAndThrowTarget)
+    fn outgoing_attack_damage(&self, base_damage: f32) -> f32 {
+        base_damage
+    }
+
+    // melee attack: species preparation (PolarBearMeleeAttackGoal)
+    fn melee_attack_cooldown_tick(
+        &self,
+        _target: &dyn EntityBase,
+        cooldown: i32,
+        _in_attack_range: bool,
+        _max_cooldown: i32,
+    ) -> i32 {
+        cooldown
+    }
+
+    // melee attack: species cleanup (PolarBearMeleeAttackGoal.stop)
+    fn melee_attack_stopped(&self) {}
+
     /// Vanilla `blockedByItem`: this mob's attack hit a raised shield of `defender`.
     fn blocked_by_item(&self, _defender: &dyn EntityBase) {}
 
@@ -1676,6 +1704,40 @@ pub trait Mob: EntityBase + Send + Sync {
             true
         })
     }
+
+    // mob age: non-AgeableMob baby state (AbstractPiglin.isBaby)
+    fn is_baby_mob(&self) -> bool {
+        self.as_ageable()
+            .is_some_and(crate::entity::ageable::AgeableMob::is_baby)
+    }
+
+    // brain state: pacified by a repellent (HoglinAi.isPacified)
+    fn is_pacified(&self) -> bool {
+        false
+    }
+
+    // animal breeding: species gate (Hoglin.canFallInLove)
+    fn can_fall_in_love(&self) -> bool {
+        true
+    }
+
+    // piglin hunt: target eligibility (Hoglin.canBeHunted)
+    fn can_be_hunted(&self) -> bool {
+        true
+    }
+
+    // brain target: expiring combat memory (HoglinAi.setAttackTarget)
+    fn set_temporary_attack_target(
+        &self,
+        target: Arc<dyn EntityBase>,
+        _ticks: i32,
+        reason: TargetReason,
+    ) {
+        self.set_mob_target(Some(target), reason);
+    }
+
+    // brain avoid: expiring flee memory (HoglinAi.setAvoidTarget)
+    fn begin_avoiding_entity(&self, _target: Arc<dyn EntityBase>) {}
 
     fn as_custom_sound(&self) -> Option<&dyn crate::entity::custom_sound::CustomSound> {
         None
@@ -2121,6 +2183,8 @@ pub trait Mob: EntityBase + Send + Sync {
     }
 
     fn mob_player_collision(&self, _player: &Arc<Player>) {}
+
+    fn mob_entity_collision(&self, _entity: &dyn EntityBase) {}
 
     fn get_owner_uuid(&self) -> Option<Uuid> {
         self.as_tamable()

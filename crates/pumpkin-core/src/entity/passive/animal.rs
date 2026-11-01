@@ -74,7 +74,11 @@ pub trait Animal: Mob {
                 .age
                 .load(std::sync::atomic::Ordering::Relaxed);
 
-            if age >= 0 && mob_entity.is_breeding_ready() && !mob_entity.is_in_love() {
+            if age >= 0
+                && self.can_fall_in_love()
+                && mob_entity.is_breeding_ready()
+                && !mob_entity.is_in_love()
+            {
                 item_stack.decrement_unless_creative(player.gamemode.load(), 1);
 
                 let Some(ticks) = self.approve_love(Some(player.entity_id()), 600) else {

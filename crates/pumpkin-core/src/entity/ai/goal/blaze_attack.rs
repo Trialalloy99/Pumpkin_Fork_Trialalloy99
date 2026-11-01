@@ -1,4 +1,5 @@
 use crate::entity::ai::util::RandomExt;
+use pumpkin_data::attributes::Attributes;
 use pumpkin_protocol::java::client::play::CWorldEvent;
 use pumpkin_util::math::vector3::Vector3;
 use std::sync::Arc;
@@ -29,9 +30,13 @@ impl BlazeShootFireballGoal {
         }
     }
 
-    const fn get_follow_distance() -> f64 {
-        // TODO: use FOLLOW_RANGE
-        48.0
+    fn get_follow_distance(&self) -> f64 {
+        self.blaze.upgrade().map_or(0.0, |blaze| {
+            blaze
+                .entity
+                .living_entity
+                .get_attribute_value(&Attributes::FOLLOW_RANGE)
+        })
     }
 }
 
@@ -109,7 +114,7 @@ impl Goal for BlazeShootFireballGoal {
                 target_pos.z,
                 1.0,
             );
-        } else if distance_sq < Self::get_follow_distance().powi(2) && has_line_of_sight {
+        } else if distance_sq < self.get_follow_distance().powi(2) && has_line_of_sight {
             let yd = (target_pos.y + f64::from(target_entity.entity_dimension.load().height) * 0.5)
                 - (blaze_pos.y + f64::from(entity.entity_dimension.load().height) * 0.5);
 
@@ -157,10 +162,12 @@ fn shoot_fireball(blaze: &Entity, dx: f64, yd: f64, dz: f64, distance_sq: f64) {
     let spread = 2.297 * distance_sq.sqrt().sqrt() * 0.5;
     let world = blaze.world.load_full();
 
-    world.broadcast_to_chunk(
-        blaze.chunk_pos.load(),
-        &CWorldEvent::new(1018, blaze.block_pos.load(), 0, false),
-    );
+    if !blaze.is_silent() {
+        world.broadcast_to_chunk(
+            blaze.chunk_pos.load(),
+            &CWorldEvent::new(1018, blaze.block_pos.load(), 0, false),
+        );
+    }
 
     let direction = {
         let mut rng = rand::rng();

@@ -20,7 +20,6 @@ pub struct MeleeAttackGoal {
     target_location: Vector3<f64>,
     update_countdown_ticks: i32,
     pub cooldown: i32,
-    #[expect(dead_code)]
     attack_interval_ticks: i32,
     last_update_time: i64,
     last_target_position: Option<Vector3<f64>>,
@@ -60,9 +59,16 @@ impl MeleeAttackGoal {
         self
     }
 
+    // MeleeAttack: species interval
+    #[must_use]
+    pub const fn with_interval(mut self, ticks: i32) -> Self {
+        self.attack_interval_ticks = ticks;
+        self
+    }
+
     #[must_use]
     pub fn get_max_cooldown(&self) -> i32 {
-        self.get_tick_count(20)
+        self.get_tick_count(self.attack_interval_ticks)
     }
 }
 
@@ -139,6 +145,7 @@ impl Goal for MeleeAttackGoal {
     }
 
     fn stop(&mut self, mob: &dyn Mob) {
+        mob.melee_attack_stopped();
         // Only clear target if they switched to creative/spectator
         let should_clear = mob
             .get_mob_entity()
@@ -203,6 +210,13 @@ impl Goal for MeleeAttackGoal {
         }
 
         self.cooldown = (self.cooldown - 1).max(0);
+
+        self.cooldown = mob.melee_attack_cooldown_tick(
+            target.as_ref(),
+            self.cooldown,
+            mob.get_mob_entity().is_in_attack_range(target.as_ref()),
+            self.get_max_cooldown(),
+        );
 
         if self.cooldown <= 0
             && mob.get_mob_entity().is_in_attack_range(target.as_ref())

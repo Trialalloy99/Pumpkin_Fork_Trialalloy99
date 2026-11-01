@@ -92,6 +92,13 @@ impl RevengeGoal {
         self
     }
 
+    // HurtByTargetGoal: unseen memory
+    #[must_use]
+    pub const fn forget_unseen_after(mut self, ticks: i32) -> Self {
+        self.track_target_goal.max_time_without_visibility = ticks;
+        self
+    }
+
     /// Others are only alerted while the mob can see the attacker.
     #[must_use]
     pub const fn alerting_in_sight(mut self) -> Self {

@@ -976,6 +976,9 @@ pub trait EntityBase: Send + Sync + std::any::Any {
             let other_entities = world.get_entities_at_box(&entity_bb);
             for other in other_entities {
                 if other.get_entity().entity_id != self_entity.entity_id {
+                    if let Some(mob) = dyn_self.get_mob() {
+                        mob.mob_entity_collision(other.as_ref());
+                    }
                     dyn_self.push(other.as_ref());
                     pushed = true;
                 }
@@ -3422,7 +3425,9 @@ impl Entity {
 
     #[must_use]
     pub fn is_on_fire(&self) -> bool {
-        self.fire_ticks.load(Ordering::Relaxed) > 0 || self.has_visual_fire.load(Ordering::Relaxed)
+        self.entity_type != &EntityType::MAGMA_CUBE
+            && (self.fire_ticks.load(Ordering::Relaxed) > 0
+                || self.has_visual_fire.load(Ordering::Relaxed))
     }
 
     pub fn get_horizontal_facing(&self) -> HorizontalFacing {

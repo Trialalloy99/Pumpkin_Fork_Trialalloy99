@@ -75,6 +75,11 @@ Unser Fortschritt steht auf **https://claude.ai/artifact/KAHK4pXmbbEhd9nXiBuobN*
 | 7 | Items (Mace, Angel, Elytra, Namensschild), Redstone (Druckplatten, Tageslichtsensor, Notenblock, Kolben, Leitung), Welt laden/speichern, alle 22 Boote, Dreizack-Loyalität, Bugfixes aus dem Spieltest | Branch `batch-7`; Test im Spiel steht aus |
 | Blöcke 1 (Gemini) | Bed, Beehive, Campfire, Chest, Chiseled Bookshelf, Conduit, Dirt Path, Dragon Egg, Dried Ghast, Ender Chest | in `playable` gemergt; Beehive offen (Bienen-Bewohner fehlen) |
 | Blöcke 2 (Gemini) | Farmland, Frogspawn, Huge Mushroom, Infested, Jukebox, Lodestone, Potent Sulfur, Fire, Sculk Catalyst, Big Dripleaf | Branch `blocks-2-gemini` |
+| Commands | `/locate` (alle POI-Typen, POIs aus geladenen Chunks), `/perf` | fertig auf `batch-commands` |
+| 2 | Guardian, Elder Guardian, Illusioner, Vindicator, Ravager, Endermite | fertig (Lücken in `batch-3` geschlossen); Test im Spiel steht aus |
+| 3 | Zombie, Husk, Zombie Villager, Zombified Piglin, Enderman, Wolf | fertig auf `batch-3` (Husk erst mit dem Kamel-Husk aus Batch 4 komplett); Test im Spiel steht aus |
+| 5 (Codex) | Slime, Magma Cube, Phantom, Silverfish, Blaze, Pillager, Piglin Brute, Hoglin, Zoglin, Polar Bear | implementiert auf `batch-5-codex`; Gesamtchecks und Test im Spiel stehen aus |
+| 4 | Camel Husk, Parched, Skeleton, Stray, Bogged, Creeper, Spider, Cave Spider, Drowned, Witch | in Arbeit auf `batch-4` (von `batch-3` abgezweigt) |
 
 Aus dem Tracker entfernt, weil Vanilla sie auf einem dedizierten Server nicht hat: `/publish` und `/unpublish` (nur Einzelspieler) sowie `/jfr` (Java Flight Recorder, braucht eine JVM).
 

@@ -1627,7 +1627,11 @@ impl LivingEntity {
 
                 let mut velo = self.entity.velocity.load();
 
-                velo.y += 0.04;
+                velo.y += if in_lava && self.entity.entity_type == &EntityType::MAGMA_CUBE {
+                    0.22 + f64::from(self.entity.data.load(Ordering::Relaxed)) * 0.05
+                } else {
+                    0.04
+                };
 
                 self.entity.velocity.store(velo);
             } else if (on_ground || in_water && fluid_height <= swim_height)
@@ -2121,7 +2125,10 @@ impl LivingEntity {
     }
 
     pub(crate) fn jump_with_power(&self, multiplier: f64) {
-        let jump = self.get_jump_velocity(multiplier);
+        let mut jump = self.get_jump_velocity(multiplier);
+        if self.entity.entity_type == &EntityType::MAGMA_CUBE {
+            jump += f64::from(self.entity.data.load(Ordering::Relaxed)) * 0.1;
+        }
 
         if jump <= 1.0e-5 {
             return;
