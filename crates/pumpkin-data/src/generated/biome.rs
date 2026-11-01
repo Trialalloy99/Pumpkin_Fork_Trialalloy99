@@ -18,6 +18,7 @@ pub struct Biome {
     pub carvers: &'static [&'static crate::carver::CarverConfig],
     pub features: &'static [&'static [crate::placed_feature::PlacedFeature]],
     pub creature_spawn_probability: f32,
+    pub snow_golem_melts: bool,
     pub spawners: SpawnGroups,
     pub spawn_costs: phf::Map<&'static str, SpawnCosts>,
 }
@@ -159,6 +160,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: true,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -322,6 +324,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -461,6 +464,7 @@ impl Biome {
         ],
         carvers: &[&crate::carver::NETHER_CAVE],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -560,6 +564,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -701,6 +706,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -853,6 +859,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -1005,6 +1012,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -1132,6 +1140,7 @@ impl Biome {
         ],
         carvers: &[&crate::carver::NETHER_CAVE],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -1233,6 +1242,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -1400,6 +1410,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -1557,6 +1568,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -1714,6 +1726,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[],
             ambient: &[],
@@ -1803,6 +1816,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -1963,6 +1977,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -2136,6 +2151,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -2298,6 +2314,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: true,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -2458,6 +2475,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -2532,6 +2550,7 @@ impl Biome {
         features: &[],
         carvers: &[],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[Spawner {
                 r#type: "minecraft:enderman",
@@ -2567,6 +2586,7 @@ impl Biome {
         ],
         carvers: &[],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[Spawner {
                 r#type: "minecraft:enderman",
@@ -2591,6 +2611,7 @@ impl Biome {
         features: &[],
         carvers: &[],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[Spawner {
                 r#type: "minecraft:enderman",
@@ -2682,6 +2703,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: true,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -2843,6 +2865,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -3005,6 +3028,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -3169,6 +3193,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -3319,6 +3344,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -3458,6 +3484,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -3601,6 +3628,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -3754,6 +3782,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -3896,6 +3925,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -4037,6 +4067,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -4214,6 +4245,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -4386,6 +4418,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -4527,6 +4560,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -4677,6 +4711,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -4824,6 +4859,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[],
             ambient: &[Spawner {
@@ -4887,6 +4923,7 @@ impl Biome {
         ],
         carvers: &[&crate::carver::NETHER_CAVE],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -5004,6 +5041,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -5166,6 +5204,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -5329,6 +5368,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -5507,6 +5547,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -5677,6 +5718,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -5813,6 +5855,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -5985,6 +6028,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -6133,6 +6177,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: true,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -6309,6 +6354,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: true,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -6429,6 +6475,7 @@ impl Biome {
         features: &[&[crate::placed_feature::PlacedFeature::EndIslandDecorated]],
         carvers: &[],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[Spawner {
                 r#type: "minecraft:enderman",
@@ -6517,6 +6564,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -6651,6 +6699,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -6801,6 +6850,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -6948,6 +6998,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -7080,6 +7131,7 @@ impl Biome {
         ],
         carvers: &[&crate::carver::NETHER_CAVE],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -7187,6 +7239,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -7343,6 +7396,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -7476,6 +7530,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -7608,6 +7663,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -7745,6 +7801,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -7921,6 +7978,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -8093,6 +8151,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -8210,6 +8269,7 @@ impl Biome {
         ],
         carvers: &[],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[Spawner {
                 r#type: "minecraft:enderman",
@@ -8246,6 +8306,7 @@ impl Biome {
         ],
         carvers: &[],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[],
             ambient: &[],
@@ -8334,6 +8395,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -8468,6 +8530,7 @@ impl Biome {
         ],
         carvers: &[&crate::carver::NETHER_CAVE],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[Spawner {
                 r#type: "minecraft:enderman",
@@ -8563,6 +8626,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -8725,6 +8789,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -8887,6 +8952,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: false,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -9047,6 +9113,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: true,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {
@@ -9225,6 +9292,7 @@ impl Biome {
             &crate::carver::CANYON,
         ],
         creature_spawn_probability: 0.1f32,
+        snow_golem_melts: true,
         spawners: SpawnGroups {
             monster: &[
                 Spawner {

@@ -355,6 +355,12 @@ pub fn build() -> TokenStream {
         let has_precipitation = biome.has_precipitation;
         let temperature = biome.temperature;
         let downfall = biome.downfall;
+        // biome: hot biomes melt snow golems (EnvironmentAttributes.SNOW_GOLEM_MELTS)
+        let snow_golem_melts = biome
+            .attributes
+            .get("minecraft:gameplay/snow_golem_melts")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
         let carvers: Vec<TokenStream> = biome
             .carvers
             .iter()
@@ -475,6 +481,7 @@ pub fn build() -> TokenStream {
                 features: &[#(#features),*],
                 carvers: &[#(#carvers),*],
                 creature_spawn_probability: #creature_spawn_probability,
+                snow_golem_melts: #snow_golem_melts,
                 spawners: #spawners,
                 spawn_costs: phf::phf_map! {
                     #(#spawn_costs),*
@@ -507,6 +514,7 @@ pub fn build() -> TokenStream {
             pub carvers: &'static [&'static crate::carver::CarverConfig],
             pub features: &'static [&'static [crate::placed_feature::PlacedFeature]],
             pub creature_spawn_probability: f32,
+            pub snow_golem_melts: bool,
             pub spawners: SpawnGroups,
             pub spawn_costs: phf::Map<&'static str, SpawnCosts>,
         }
