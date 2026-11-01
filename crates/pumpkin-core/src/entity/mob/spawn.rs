@@ -33,6 +33,10 @@ pub enum SpawnGroupData {
         variant: FoxVariant,
         size: u32,
     },
+    /// Vanilla `ZombieGroupData`: whether this group spawns babies.
+    Zombie {
+        baby: bool,
+    },
 }
 
 impl MobEntity {

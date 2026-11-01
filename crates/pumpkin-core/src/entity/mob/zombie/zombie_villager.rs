@@ -1,9 +1,13 @@
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
 
+use crate::entity::mob::equipment::RegionalDifficulty;
+use crate::entity::mob::spawn::SpawnGroupData;
+use crate::world::World;
 use crossbeam::atomic::AtomicCell;
 use pumpkin_data::Block;
 use pumpkin_data::BlockState;
+use pumpkin_data::damage::DamageType;
 use pumpkin_data::effect::StatusEffect;
 use pumpkin_data::entity::{EntityStatus, EntityType};
 use pumpkin_data::item::Item;
@@ -259,6 +263,48 @@ impl ZombieVillagerEntity {
 }
 
 impl Mob for ZombieVillagerEntity {
+    // zombie family: spawn rolls, hit effects, reinforcements, baby xp (Zombie)
+    fn finalize_spawn(
+        &self,
+        world: &Arc<World>,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        self.mob_entity
+            .finalize_zombie_spawn(self, world, group_data)
+    }
+
+    fn on_attack(&self, target: &dyn EntityBase) {
+        self.mob_entity.on_zombie_attack(self, target);
+    }
+
+    fn on_damage_with_context(
+        &self,
+        _damage_type: DamageType,
+        _source: Option<&dyn EntityBase>,
+        cause: Option<&dyn EntityBase>,
+    ) -> bool {
+        self.mob_entity.on_zombie_hurt(cause);
+        true
+    }
+
+    fn get_base_experience_reward(&self) -> u32 {
+        self.mob_entity
+            .experience_reward(self.get_entity().entity_type.experience_reward)
+    }
+
+    fn get_ambient_sound(&self) -> Option<Sound> {
+        Some(Sound::EntityZombieVillagerAmbient)
+    }
+
+    fn populate_default_equipment_slots(
+        &self,
+        world: &Arc<World>,
+        difficulty: &RegionalDifficulty,
+    ) {
+        self.mob_entity
+            .populate_default_equipment_slots(world, difficulty);
+    }
+
     fn mob_play_step_sound(&self, _pos: &BlockPos, _state: &BlockState) {
         self.play_entity_sound(Sound::EntityZombieVillagerStep, 0.15, 1.0);
     }

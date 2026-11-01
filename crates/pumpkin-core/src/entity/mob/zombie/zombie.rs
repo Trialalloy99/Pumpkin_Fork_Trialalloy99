@@ -1,10 +1,12 @@
 use crate::entity::Entity;
 use crate::entity::EntityBase;
 use crate::entity::mob::equipment::RegionalDifficulty;
+use crate::entity::mob::spawn::SpawnGroupData;
 use crate::entity::mob::zombie::ZombieEntityBase;
 use crate::entity::mob::{Mob, MobEntity};
 use crate::world::World;
 use pumpkin_data::BlockState;
+use pumpkin_data::damage::DamageType;
 use pumpkin_data::sound::Sound;
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::math::position::BlockPos;
@@ -15,6 +17,11 @@ pub struct ZombieEntity {
 }
 
 impl ZombieEntity {
+    #[must_use]
+    pub fn base(&self) -> &ZombieEntityBase {
+        &self.entity
+    }
+
     pub fn new(entity: Entity) -> Arc<Self> {
         let entity = ZombieEntityBase::new(entity);
         let zombie = Self { entity };
@@ -30,6 +37,42 @@ impl ZombieEntity {
 }
 
 impl Mob for ZombieEntity {
+    // zombie family: spawn rolls, hit effects, reinforcements, baby xp (Zombie)
+    fn finalize_spawn(
+        &self,
+        world: &Arc<World>,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        self.entity.finalize_zombie_spawn(self, world, group_data)
+    }
+
+    fn on_attack(&self, target: &dyn EntityBase) {
+        self.entity.on_zombie_attack(self, target);
+    }
+
+    fn on_damage_with_context(
+        &self,
+        _damage_type: DamageType,
+        _source: Option<&dyn EntityBase>,
+        cause: Option<&dyn EntityBase>,
+    ) -> bool {
+        self.entity.on_zombie_hurt(cause);
+        true
+    }
+
+    fn get_base_experience_reward(&self) -> u32 {
+        self.entity
+            .experience_reward(self.get_entity().entity_type.experience_reward)
+    }
+
+    fn get_ambient_sound(&self) -> Option<Sound> {
+        Some(Sound::EntityZombieAmbient)
+    }
+
+    fn post_tick(&self) {
+        self.entity.tick_drowning(self);
+    }
+
     fn mob_play_step_sound(&self, _pos: &BlockPos, _state: &BlockState) {
         self.play_entity_sound(Sound::EntityZombieStep, 0.15, 1.0);
     }

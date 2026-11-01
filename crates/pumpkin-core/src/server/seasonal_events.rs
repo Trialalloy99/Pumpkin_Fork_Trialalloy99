@@ -10,6 +10,14 @@ pub fn is_april() -> bool {
     data.day() == 1 && data.month() == Month::April
 }
 
+// halloween: Oct 20 - Nov 3 (SpecialDates.isHalloween)
+#[must_use]
+pub fn is_halloween() -> bool {
+    let date = OffsetDateTime::now_utc();
+    (date.month() == Month::October && date.day() >= 20)
+        || (date.month() == Month::November && date.day() <= 3)
+}
+
 #[must_use]
 pub fn modify_chat_message(
     message: &str,
