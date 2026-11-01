@@ -60,6 +60,7 @@ const fn get_pattern(packed: i32) -> TropicalFishPattern {
 const DEFAULT_VARIANT: i32 =
     pack_variant(TropicalFishPattern::Kob, DyeColor::White, DyeColor::White);
 
+// tropical_fish: pattern, base/pattern colors and school variants (TropicalFish)
 pub struct TropicalFishEntity {
     pub mob_entity: MobEntity,
     fish_data: FishData,
