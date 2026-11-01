@@ -1711,6 +1711,34 @@ pub trait Mob: EntityBase + Send + Sync {
             .is_some_and(crate::entity::ageable::AgeableMob::is_baby)
     }
 
+    // brain state: pacified by a repellent (HoglinAi.isPacified)
+    fn is_pacified(&self) -> bool {
+        false
+    }
+
+    // animal breeding: species gate (Hoglin.canFallInLove)
+    fn can_fall_in_love(&self) -> bool {
+        true
+    }
+
+    // piglin hunt: target eligibility (Hoglin.canBeHunted)
+    fn can_be_hunted(&self) -> bool {
+        true
+    }
+
+    // brain target: expiring combat memory (HoglinAi.setAttackTarget)
+    fn set_temporary_attack_target(
+        &self,
+        target: Arc<dyn EntityBase>,
+        _ticks: i32,
+        reason: TargetReason,
+    ) {
+        self.set_mob_target(Some(target), reason);
+    }
+
+    // brain avoid: expiring flee memory (HoglinAi.setAvoidTarget)
+    fn begin_avoiding_entity(&self, _target: Arc<dyn EntityBase>) {}
+
     fn as_custom_sound(&self) -> Option<&dyn crate::entity::custom_sound::CustomSound> {
         None
     }
