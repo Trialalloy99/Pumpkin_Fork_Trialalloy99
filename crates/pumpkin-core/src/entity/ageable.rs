@@ -59,6 +59,19 @@ pub trait AgeableMob: Mob {
         if (old_age < 0 && new_age >= 0) || (old_age >= 0 && new_age < 0) {
             let is_baby = new_age < 0;
             entity.set_synced_data(tracked_data::ageable_mob::DATA_BABY_ID, is_baby);
+            // ageable: baby hitbox, half size unless the mob has its own (AgeableMob.getAgeScale)
+            let adult = crate::entity::Entity::type_dimensions(entity.entity_type);
+            entity.set_default_dimensions(if is_baby {
+                self.baby_dimensions().unwrap_or(
+                    pumpkin_util::math::boundingbox::EntityDimensions {
+                        width: adult.width * 0.5,
+                        height: adult.height * 0.5,
+                        eye_height: adult.eye_height * 0.5,
+                    },
+                )
+            } else {
+                adult
+            });
             self.age_boundary_reached();
             if let Some(meta) = self.mob_metadata() {
                 entity.send_bedrock_actor_data(&meta.to_bedrock_actor_data());

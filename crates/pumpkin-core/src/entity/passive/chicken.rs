@@ -207,6 +207,15 @@ impl Animal for ChickenEntity {
 }
 
 impl Mob for ChickenEntity {
+    // chicken: own baby hitbox (Chicken.BABY_DIMENSIONS)
+    fn baby_dimensions(&self) -> Option<pumpkin_util::math::boundingbox::EntityDimensions> {
+        Some(pumpkin_util::math::boundingbox::EntityDimensions {
+            width: 0.3,
+            height: 0.4,
+            eye_height: 0.281_25,
+        })
+    }
+
     fn mob_is_flapping(&self) -> bool {
         self.get_entity().fly_dist.load() > self.next_flap.load()
     }

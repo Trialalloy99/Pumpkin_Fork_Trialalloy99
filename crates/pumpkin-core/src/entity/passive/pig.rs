@@ -144,6 +144,15 @@ impl Animal for PigEntity {
 }
 
 impl Mob for PigEntity {
+    // pig: own baby hitbox (Pig.BABY_DIMENSIONS)
+    fn baby_dimensions(&self) -> Option<pumpkin_util::math::boundingbox::EntityDimensions> {
+        Some(pumpkin_util::math::boundingbox::EntityDimensions {
+            width: 0.45,
+            height: 0.45,
+            eye_height: 0.406_25,
+        })
+    }
+
     fn mob_play_step_sound(&self, _pos: &BlockPos, _state: &BlockState) {
         let sound_variant = PigSoundVariant::from_id(self.sound_variant.load(Ordering::Relaxed))
             .unwrap_or_default();

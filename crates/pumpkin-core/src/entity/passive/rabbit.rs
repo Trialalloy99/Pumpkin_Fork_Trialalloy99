@@ -181,6 +181,15 @@ impl Animal for RabbitEntity {
 }
 
 impl Mob for RabbitEntity {
+    // rabbit: own baby hitbox (Rabbit.BABY_DIMENSIONS)
+    fn baby_dimensions(&self) -> Option<pumpkin_util::math::boundingbox::EntityDimensions> {
+        Some(pumpkin_util::math::boundingbox::EntityDimensions {
+            width: 0.24,
+            height: 0.4,
+            eye_height: 0.39,
+        })
+    }
+
     fn mob_sound_source(&self) -> SoundCategory {
         if self.get_variant() == RabbitVariant::Evil {
             SoundCategory::Hostile

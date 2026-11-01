@@ -296,6 +296,15 @@ impl Animal for SheepEntity {
 }
 
 impl Mob for SheepEntity {
+    // sheep: own baby hitbox (Sheep.BABY_DIMENSIONS)
+    fn baby_dimensions(&self) -> Option<pumpkin_util::math::boundingbox::EntityDimensions> {
+        Some(pumpkin_util::math::boundingbox::EntityDimensions {
+            width: 0.45,
+            height: 0.65,
+            eye_height: 0.656_25,
+        })
+    }
+
     fn mob_play_step_sound(&self, _pos: &BlockPos, _state: &BlockState) {
         self.play_entity_sound(Sound::EntitySheepStep, 0.15, 1.0);
     }

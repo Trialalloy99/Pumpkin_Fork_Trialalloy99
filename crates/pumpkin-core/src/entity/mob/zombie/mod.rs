@@ -616,6 +616,8 @@ pub fn zombie_baby_dimensions(entity_type: &EntityType) -> EntityDimensions {
         0.825
     } else if entity_type == &EntityType::ZOMBIE_VILLAGER {
         0.67
+    } else if entity_type == &EntityType::ZOMBIFIED_PIGLIN {
+        0.78
     } else {
         0.775
     };

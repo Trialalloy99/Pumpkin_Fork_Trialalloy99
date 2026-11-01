@@ -101,6 +101,11 @@ impl CowEntity {
 }
 
 impl CustomSound for CowEntity {
+    // cow: quieter than default (AbstractCow.getSoundVolume)
+    fn sound_volume(&self) -> f32 {
+        0.4
+    }
+
     fn death_sound(&self) -> Option<Sound> {
         let is_baby = self.is_baby();
         let sound_variant = CowSoundVariant::from_id(self.sound_variant.load(Ordering::Relaxed))
@@ -152,6 +157,22 @@ impl Animal for CowEntity {
 }
 
 impl Mob for CowEntity {
+    // cow: ambient from the sound variant (AbstractCow.getAmbientSound)
+    fn get_ambient_sound(&self) -> Option<Sound> {
+        let sound_variant = CowSoundVariant::from_id(self.sound_variant.load(Ordering::Relaxed))
+            .unwrap_or_default();
+        Some(sound_variant.ambient_sound(self.is_baby()))
+    }
+
+    // cow: own baby hitbox (Cow.BABY_DIMENSIONS)
+    fn baby_dimensions(&self) -> Option<pumpkin_util::math::boundingbox::EntityDimensions> {
+        Some(pumpkin_util::math::boundingbox::EntityDimensions {
+            width: 0.45,
+            height: 0.7,
+            eye_height: 0.69,
+        })
+    }
+
     fn mob_play_step_sound(&self, _pos: &BlockPos, _state: &BlockState) {
         let sound_variant = CowSoundVariant::from_id(self.sound_variant.load(Ordering::Relaxed))
             .unwrap_or_default();

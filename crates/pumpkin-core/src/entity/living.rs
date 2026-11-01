@@ -294,7 +294,7 @@ impl LivingEntity {
         self.make_sound(
             sound,
             custom_sound.map_or(
-                SoundCategory::Players,
+                caller.get_entity().entity_type.sound_source,
                 super::custom_sound::CustomSound::sound_category,
             ),
             custom_sound.map_or(1.0, super::custom_sound::CustomSound::sound_volume),

@@ -205,6 +205,15 @@ impl NeutralMob for WolfEntity {
 }
 
 impl Mob for WolfEntity {
+    // wolf: own baby hitbox (Wolf.BABY_DIMENSIONS)
+    fn baby_dimensions(&self) -> Option<pumpkin_util::math::boundingbox::EntityDimensions> {
+        Some(pumpkin_util::math::boundingbox::EntityDimensions {
+            width: 0.3,
+            height: 0.425,
+            eye_height: 0.343_75,
+        })
+    }
+
     // wolf: pack variant by biome, random sound set (Wolf.finalizeSpawn)
     fn finalize_spawn(
         &self,

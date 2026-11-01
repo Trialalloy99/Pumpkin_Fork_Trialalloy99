@@ -9,7 +9,12 @@ pub trait CustomSound: Mob {
         1.0
     }
 
+    // mob sounds: the type's sound source by default (Entity.getSoundSource)
     fn sound_category(&self) -> SoundCategory {
-        SoundCategory::Players
+        self.get_mob_entity()
+            .living_entity
+            .entity
+            .entity_type
+            .sound_source
     }
 }

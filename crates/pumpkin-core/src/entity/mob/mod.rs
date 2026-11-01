@@ -1620,6 +1620,11 @@ pub trait Mob: EntityBase + Send + Sync {
 
     fn on_attack(&self, _target: &dyn EntityBase) {}
 
+    /// Vanilla `BABY_DIMENSIONS` of a mob with its own baby hitbox; `None` halves the adult one.
+    fn baby_dimensions(&self) -> Option<pumpkin_util::math::boundingbox::EntityDimensions> {
+        None
+    }
+
     /// Vanilla `onClimbable` override, e.g. a spider on a wall; `None` checks the block.
     fn climbable_override(&self) -> Option<bool> {
         None
@@ -1697,7 +1702,7 @@ pub trait Mob: EntityBase + Send + Sync {
         self.get_mob_entity().living_entity.make_sound(
             sound,
             custom_sound.map_or(
-                pumpkin_data::sound::SoundCategory::Players,
+                self.get_entity().entity_type.sound_source,
                 crate::entity::custom_sound::CustomSound::sound_category,
             ),
             custom_sound.map_or(1.0, crate::entity::custom_sound::CustomSound::sound_volume),
