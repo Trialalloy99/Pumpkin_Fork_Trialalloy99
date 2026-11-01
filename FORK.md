@@ -31,7 +31,8 @@ Tempo ist wichtig. Ein einfacher Mob wie der Vex hat etwa 10 Minuten Coding gebr
 - **Commits:**
   - Ein Commit pro Mob, Conventional Commits mit Scope, z. B. `feat(entity): port guardian attack goal`.
   - Autor ist `Trialalloy99 <maxi.ratnik@gmail.com>`. Keine `Co-Authored-By`- oder Tool-Zeilen.
-- **Code:** Keine Kommentare im Code, außer wenn sonst niemand eine Vanilla-Eigenheit verstehen würde. Der Code soll aussehen wie der Rest des Projekts.
+- **Code:** Der Code soll aussehen wie der Rest des Projekts. Keine erklärenden Kommentare.
+- **Such-Kommentare:** Neuer Code bekommt kurze englische Stichwort-Kommentare, damit künftige Agents die richtige Stelle mit wenig Suchen und wenig Tokens finden. Eine Zeile, nur Stichworte und der Vanilla-Name, z. B. `// vex: charge attack goal (Vex.VexChargeAttackGoal)` oder `// guardian: beam attack, 80 tick warmup`. Kein Fließtext, keine Erklärung, was die nächste Zeile tut.
 - **Geschwindigkeitstests:** Nur nach großen Features, im Vergleich mit Vanilla und Paper auf demselben Seed. Wenn der optimierte Build länger als 10 Minuten braucht, fällt der Geschwindigkeitstest weg. Das Skript dafür steht unten.
 - **Push:** Nach jeder Batch auf den Fork pushen.
 
