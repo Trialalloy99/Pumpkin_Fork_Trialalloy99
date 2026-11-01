@@ -290,16 +290,28 @@ pub fn update_power_strength(world: &Arc<World>, pos: &BlockPos) {
 
         world.set_block_state(pos, new_state_id, BlockFlags::NOTIFY_LISTENERS);
 
-        let mut to_update = Vec::with_capacity(7);
-        to_update.push(*pos);
-        for direction in BlockDirection::all() {
-            to_update.push(pos.offset(direction.to_offset()));
+        let mut to_update = [*pos; 7];
+        for (slot, direction) in to_update[1..].iter_mut().zip(BlockDirection::all()) {
+            *slot = pos.offset(direction.to_offset());
         }
+        // wire: java HashSet<BlockPos> iteration order, bucket then insertion (DefaultRedstoneWireEvaluator)
+        to_update.sort_by_key(java_hash_set_bucket);
 
         for block_pos in to_update {
             update_neighbors_at(world, &block_pos, &Block::REDSTONE_WIRE);
         }
     }
+}
+
+// wire: bucket of a BlockPos in a default java HashSet (Vec3i.hashCode, HashMap.hash, 16 buckets)
+fn java_hash_set_bucket(pos: &BlockPos) -> i32 {
+    let hash = pos
+        .0
+        .y
+        .wrapping_add(pos.0.z.wrapping_mul(31))
+        .wrapping_mul(31)
+        .wrapping_add(pos.0.x);
+    (hash ^ ((hash as u32) >> 16) as i32) & 15
 }
 
 fn calculate_target_strength(world: &World, pos: &BlockPos) -> u8 {
