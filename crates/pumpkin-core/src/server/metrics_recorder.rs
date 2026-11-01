@@ -117,7 +117,8 @@ fn finish(server: &Arc<Server>, recording: MetricsRecording) {
         filename_formatted_date_time(),
         server.basic_config.default_level_name,
         CURRENT_MC_VERSION
-    );
+    )
+    .replace(['.', '/', '"'], "_");
     let system_report = system_report(server);
     let profiling_report = profiling_report(&recording.tick_nanos, duration);
     let tick_csv = tick_csv(&recording.tick_nanos);
@@ -229,12 +230,12 @@ fn profiling_report(tick_nanos: &[i64], duration: f64) -> String {
 fn tick_csv(tick_nanos: &[i64]) -> String {
     let mut csv = String::from("@tick,ticktime\n");
     for (tick, nanos) in tick_nanos.iter().enumerate() {
-        let _ = writeln!(csv, "{},{:.6}", tick + 1, *nanos as f64 / 1e6);
+        let _ = writeln!(csv, "{},{nanos}", tick + 1);
     }
     csv
 }
 
-/// Vanilla `FileUtil.findAvailableName`: `name.zip`, else `name (1).zip`, `name (2).zip`, ...
+/// Vanilla `FileUtil.findAvailableName`: `name.zip`, else `name (1).zip`, `name (2).zip`, ... (dots already `_`)
 fn find_available_name(dir: &Path, name: &str) -> String {
     let mut candidate = format!("{name}.zip");
     let mut index = 1;
