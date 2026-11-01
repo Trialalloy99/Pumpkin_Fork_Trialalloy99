@@ -6420,6 +6420,50 @@ impl Player {
         self.open_container_pos.store(None);
     }
 
+    // player: open mount inventory screen (ServerPlayer.openHorseInventory)
+    pub fn open_mount_screen(
+        &self,
+        screen_handler: Arc<std::sync::Mutex<dyn pumpkin_inventory::screen_handler::ScreenHandler>>,
+        inventory_columns: usize,
+        entity_id: i32,
+    ) {
+        if !self
+            .current_screen_handler
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_any()
+            .is::<pumpkin_inventory::player::player_screen_handler::PlayerScreenHandler>()
+        {
+            self.close_handled_screen();
+        }
+
+        self.increment_screen_handler_sync_id();
+        let sync_id = self.screen_handler_sync_id.load(Ordering::Relaxed);
+
+        let java_packet = pumpkin_protocol::java::client::play::COpenMountScreen::new(
+            sync_id,
+            pumpkin_protocol::codec::var_int::VarInt(inventory_columns as i32),
+            entity_id,
+        );
+
+        let bedrock_packet = pumpkin_protocol::bedrock::client::container_open::CContainerOpen {
+            container_id: sync_id,
+            container_type: 27, // HorseEquip
+            position: BlockPos::ZERO,
+            target_entity_id: pumpkin_protocol::codec::var_long::VarLong(entity_id as i64),
+        };
+
+        self.try_enqueue_packet_editioned(&java_packet, &bedrock_packet);
+        self.on_screen_handler_opened(&screen_handler);
+        *self
+            .current_screen_handler
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = screen_handler;
+        self.open_container_pos.store(None);
+    }
+
     #[allow(clippy::too_many_lines)]
     pub fn on_slot_click(self: &Arc<Self>, packet: SClickSlot, server: &Arc<Server>) {
         self.update_last_action_time();

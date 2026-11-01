@@ -44,17 +44,31 @@ impl JavaClient {
             }
             Action::LeaveBed => player.wake_up(),
 
-            Action::StartHorseJump | Action::StopHorseJump => {
-                debug!("todo");
-            }
-            // player: open the ridden chest boat (ServerGamePacketListenerImpl OPEN_INVENTORY)
-            Action::OpenVehicleInventory => {
+            Action::StartHorseJump => {
                 if let Some(vehicle) = player.get_entity().get_vehicle()
-                    && let Some(boat) = vehicle
+                    && let Some(mob) = vehicle.get_mob()
+                {
+                    mob.on_player_start_jump(command.jump_boost.0);
+                }
+            }
+            Action::StopHorseJump => {
+                if let Some(vehicle) = player.get_entity().get_vehicle()
+                    && let Some(mob) = vehicle.get_mob()
+                {
+                    mob.on_player_stop_jump();
+                }
+            }
+            // player: open the ridden vehicle inventory (ServerGamePacketListenerImpl OPEN_INVENTORY)
+            Action::OpenVehicleInventory => {
+                if let Some(vehicle) = player.get_entity().get_vehicle() {
+                    if let Some(boat) = vehicle
                         .cast_any()
                         .downcast_ref::<crate::entity::vehicle::boat::BoatEntity>()
-                {
-                    boat.open_chest(player);
+                    {
+                        boat.open_chest(player);
+                    } else if let Some(mob) = vehicle.get_mob() {
+                        mob.open_custom_inventory(player);
+                    }
                 }
             }
             Action::StartFlyingElytra => {

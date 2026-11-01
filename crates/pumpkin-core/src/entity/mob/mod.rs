@@ -1336,6 +1336,26 @@ pub trait Mob: EntityBase + Send + Sync {
     // mob: player rider steers, client moves the vehicle (LivingEntity.tickRidden)
     fn tick_ridden(&self, _controller: &Arc<dyn EntityBase>) {}
 
+    // mob: player starts/stops vehicle jump (PlayerRideableJumping.handleStartJump)
+    fn on_player_start_jump(&self, _jump_scale: i32) {}
+    fn on_player_stop_jump(&self) {}
+
+    // mob: player opens custom vehicle inventory (HasCustomInventoryScreen)
+    fn open_custom_inventory(&self, _player: &Arc<Player>) {}
+
+    // mob: horse temper and taming (AbstractHorse)
+    fn get_temper(&self) -> i32 {
+        0
+    }
+    fn max_temper(&self) -> i32 {
+        100
+    }
+    fn modify_temper(&self, _delta: i32) {}
+    fn tame_with_name(&self, _player: &Player) -> bool {
+        false
+    }
+    fn make_mad(&self) {}
+
     fn mob_controlling_passenger(&self) -> Option<Arc<dyn EntityBase>> {
         if self.get_mob_entity().is_no_ai() {
             return None;
