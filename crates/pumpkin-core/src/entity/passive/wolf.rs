@@ -556,9 +556,13 @@ impl Mob for WolfEntity {
                 && self.mob_entity.living_entity.health.load()
                     < self.mob_entity.living_entity.get_max_health()
             {
+                // wolf: heal by the food's nutrition (Wolf.mobInteract)
+                let heal = item_stack
+                    .get_data_component::<pumpkin_data::data_component_impl::FoodImpl>()
+                    .map_or(1.0, |food| food.nutrition as f32);
                 item_stack.decrement_unless_creative(player.gamemode.load(), 1);
-                self.mob_entity.living_entity.heal(2.0);
-                self.play_eating_sound(ambient);
+                self.mob_entity.living_entity.heal(heal);
+                self.play_eating_sound();
                 return true;
             }
 

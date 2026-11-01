@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::particle::Particle;
-use pumpkin_data::sound::{Sound, SoundCategory};
+use pumpkin_data::sound::Sound;
 
 use crate::entity::{EntityBase, mob::Mob, player::Player, r#type::from_type};
 use pumpkin_protocol::bedrock::server::actor_event::ActorEventID;
@@ -30,11 +30,16 @@ pub trait Animal: Mob {
         world.get_light_level_dependent_magic_value(pos) - 0.5
     }
 
-    fn play_eating_sound(&self, sound: Sound) {
-        let mob_entity = self.get_mob_entity();
-        let entity = &mob_entity.living_entity.entity;
-        let world = entity.world.load();
-        world.play_sound(sound, SoundCategory::Neutral, &entity.pos.load());
+    /// Vanilla `playEatingSound` sound; most animals eat silently.
+    fn eating_sound(&self) -> Option<Sound> {
+        None
+    }
+
+    // animal: feeding sound if the animal has one (Animal.playEatingSound)
+    fn play_eating_sound(&self) {
+        if let Some(sound) = self.eating_sound() {
+            self.make_sound(sound);
+        }
     }
 
     fn write_animal_nbt(&self, nbt: &mut pumpkin_nbt::compound::NbtCompound) {
@@ -59,7 +64,7 @@ pub trait Animal: Mob {
         &self,
         player: &Arc<Player>,
         item_stack: &mut ItemStack,
-        ambient_sound: Sound,
+        _ambient_sound: Sound,
     ) -> bool {
         let mob_entity = self.get_mob_entity();
         if self.is_food(item_stack) {
@@ -93,7 +98,7 @@ pub trait Animal: Mob {
                     7,
                     Particle::Heart,
                 );
-                world.play_sound(ambient_sound, SoundCategory::Neutral, &entity.pos.load());
+                self.play_eating_sound();
                 return true;
             }
 
@@ -117,7 +122,7 @@ pub trait Animal: Mob {
                     7,
                     Particle::HappyVillager,
                 );
-                self.play_eating_sound(ambient_sound);
+                self.play_eating_sound();
                 return true;
             }
         }

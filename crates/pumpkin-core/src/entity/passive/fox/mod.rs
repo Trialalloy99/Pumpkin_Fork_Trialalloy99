@@ -391,6 +391,11 @@ impl AgeableMob for FoxEntity {
 }
 
 impl Animal for FoxEntity {
+    // fox: eat sound (Fox.playEatingSound)
+    fn eating_sound(&self) -> Option<pumpkin_data::sound::Sound> {
+        Some(pumpkin_data::sound::Sound::EntityFoxEat)
+    }
+
     fn is_food(&self, item_stack: &ItemStack) -> bool {
         item_stack.item.has_tag(&tag::Item::MINECRAFT_FOX_FOOD)
             || FOX_FOOD.iter().any(|i| i.id == item_stack.item.id)

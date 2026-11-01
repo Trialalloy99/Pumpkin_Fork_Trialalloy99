@@ -286,6 +286,11 @@ impl AgeableMob for ArmadilloEntity {
 }
 
 impl Animal for ArmadilloEntity {
+    // armadillo: eat sound (Armadillo.playEatingSound)
+    fn eating_sound(&self) -> Option<pumpkin_data::sound::Sound> {
+        Some(pumpkin_data::sound::Sound::EntityArmadilloEat)
+    }
+
     fn is_food(&self, item_stack: &ItemStack) -> bool {
         item_stack
             .item

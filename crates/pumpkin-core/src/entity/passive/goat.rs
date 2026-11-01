@@ -120,6 +120,15 @@ impl AgeableMob for GoatEntity {
 }
 
 impl Animal for GoatEntity {
+    // goat: (screaming) eat sound (Goat.playEatingSound)
+    fn eating_sound(&self) -> Option<pumpkin_data::sound::Sound> {
+        Some(if self.is_screaming() {
+            pumpkin_data::sound::Sound::EntityGoatScreamingEat
+        } else {
+            pumpkin_data::sound::Sound::EntityGoatEat
+        })
+    }
+
     fn is_food(&self, item_stack: &ItemStack) -> bool {
         item_stack.item.has_tag(&tag::Item::MINECRAFT_GOAT_FOOD)
             || TEMPT_ITEMS.iter().any(|i| i.id == item_stack.item.id)

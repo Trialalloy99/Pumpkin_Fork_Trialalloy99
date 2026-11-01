@@ -134,6 +134,13 @@ impl AgeableMob for PigEntity {
 }
 
 impl Animal for PigEntity {
+    // pig: variant eat sound (Pig.playEatingSound)
+    fn eating_sound(&self) -> Option<Sound> {
+        let sound_variant = PigSoundVariant::from_id(self.sound_variant.load(Ordering::Relaxed))
+            .unwrap_or_default();
+        Some(sound_variant.eat_sound(self.is_baby()))
+    }
+
     fn is_food(&self, item_stack: &ItemStack) -> bool {
         use pumpkin_data::tag::Taggable;
         item_stack
