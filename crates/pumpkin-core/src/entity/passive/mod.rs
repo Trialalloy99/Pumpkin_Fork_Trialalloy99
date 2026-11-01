@@ -53,3 +53,4 @@ pub mod wandering_trader;
 pub mod water_animal;
 pub mod wolf;
 pub mod zombie_horse;
+pub mod zombie_nautilus;
