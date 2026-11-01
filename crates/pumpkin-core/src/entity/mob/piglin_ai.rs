@@ -15,6 +15,7 @@ use crate::entity::ai::random_pos::land_random_pos;
 use crate::entity::ai::target_predicate::TargetPredicate;
 use crate::entity::item::ItemEntity;
 use crate::entity::living::LivingEntity;
+use crate::entity::mob::Mob;
 use crate::entity::mob::piglin::{PiglinActivity, PiglinEntity};
 use crate::entity::player::Player;
 
@@ -262,6 +263,53 @@ impl PiglinAi {
         };
         let world = living.entity.world.load();
         conditions.test(&world, Some(piglin), target)
+    }
+
+    // piglin: idle piglins near the player turn on them (PiglinAi.angerNearbyPiglins)
+    pub fn anger_nearby_piglins(player: &Arc<Player>, only_if_they_see_the_player: bool) {
+        let player_entity = player.get_entity();
+        let world = player_entity.world.load();
+        let area = player_entity.bounding_box.load().expand(16.0, 16.0, 16.0);
+        let universal_anger = world.level_info.load().game_rules.universal_anger;
+        for candidate in world.get_entities_at_box(&area) {
+            if candidate.get_entity().entity_type != &EntityType::PIGLIN {
+                continue;
+            }
+            let Some(piglin) = candidate.cast_any().downcast_ref::<PiglinEntity>() else {
+                continue;
+            };
+            if piglin.activity.load() != PiglinActivity::Idle
+                || (only_if_they_see_the_player && !piglin.has_line_of_sight(player_entity))
+            {
+                continue;
+            }
+            let target: Arc<dyn EntityBase> = if universal_anger {
+                piglin
+                    .nearest_visible_player
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone()
+                    .map_or_else(|| player.clone() as Arc<dyn EntityBase>, |p| p as _)
+            } else {
+                player.clone()
+            };
+            Self::set_anger_target(piglin, target);
+        }
+    }
+
+    // piglin: angry at an attackable target, ignoring sight (PiglinAi.setAngerTarget)
+    fn set_anger_target(piglin: &PiglinEntity, target: Arc<dyn EntityBase>) {
+        let world = piglin.mob_entity.living_entity.entity.world.load();
+        if !TargetPredicate::create_attackable()
+            .ignore_visibility()
+            .test(&world, Some(piglin), target.as_ref())
+        {
+            return;
+        }
+        piglin.set_mob_target(
+            Some(target),
+            crate::plugin::api::events::entity::entity_target::TargetReason::Angry,
+        );
     }
 
     pub fn throw_items(piglin: &PiglinEntity, items: Vec<ItemStack>) {

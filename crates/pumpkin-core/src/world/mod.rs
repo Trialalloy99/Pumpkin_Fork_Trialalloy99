@@ -5634,6 +5634,16 @@ impl World {
             return None;
         }
 
+        // block: breaking guarded blocks angers piglins even unseen (Block.playerWillDestroy)
+        if let Some(player) = cause
+            && pumpkin_data::tag::Taggable::has_tag(
+                broken_block,
+                &pumpkin_data::tag::Block::MINECRAFT_GUARDED_BY_PIGLINS,
+            )
+        {
+            crate::entity::mob::piglin_ai::PiglinAi::anger_nearby_piglins(player, false);
+        }
+
         if event.drop {
             flags.remove(BlockFlags::SKIP_DROPS);
         } else {

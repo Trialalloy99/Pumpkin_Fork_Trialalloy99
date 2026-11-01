@@ -751,6 +751,9 @@ impl EntityBase for MinecartEntity {
                     let inventory: Arc<dyn Inventory> = container.clone();
                     world.scatter_inventory(&position, &inventory);
                 }
+                if self.container().is_some() {
+                    container::anger_piglins_on_destroy(source);
+                }
                 if let Some(item) = self.drop_item() {
                     world.drop_stack(&position, ItemStack::new(1, item));
                 }

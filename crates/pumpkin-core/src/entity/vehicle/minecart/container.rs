@@ -220,7 +220,7 @@ pub fn open(
         });
     }
 
-    player
+    let opened = player
         .open_handled_screen(
             &MinecartScreenFactory {
                 inventory: inventory.clone(),
@@ -229,7 +229,25 @@ pub fn open(
             },
             None,
         )
-        .is_some()
+        .is_some();
+    // chest vehicle: open event, piglins notice (AbstractMinecartContainer.interact, AbstractChestBoat.interact)
+    if opened && !hopper {
+        entity.world.load().emit_game_event(
+            pumpkin_data::game_event::GameEvent::ContainerOpen.name(),
+            entity.pos.load(),
+        );
+        crate::entity::mob::piglin_ai::PiglinAi::anger_nearby_piglins(player, true);
+    }
+    opened
+}
+
+// chest vehicle: breaking it angers piglins when a player did it (ContainerEntity.chestVehicleDestroyed)
+pub fn anger_piglins_on_destroy(source: Option<&dyn crate::entity::EntityBase>) {
+    if let Some(player) = source.and_then(crate::entity::EntityBase::get_player)
+        && let Some(player) = player.world().get_player_by_id(player.entity_id())
+    {
+        crate::entity::mob::piglin_ai::PiglinAi::anger_nearby_piglins(&player, true);
+    }
 }
 
 pub fn velocity(

@@ -534,7 +534,7 @@ impl BoatEntity {
             return false;
         };
         let entity = &self.vehicle.entity;
-        let opened = container::open(
+        container::open(
             entity,
             player,
             chest,
@@ -543,18 +543,11 @@ impl BoatEntity {
                 [],
             ),
             false,
-        );
-        if opened {
-            entity.world.load().emit_game_event(
-                pumpkin_data::game_event::GameEvent::ContainerOpen.name(),
-                entity.pos.load(),
-            );
-        }
-        opened
+        )
     }
 
     // vehicle: break into its item, chest contents spill (VehicleEntity.destroy, chestVehicleDestroyed)
-    fn destroy(&self) {
+    fn destroy(&self, source: Option<&dyn EntityBase>) {
         let entity = &self.vehicle.entity;
         let world = entity.world.load();
         entity.remove();
@@ -579,6 +572,7 @@ impl BoatEntity {
             });
             let inventory: Arc<dyn pumpkin_inventory::Inventory> = chest.clone();
             world.scatter_inventory(&entity.block_pos.load(), &inventory);
+            container::anger_piglins_on_destroy(source);
         }
     }
 }
@@ -745,7 +739,7 @@ impl EntityBase for BoatEntity {
             if creative {
                 entity.remove();
             } else {
-                self.destroy();
+                self.destroy(source);
             }
         }
         true

@@ -306,6 +306,8 @@ fn normal_use_chest_impl(args: &NormalUseArgs<'_>) -> BlockActionResult {
 
         args.player
             .open_handled_screen(factory.as_ref(), Some(*args.position));
+        // container: opening angers piglins who see it (PiglinAi.angerNearbyPiglins)
+        crate::entity::mob::piglin_ai::PiglinAi::anger_nearby_piglins(args.player, true);
     }
 
     BlockActionResult::Success

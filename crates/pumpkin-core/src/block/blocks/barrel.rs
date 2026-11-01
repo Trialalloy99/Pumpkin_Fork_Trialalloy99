@@ -69,6 +69,8 @@ impl BlockBehaviour for BarrelBlock {
             );
             args.player
                 .open_handled_screen(factory.as_ref(), Some(*args.position));
+            // container: opening angers piglins who see it (PiglinAi.angerNearbyPiglins)
+            crate::entity::mob::piglin_ai::PiglinAi::anger_nearby_piglins(args.player, true);
         }
 
         BlockActionResult::Success
