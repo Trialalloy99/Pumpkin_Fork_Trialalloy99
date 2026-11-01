@@ -41,6 +41,14 @@ impl WanderAroundGoal {
         goal
     }
 
+    // stroll: land preference with custom chance (WaterAvoidingRandomStrollGoal probability)
+    #[must_use]
+    pub const fn water_avoiding_with_probability(speed: f64, probability: f32) -> Self {
+        let mut goal = Self::new(speed);
+        goal.water_avoiding_probability = Some(probability);
+        goal
+    }
+
     /// Run once on the next check, ignoring the interval.
     pub const fn trigger(&mut self) {
         self.force_trigger = true;

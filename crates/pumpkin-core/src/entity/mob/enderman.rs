@@ -1,6 +1,6 @@
 use std::sync::{
     Arc, Weak,
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicI32, Ordering},
 };
 
 use crate::entity::ai::behavior::hunting::{self, Hunt};
@@ -43,6 +43,7 @@ use crate::entity::{
     player::Player,
 };
 
+const MIN_DEAGGRESSION_TIME: i32 = 600;
 const SPEED_BOOST: f64 = 0.15;
 const ENDERMAN_SPEED_BOOST_ID: &str = "minecraft:attacking";
 
@@ -69,6 +70,7 @@ pub struct EndermanEntity {
     creepy: AtomicBool,
     provoked: AtomicBool,
     speed_boosted: AtomicBool,
+    target_change_time: AtomicI32,
 }
 
 impl EndermanEntity {
@@ -81,6 +83,7 @@ impl EndermanEntity {
             creepy: AtomicBool::new(false),
             provoked: AtomicBool::new(false),
             speed_boosted: AtomicBool::new(false),
+            target_change_time: AtomicI32::new(0),
         };
         let mob_arc = Arc::new(entity);
         let mob_weak: Weak<dyn Mob> = {
@@ -103,7 +106,10 @@ impl EndermanEntity {
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
             goal_selector.add_goal(1, Box::new(ChasePlayerGoal::new(mob_arc.clone())));
             goal_selector.add_goal(2, Box::new(MeleeAttackGoal::new(1.0, false)));
-            goal_selector.add_goal(7, Box::new(WanderAroundGoal::new(1.0)));
+            goal_selector.add_goal(
+                7,
+                Box::new(WanderAroundGoal::water_avoiding_with_probability(1.0, 0.0)),
+            );
             goal_selector.add_goal(
                 8,
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 8.0),
@@ -248,6 +254,9 @@ impl EndermanEntity {
         *mob_target = target;
         drop(mob_target);
 
+        let tick = self.get_entity().tick_count.load(Ordering::Relaxed);
+        self.target_change_time
+            .store(if is_some { tick } else { 0 }, Ordering::Relaxed);
         if is_some {
             self.set_creepy(true);
             // Use attribute modifier instead of direct speed arithmetic
@@ -418,7 +427,49 @@ impl Mob for EndermanEntity {
         self.set_target(target);
     }
 
-    // TODO: sunlight avoidance, carried block drop on death, ambient sound override
+    fn get_ambient_sound(&self) -> Option<Sound> {
+        Some(if self.is_creepy() {
+            Sound::EntityEndermanScream
+        } else {
+            Sound::EntityEndermanAmbient
+        })
+    }
+
+    // enderman: drop carried block on death (Enderman.dropCustomDeathLoot, silk touch tool)
+    fn drop_inventory(&self) {
+        let Some(state) = self.carried_block.load() else {
+            return;
+        };
+        let block = pumpkin_data::Block::from_state_id(state);
+        if let Some(item) = pumpkin_data::item::Item::from_id(block.item_id) {
+            self.get_entity()
+                .spawn_at_location(pumpkin_data::item_stack::ItemStack::new(1, item));
+        }
+    }
+
+    // enderman: flee sunlight by teleport (Enderman.customServerAiStep)
+    fn custom_server_ai_step(&self, _caller: &dyn EntityBase) {
+        let entity = self.get_entity();
+        let tick = entity.tick_count.load(Ordering::Relaxed);
+        if tick < self.target_change_time.load(Ordering::Relaxed) + MIN_DEAGGRESSION_TIME {
+            return;
+        }
+        let world = entity.world.load();
+        if !world.is_bright_outside() {
+            return;
+        }
+        let pos = entity.pos.load();
+        let eye_pos = BlockPos::floored(pos.x, entity.get_eye_y(), pos.z);
+        let brightness = world.get_light_level_dependent_magic_value(&eye_pos);
+        if brightness > 0.5
+            && world.can_see_sky(&entity.block_pos.load())
+            && self.get_random().random::<f32>() * 30.0 < (brightness - 0.4) * 2.0
+        {
+            self.set_target(None);
+            self.teleport_randomly();
+        }
+    }
+
     fn mob_tick(&self, caller: &dyn EntityBase) {
         let entity = &self.mob_entity.living_entity.entity;
         if !entity.is_alive() {
