@@ -70,7 +70,7 @@ Unser Fortschritt steht auf **https://claude.ai/artifact/KAHK4pXmbbEhd9nXiBuobN*
 | 2 | Guardian, Elder Guardian, Illusioner, Vindicator, Ravager, Endermite | fertig (Lücken in `batch-3` geschlossen); Test im Spiel steht aus |
 | 3 | Zombie, Husk, Zombie Villager, Zombified Piglin, Enderman, Wolf | fertig auf `batch-3` (Husk erst mit dem Kamel-Husk aus Batch 4 komplett); Test im Spiel steht aus |
 | 5 (Codex) | Slime, Magma Cube, Phantom, Silverfish, Blaze, Pillager, Piglin Brute, Hoglin, Zoglin, Polar Bear | Auftrag in `CODEX_BATCH5.md`, Branch `batch-5-codex` |
-| 4 | Camel Husk, Parched, Skeleton, Stray, Bogged, Creeper, Spider, Cave Spider, Drowned, Witch | in Arbeit auf `batch-4` (von `batch-3` abgezweigt) |
+| 4 | Parched, Skeleton, Stray, Bogged, Creeper, Spider, Cave Spider, Drowned, Witch | fertig auf `batch-4` (von `batch-3` abgezweigt); Test im Spiel steht aus. Camel Husk verschoben (braucht das ganze Kamel) |
 
 Aus dem Tracker entfernt, weil Vanilla sie auf einem dedizierten Server nicht hat: `/publish` und `/unpublish` (nur Einzelspieler) sowie `/jfr` (Java Flight Recorder, braucht eine JVM).
 
@@ -87,6 +87,20 @@ Batch 2 und 3: alle bekannten Lücken sind geschlossen. Was dafür neu dazukam (
 - Technische Schuld ohne Verhaltensunterschied: Der Evoker nutzt noch sein eigenes Zaubersystem statt `mob/spellcaster.rs`.
 
 Bekannt und nicht von uns: `cargo test -p pumpkin-world` hat einen Fehlschlag in `world_info_save` (`write_world_info_reports_final_rename_failure`), weil der Container als root läuft und Ordnerrechte nicht greifen.
+
+Batch 4, neu dazugekommen:
+- `mob/looting.rs`: Mobs heben Items auf und rüsten sie aus (Vanilla `Mob.aiStep` looting, `equipItemIfPossible`).
+- Mobs klettern an Leitern, Ranken usw. (`LivingEntity::check_climbing`, vorher ein TODO).
+- `Mob::max_fall_distance` geht in die Navigation (Vanilla `getMaxFallDistance`).
+- Monster laufen lieber ins Dunkle (`get_walk_target_value`).
+- Explosionen kennen ihren Verursacher (`World::explode_from_entity`).
+- `Mob::killed_entity` kann Drops verhindern (Villager-Infektion jetzt wie Vanilla).
+- `RestrictSunGoal` und `FleeSunGoal` wie Vanilla. Die Navigation meidet Sonne per `can_see_sky`.
+
+Offene Aufgaben, die nicht Teil einer Batch waren:
+- **Kamel und Camel Husk:** Vanilla nutzt Brain-KI (CamelAi), Sitzen und Dash, Reiten und die ganze `AbstractHorse`-Basis (Zähmen, Sattel, Inventar). Das fehlt in Pumpkin. Erst danach funktioniert der Kamel-Husk-Jockey beim Husk. Der Code dafür ist schon drin und springt an, sobald `CAMEL_HUSK` ein Mob ist.
+- **Zombie-Nautilus:** fehlt als Mob. Der Drowned-Jockey springt automatisch an, sobald er existiert.
+- **`/effect`:** geht in Pumpkin nur für Spieler, in Vanilla für alle Lebewesen.
 
 Platz: `target/debug/incremental` wächst auf über 20 GB. Wenn die Platte voll ist, `rm -rf target/debug/incremental target/release`.
 
