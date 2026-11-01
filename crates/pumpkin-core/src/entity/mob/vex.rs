@@ -3,7 +3,10 @@ use std::sync::{Arc, Weak};
 
 use crossbeam::atomic::AtomicCell;
 use pumpkin_data::damage::DamageType;
+use pumpkin_data::data_component_impl::EquipmentSlot;
 use pumpkin_data::entity::EntityType;
+use pumpkin_data::item::Item;
+use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::sound::Sound;
 use pumpkin_data::tracked_data;
 use pumpkin_nbt::compound::NbtCompound;
@@ -19,7 +22,9 @@ use crate::entity::ai::goal::track_target::TrackTargetGoal;
 use crate::entity::ai::goal::{Controls, Goal, to_goal_ticks};
 use crate::entity::ai::target_match::TargetMatch;
 use crate::entity::ai::target_predicate::TargetPredicate;
+use crate::entity::mob::equipment::RegionalDifficulty;
 use crate::entity::mob::raider;
+use crate::entity::mob::spawn::SpawnGroupData;
 use crate::entity::projectile::owner::EntityReference;
 use crate::entity::{
     Entity, EntityBase,
@@ -27,6 +32,7 @@ use crate::entity::{
     mob::{Mob, MobEntity},
 };
 use crate::plugin::api::events::entity::entity_target::TargetReason;
+use crate::world::World;
 
 const VEX_HUNTS: &[Hunt] = &[Hunt::new(3, TargetMatch::Type(&EntityType::PLAYER), true)];
 
@@ -175,6 +181,30 @@ impl Mob for VexEntity {
                 .store(LIMITED_LIFE_DAMAGE_INTERVAL, Ordering::Relaxed);
             self.damage(self, 1.0, DamageType::STARVE);
         }
+    }
+
+    fn finalize_spawn(
+        &self,
+        world: &Arc<World>,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        let difficulty = RegionalDifficulty::at(world, self.get_entity().pos.load());
+        self.populate_default_equipment_slots(world, &difficulty);
+        self.populate_default_equipment_enchantments(&difficulty);
+        self.finalize_spawn_super(group_data)
+    }
+
+    fn populate_default_equipment_slots(
+        &self,
+        _world: &Arc<World>,
+        _difficulty: &RegionalDifficulty,
+    ) {
+        self.mob_entity.set_item_slot(
+            &EquipmentSlot::MAIN_HAND,
+            ItemStack::new(1, &Item::IRON_SWORD),
+        );
+        self.mob_entity
+            .set_drop_chance(&EquipmentSlot::MAIN_HAND, 0.0);
     }
 
     fn mob_init_data_tracker(&self) {

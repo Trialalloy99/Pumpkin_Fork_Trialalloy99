@@ -470,11 +470,15 @@ impl MobEntity {
     }
 
     pub fn set_guaranteed_drop(&self, slot: &EquipmentSlot) {
+        self.set_drop_chance(slot, Self::GUARANTEED_DROP_CHANCE);
+    }
+
+    pub fn set_drop_chance(&self, slot: &EquipmentSlot, chance: f32) {
         self.living_entity
             .equipment_drop_chances
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .insert(slot.clone(), Self::GUARANTEED_DROP_CHANCE);
+            .insert(slot.clone(), chance);
     }
 
     /// Equips `stack` and tells tracking clients, returning what was in the slot.
