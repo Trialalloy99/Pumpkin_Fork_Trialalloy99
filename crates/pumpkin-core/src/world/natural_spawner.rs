@@ -25,7 +25,6 @@ use pumpkin_util::random::xoroshiro128::Xoroshiro;
 use pumpkin_util::random::{RandomImpl, get_seed};
 use pumpkin_world::chunk::{ChunkData, ChunkHeightmapType};
 use pumpkin_world::generation::proto_chunk::GenerationCache;
-use rand::seq::IndexedRandom;
 use rand::{RngExt, rng};
 use std::fmt;
 use std::sync::Arc;
@@ -575,7 +574,7 @@ pub fn spawn_mobs_for_chunk_generation(
     let zo = chunk_z << 4;
 
     while rand::random::<f32>() < biome.creature_spawn_probability {
-        let Some(spawner_data) = creatures.choose(&mut rand::rng()) else {
+        let Some(spawner_data) = choose_weighted(creatures) else {
             continue;
         };
 
@@ -618,8 +617,13 @@ pub fn spawn_mobs_for_chunk_generation(
                         fx,
                         f64::from(pos.0.y),
                         fz,
-                    )) && check_spawn_rules(entity_type, world, &check_pos, false)
-                    {
+                    )) && check_chunk_generation_spawn_rules(
+                        world,
+                        cache,
+                        biome,
+                        entity_type,
+                        &check_pos,
+                    ) {
                         let entity = from_type(entity_type, spawn_pos_f64, world, Uuid::new_v4());
                         entity
                             .get_entity()
@@ -644,6 +648,105 @@ pub fn spawn_mobs_for_chunk_generation(
             }
         }
     }
+}
+
+// spawner: chunk-gen rules read the proto chunk, the chunk is not in the world yet (SpawnPlacements.checkSpawnRules)
+fn check_chunk_generation_spawn_rules(
+    world: &World,
+    cache: &dyn GenerationCache,
+    biome: &'static Biome,
+    entity_type: &'static EntityType,
+    pos: &BlockPos,
+) -> bool {
+    use pumpkin_data::tag::Block as BlockTag;
+
+    let id = entity_type.id;
+    let below_id = GenerationCache::get_block_state(cache, &pos.down().0);
+    let below_state = BlockState::from_id(below_id);
+    let below = Block::from_state_id(below_id);
+    let bright = || chunk_generation_raw_brightness(cache, pos) > 8;
+    let tagged = |tag| below.has_tag(tag) && bright();
+
+    if id == EntityType::CHICKEN.id
+        || id == EntityType::COW.id
+        || id == EntityType::DONKEY.id
+        || id == EntityType::HAPPY_GHAST.id
+        || id == EntityType::HORSE.id
+        || id == EntityType::LLAMA.id
+        || id == EntityType::MULE.id
+        || id == EntityType::PIG.id
+        || id == EntityType::SHEEP.id
+        || id == EntityType::CAT.id
+        || id == EntityType::PANDA.id
+        || id == EntityType::TRADER_LLAMA.id
+        || id == EntityType::SKELETON_HORSE.id
+    {
+        return tagged(&BlockTag::MINECRAFT_ANIMALS_SPAWNABLE_ON);
+    }
+    if id == EntityType::ARMADILLO.id {
+        return tagged(&BlockTag::MINECRAFT_ARMADILLO_SPAWNABLE_ON);
+    }
+    if id == EntityType::CAMEL.id {
+        return tagged(&BlockTag::MINECRAFT_CAMELS_SPAWNABLE_ON);
+    }
+    if id == EntityType::FROG.id {
+        return tagged(&BlockTag::MINECRAFT_FROGS_SPAWNABLE_ON);
+    }
+    if id == EntityType::GOAT.id {
+        return tagged(&BlockTag::MINECRAFT_GOATS_SPAWNABLE_ON);
+    }
+    if id == EntityType::MOOSHROOM.id {
+        return tagged(&BlockTag::MINECRAFT_MOOSHROOMS_SPAWNABLE_ON);
+    }
+    if id == EntityType::PARROT.id {
+        return tagged(&BlockTag::MINECRAFT_PARROTS_SPAWNABLE_ON);
+    }
+    if id == EntityType::RABBIT.id {
+        return tagged(&BlockTag::MINECRAFT_RABBITS_SPAWNABLE_ON);
+    }
+    if id == EntityType::WOLF.id {
+        return tagged(&BlockTag::MINECRAFT_WOLVES_SPAWNABLE_ON);
+    }
+    if id == EntityType::FOX.id {
+        return tagged(&BlockTag::MINECRAFT_FOXES_SPAWNABLE_ON);
+    }
+    if id == EntityType::OCELOT.id {
+        return rand::random_range(0..3) != 0 && below_state.is_side_solid(BlockDirection::Up);
+    }
+    if id == EntityType::POLAR_BEAR.id {
+        if biome.has_tag(
+            &pumpkin_data::tag::WorldgenBiome::MINECRAFT_POLAR_BEARS_SPAWN_ON_ALTERNATE_BLOCKS,
+        ) {
+            return tagged(&BlockTag::MINECRAFT_POLAR_BEARS_SPAWNABLE_ON_ALTERNATE);
+        }
+        return tagged(&BlockTag::MINECRAFT_ANIMALS_SPAWNABLE_ON);
+    }
+    if id == EntityType::TURTLE.id {
+        return pos.0.y < world.sea_level + 4 && tagged(&BlockTag::MINECRAFT_SAND);
+    }
+    check_spawn_rules(entity_type, world, pos, false)
+}
+
+// spawner: raw brightness from proto chunk light, no sky darken (getRawBrightness(pos, 0))
+fn chunk_generation_raw_brightness(cache: &dyn GenerationCache, pos: &BlockPos) -> u8 {
+    let chunk = cache.get_center_chunk();
+    let rel_y = pos.0.y - i32::from(chunk.bottom_y());
+    if rel_y < 0 {
+        return 0;
+    }
+    let section = (rel_y >> 4) as usize;
+    let (Some(sky), Some(block)) = (
+        chunk.light.sky_light.get(section),
+        chunk.light.block_light.get(section),
+    ) else {
+        return 15;
+    };
+    let (x, y, z) = (
+        (pos.0.x & 15) as usize,
+        (rel_y & 15) as usize,
+        (pos.0.z & 15) as usize,
+    );
+    sky.get(x, y, z).max(block.get(x, y, z))
 }
 
 pub fn get_top_non_colliding_pos(
@@ -952,7 +1055,7 @@ pub fn get_random_spawn_mob_at(
     {
         None
     } else {
-        match category.id {
+        let spawners = match category.id {
             id if id == MobCategory::MONSTER.id => biome.spawners.monster,
             id if id == MobCategory::CREATURE.id => biome.spawners.creature,
             id if id == MobCategory::AMBIENT.id => biome.spawners.ambient,
@@ -964,9 +1067,22 @@ pub fn get_random_spawn_mob_at(
             id if id == MobCategory::WATER_AMBIENT.id => biome.spawners.water_ambient,
             id if id == MobCategory::MISC.id => biome.spawners.misc,
             _ => biome.spawners.misc,
-        }
-        .choose(&mut rng())
+        };
+        choose_weighted(spawners)
     }
+}
+
+// spawner: weighted pick by spawner weight (WeightedList.getRandom)
+fn choose_weighted(spawners: &'static [Spawner]) -> Option<&'static Spawner> {
+    let total: i32 = spawners.iter().map(|spawner| spawner.weight).sum();
+    if total <= 0 {
+        return None;
+    }
+    let mut roll = rng().random_range(0..total);
+    spawners.iter().find(|spawner| {
+        roll -= spawner.weight;
+        roll < 0
+    })
 }
 
 #[must_use]
