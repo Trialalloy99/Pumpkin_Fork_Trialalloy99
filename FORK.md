@@ -14,6 +14,16 @@ Der Besitzer will so schnell wie möglich eine **spielbare Version von Pumpkin**
 
 Tempo ist wichtig. Ein einfacher Mob wie der Vex hat etwa 10 Minuten Coding gebraucht, mit allen Checks knapp eine Stunde. Plane danach und verliere dich nicht in Nebenbaustellen.
 
+## Performance zuerst
+
+Pumpkin ist auf Geschwindigkeit ausgelegt. Das gilt für jede Zeile, die wir schreiben:
+- **Mob-Ticks:** Mob-Code läuft pro Mob und Tick, also tausendfach pro Sekunde. Darin keine Allokationen (`Vec`, `String`, `format!`), kein `clone()` großer Daten und keine Suche über alle Entities ohne Bounding Box.
+- **Billige Prüfungen zuerst:** Zufallswürfe, Timer und Flags vor Weltabfragen, Entity-Suchen und Pathfinding. Vanilla prüft oft in derselben Reihenfolge. Wo Vanilla die Reihenfolge vorgibt (z. B. beim Zufall), gilt Vanilla.
+- **Locks kurz halten:** Kein Lock über einen Aufruf halten, der selbst sperrt. Kein Lock über `.await`. Atomics statt Mutex für einfache Zahlen und Flags.
+- **Schwere Arbeit:** Chunk-Scans und ähnliches erst mit der Palette prüfen (`contains_matching`), wie bei den POIs. CPU-lastiges gehört auf Rayon, Datei-Arbeit auf `spawn_blocking`.
+- **Referenzen:** `Weak` statt `Arc` in Zielen und Controls, damit keine Zyklen entstehen und Mobs freigegeben werden.
+- **Ergebnisse merken:** Was teuer ist und sich nicht ändert, cachen. Vanilla cached zum Beispiel Struktur-Starts bei `/locate`.
+
 ## Arbeitsablauf
 
 - **Batches:** Immer 5 bis 6 Entities (oder Items) pro Batch. Erst alle umsetzen, dann am Ende der Batch gemeinsam testen.
@@ -57,6 +67,7 @@ Unser Fortschritt steht auf **https://claude.ai/artifact/KAHK4pXmbbEhd9nXiBuobN*
 | 1 | Vex (plus die Vex-Beschwörung beim Evoker) | fertig auf `feat/vex-ai` und `playable`; Test im Spiel steht aus |
 | Commands | `/locate` (alle POI-Typen, POIs aus geladenen Chunks), `/perf` | fertig auf `batch-commands` |
 | 2 | Guardian, Elder Guardian, Illusioner, Vindicator, Ravager, Endermite | fertig auf `batch-2`; Test im Spiel steht aus |
+| 3 | Zombie, Husk, Zombie Villager, Zombified Piglin, Enderman, Wolf | als Nächstes |
 
 Aus dem Tracker entfernt, weil Vanilla sie auf einem dedizierten Server nicht hat: `/publish` und `/unpublish` (nur Einzelspieler) sowie `/jfr` (Java Flight Recorder, braucht eine JVM).
 
