@@ -186,6 +186,20 @@ macro_rules! impl_schooling_fish {
             }
         }
     };
+    ($fish:ty, max_school_size: $max_size:expr) => {
+        impl $crate::entity::passive::abstract_schooling_fish::AbstractSchoolingFish for $fish {
+            fn schooling_data(
+                &self,
+            ) -> &$crate::entity::passive::abstract_schooling_fish::SchoolingFishData {
+                &self.schooling_data
+            }
+
+            // abstract_schooling_fish: override max school cluster size (AbstractSchoolingFish.getMaxSchoolSize)
+            fn max_school_size(&self) -> i32 {
+                $max_size
+            }
+        }
+    };
 }
 
 #[cfg(test)]
