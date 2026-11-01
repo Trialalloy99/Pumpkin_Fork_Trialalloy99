@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Weak};
 
 use pumpkin_data::BlockState;
+use pumpkin_data::attributes::Attributes;
 use pumpkin_data::data_component_impl::EquipmentSlot;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::item::Item;
@@ -10,18 +11,21 @@ use pumpkin_data::sound::Sound;
 use pumpkin_util::math::position::BlockPos;
 
 use crate::entity::ai::util::goal_utils;
+use crate::entity::attributes::{Modifier, ModifierOperation};
 use crate::entity::{
     Entity, EntityBase,
     ai::behavior::neutral::apply_targets,
     ai::goal::{
-        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal,
-        melee_attack::MeleeAttackGoal, revenge::RevengeGoal, swim::SwimGoal,
-        wander_around::WanderAroundGoal,
+        destroy_egg::DestroyEggGoal, look_around::RandomLookAroundGoal,
+        look_at_entity::LookAtEntityGoal, revenge::RevengeGoal, wander_around::WanderAroundGoal,
+        zombie_attack::ZombieAttackGoal,
     },
     mob::{
         Mob, MobEntity,
         equipment::RegionalDifficulty,
         neutral::{NeutralData, NeutralMob},
+        spawn::SpawnGroupData,
+        zombie::{apply_baby_speed, handle_zombie_attributes, maybe_wear_halloween_head},
     },
 };
 use crate::plugin::api::events::entity::entity_target::TargetReason;
@@ -30,11 +34,14 @@ use crate::world::World;
 
 /// Vanilla `ALERT_INTERVAL`: 4 to 6 seconds.
 const ALERT_INTERVAL: std::ops::RangeInclusive<i32> = 80..=120;
+const FIRST_ANGER_SOUND_DELAY: std::ops::RangeInclusive<i32> = 0..=20;
+const SPEED_MODIFIER_ATTACKING_ID: &str = "minecraft:attacking";
 
 pub struct ZombifiedPiglinEntity {
     pub mob_entity: MobEntity,
     neutral_data: NeutralData,
     ticks_until_next_alert: AtomicI32,
+    first_anger_sound_in: AtomicI32,
     /// Detects the target transition that restarts the alert interval.
     had_target: AtomicBool,
 }
@@ -48,6 +55,7 @@ impl ZombifiedPiglinEntity {
             mob_entity,
             neutral_data: NeutralData::default(),
             ticks_until_next_alert: AtomicI32::new(0),
+            first_anger_sound_in: AtomicI32::new(0),
             had_target: AtomicBool::new(false),
         };
         let mob_arc = Arc::new(piglin);
@@ -59,14 +67,14 @@ impl ZombifiedPiglinEntity {
         {
             let goal_selector = &mob_arc.mob_entity.goals_selector;
 
-            goal_selector.add_goal(0, Box::new(SwimGoal::default()));
-            goal_selector.add_goal(2, Box::new(MeleeAttackGoal::new(1.0, true)));
-            goal_selector.add_goal(5, Box::new(WanderAroundGoal::new(1.0)));
+            goal_selector.add_goal(4, DestroyEggGoal::new(1.0, 3));
             goal_selector.add_goal(
-                6,
+                8,
                 LookAtEntityGoal::with_default(mob_weak.clone(), &EntityType::PLAYER, 8.0),
             );
-            goal_selector.add_goal(7, Box::new(RandomLookAroundGoal::default()));
+            goal_selector.add_goal(8, Box::new(RandomLookAroundGoal::default()));
+            goal_selector.add_goal(2, ZombieAttackGoal::new(1.0, false));
+            goal_selector.add_goal(7, Box::new(WanderAroundGoal::water_avoiding(1.0)));
 
             let target_selector = &mob_arc.mob_entity.target_selector;
             target_selector.add_goal(1, Box::new(RevengeGoal::new(true).alerting_others()));
@@ -136,7 +144,51 @@ impl Mob for ZombifiedPiglinEntity {
 
     fn spawn_as_baby(&self) -> bool {
         self.mob_entity.set_baby_by_age();
+        apply_baby_speed(&self.mob_entity, true);
         true
+    }
+
+    fn get_ambient_sound(&self) -> Option<Sound> {
+        Some(if self.is_angry() {
+            Sound::EntityZombifiedPiglinAngry
+        } else {
+            Sound::EntityZombifiedPiglinAmbient
+        })
+    }
+
+    fn get_base_experience_reward(&self) -> u32 {
+        let base = self.get_entity().entity_type.experience_reward;
+        if self.mob_entity.living_entity.is_baby() {
+            (f64::from(base) * 2.5) as u32
+        } else {
+            base
+        }
+    }
+
+    // zombified piglin: zombie spawn rolls, no reinforcements (ZombifiedPiglin via Zombie.finalizeSpawn)
+    fn finalize_spawn(
+        &self,
+        world: &Arc<World>,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        let group_data = self.finalize_spawn_super(group_data);
+        let difficulty = RegionalDifficulty::at(world, self.get_entity().pos.load());
+        let multiplier = difficulty.special_multiplier;
+        self.mob_entity
+            .set_can_pick_up_loot(rand::random::<f32>() < 0.55 * multiplier);
+        let group_data = group_data.unwrap_or(SpawnGroupData::Zombie {
+            baby: rand::random::<f32>() < 0.05,
+        });
+        if let SpawnGroupData::Zombie { baby } = group_data {
+            if baby {
+                self.spawn_as_baby();
+            }
+            self.populate_default_equipment_slots(world, &difficulty);
+            self.populate_default_equipment_enchantments(&difficulty);
+        }
+        maybe_wear_halloween_head(&self.mob_entity);
+        handle_zombie_attributes(&self.mob_entity, multiplier, false, false);
+        Some(group_data)
     }
 
     fn as_neutral(&self) -> Option<&dyn NeutralMob> {
@@ -162,7 +214,44 @@ impl Mob for ZombifiedPiglinEntity {
         equipment.put(&EquipmentSlot::MAIN_HAND, ItemStack::new(1, weapon));
     }
 
+    // zombified piglin: angry speed + first anger sound (ZombifiedPiglin.customServerAiStep)
     fn custom_server_ai_step(&self, _caller: &dyn EntityBase) {
+        let angry = self.is_angry();
+        {
+            let mut attributes = self
+                .mob_entity
+                .living_entity
+                .attributes
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(speed) = attributes.get_mut(&Attributes::MOVEMENT_SPEED.id) {
+                let has = speed
+                    .modifiers
+                    .iter()
+                    .any(|modifier| modifier.id == SPEED_MODIFIER_ATTACKING_ID);
+                if angry && !has && !self.mob_entity.living_entity.is_baby() {
+                    speed.add_or_replace_modifier(Modifier {
+                        id: SPEED_MODIFIER_ATTACKING_ID.to_string(),
+                        amount: 0.05,
+                        operation: ModifierOperation::Add,
+                    });
+                } else if !angry && has {
+                    speed.remove_modifier(SPEED_MODIFIER_ATTACKING_ID);
+                }
+            }
+        }
+        if angry
+            && self.first_anger_sound_in.load(Ordering::Relaxed) > 0
+            && self.first_anger_sound_in.fetch_sub(1, Ordering::Relaxed) == 1
+        {
+            let pitch = (rand::random::<f32>() - rand::random::<f32>()) * 0.2
+                + if self.mob_entity.living_entity.is_baby() {
+                    1.5
+                } else {
+                    1.0
+                };
+            self.play_entity_sound(Sound::EntityZombifiedPiglinAngry, 2.0, pitch * 1.8);
+        }
         self.update_persistent_anger();
         let entity = &self.mob_entity.living_entity.entity;
         if !entity.is_alive() {
@@ -178,6 +267,10 @@ impl Mob for ZombifiedPiglinEntity {
         if !self.had_target.swap(true, Ordering::Relaxed) {
             self.ticks_until_next_alert
                 .store(rand::random_range(ALERT_INTERVAL), Ordering::Relaxed);
+            self.first_anger_sound_in.store(
+                rand::random_range(FIRST_ANGER_SOUND_DELAY),
+                Ordering::Relaxed,
+            );
         }
 
         self.maybe_alert_others(&target);

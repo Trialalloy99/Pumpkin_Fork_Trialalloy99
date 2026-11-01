@@ -157,22 +157,7 @@ impl ZombieEntityBase {
             pumpkin_data::tracked_data::zombie::BABY,
             baby,
         );
-        let mut attributes = self
-            .mob_entity
-            .living_entity
-            .attributes
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(speed) = attributes.get_mut(&Attributes::MOVEMENT_SPEED.id) {
-            speed.remove_modifier(SPEED_MODIFIER_BABY_ID);
-            if baby {
-                speed.add_or_replace_modifier(Modifier {
-                    id: SPEED_MODIFIER_BABY_ID.to_string(),
-                    amount: 0.5,
-                    operation: ModifierOperation::MultiplyBase,
-                });
-            }
-        }
+        apply_baby_speed(&self.mob_entity, baby);
     }
 
     #[must_use]
@@ -273,85 +258,14 @@ impl ZombieEntityBase {
             mob.populate_default_equipment_slots(world, &difficulty);
             mob.populate_default_equipment_enchantments(&difficulty);
         }
-        if crate::server::seasonal_events::is_halloween()
-            && self
-                .mob_entity
-                .living_entity
-                .entity_equipment
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .get(&EquipmentSlot::HEAD)
-                .is_empty()
-            && random.random::<f32>() < 0.25
-        {
-            let head = if random.random::<f32>() < 0.1 {
-                &Item::JACK_O_LANTERN
-            } else {
-                &Item::CARVED_PUMPKIN
-            };
-            self.mob_entity
-                .set_item_slot(&EquipmentSlot::HEAD, ItemStack::new(1, head));
-            self.mob_entity.set_drop_chance(&EquipmentSlot::HEAD, 0.0);
-        }
+        maybe_wear_halloween_head(&self.mob_entity);
         self.handle_attributes(multiplier, false);
         Some(group_data)
     }
 
     // zombie: random knockback/follow bonuses, leader zombies (Zombie.handleAttributes)
     pub fn handle_attributes(&self, multiplier: f32, conversion: bool) {
-        let mut random = rand::rng();
-        let living = &self.mob_entity.living_entity;
-        let leader = {
-            let mut attributes = living
-                .attributes
-                .write()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some(reinforcements) = attributes.get_mut(&Attributes::SPAWN_REINFORCEMENTS.id) {
-                reinforcements.base_value = random.random::<f64>() * 0.1;
-                reinforcements.mark_dirty();
-            }
-            if let Some(knockback) = attributes.get_mut(&Attributes::KNOCKBACK_RESISTANCE.id) {
-                knockback.add_or_replace_permanent_modifier(Modifier {
-                    id: RANDOM_SPAWN_BONUS_ID.to_string(),
-                    amount: random.random::<f64>() * 0.05,
-                    operation: ModifierOperation::Add,
-                });
-            }
-            let follow_bonus = random.random::<f64>() * 1.5 * f64::from(multiplier);
-            if follow_bonus > 1.0
-                && let Some(follow) = attributes.get_mut(&Attributes::FOLLOW_RANGE.id)
-            {
-                follow.add_or_replace_permanent_modifier(Modifier {
-                    id: ZOMBIE_RANDOM_SPAWN_BONUS_ID.to_string(),
-                    amount: follow_bonus,
-                    operation: ModifierOperation::MultiplyTotal,
-                });
-            }
-            let leader = random.random::<f32>() < multiplier * 0.05;
-            if leader {
-                if let Some(reinforcements) =
-                    attributes.get_mut(&Attributes::SPAWN_REINFORCEMENTS.id)
-                {
-                    reinforcements.add_or_replace_permanent_modifier(Modifier {
-                        id: LEADER_ZOMBIE_BONUS_ID.to_string(),
-                        amount: random.random::<f64>() * 0.25 + 0.5,
-                        operation: ModifierOperation::Add,
-                    });
-                }
-                if let Some(health) = attributes.get_mut(&Attributes::MAX_HEALTH.id) {
-                    health.add_or_replace_permanent_modifier(Modifier {
-                        id: LEADER_ZOMBIE_BONUS_ID.to_string(),
-                        amount: random.random::<f64>() * 3.0 + 1.0,
-                        operation: ModifierOperation::MultiplyTotal,
-                    });
-                }
-            }
-            leader
-        };
-        if leader {
-            if !conversion {
-                living.set_health(living.get_attribute_value(&Attributes::MAX_HEALTH) as f32);
-            }
+        if handle_zombie_attributes(&self.mob_entity, multiplier, conversion, true) {
             self.set_can_break_doors(true, self);
         }
     }
@@ -482,6 +396,113 @@ impl ZombieEntityBase {
             break;
         }
     }
+}
+
+// zombie family: baby +50% speed (Zombie.setBaby)
+pub fn apply_baby_speed(mob_entity: &MobEntity, baby: bool) {
+    let mut attributes = mob_entity
+        .living_entity
+        .attributes
+        .write()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(speed) = attributes.get_mut(&Attributes::MOVEMENT_SPEED.id) {
+        speed.remove_modifier(SPEED_MODIFIER_BABY_ID);
+        if baby {
+            speed.add_or_replace_modifier(Modifier {
+                id: SPEED_MODIFIER_BABY_ID.to_string(),
+                amount: 0.5,
+                operation: ModifierOperation::MultiplyBase,
+            });
+        }
+    }
+}
+
+// zombie family: spawn attribute rolls, returns true for a leader (Zombie.handleAttributes)
+pub fn handle_zombie_attributes(
+    mob_entity: &MobEntity,
+    multiplier: f32,
+    conversion: bool,
+    randomize_reinforcements: bool,
+) -> bool {
+    let mut random = rand::rng();
+    let living = &mob_entity.living_entity;
+    let leader = {
+        let mut attributes = living
+            .attributes
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(reinforcements) = attributes.get_mut(&Attributes::SPAWN_REINFORCEMENTS.id) {
+            reinforcements.base_value = if randomize_reinforcements {
+                random.random::<f64>() * 0.1
+            } else {
+                0.0
+            };
+            reinforcements.mark_dirty();
+        }
+        if let Some(knockback) = attributes.get_mut(&Attributes::KNOCKBACK_RESISTANCE.id) {
+            knockback.add_or_replace_permanent_modifier(Modifier {
+                id: RANDOM_SPAWN_BONUS_ID.to_string(),
+                amount: random.random::<f64>() * 0.05,
+                operation: ModifierOperation::Add,
+            });
+        }
+        let follow_bonus = random.random::<f64>() * 1.5 * f64::from(multiplier);
+        if follow_bonus > 1.0
+            && let Some(follow) = attributes.get_mut(&Attributes::FOLLOW_RANGE.id)
+        {
+            follow.add_or_replace_permanent_modifier(Modifier {
+                id: ZOMBIE_RANDOM_SPAWN_BONUS_ID.to_string(),
+                amount: follow_bonus,
+                operation: ModifierOperation::MultiplyTotal,
+            });
+        }
+        let leader = random.random::<f32>() < multiplier * 0.05;
+        if leader {
+            if let Some(reinforcements) = attributes.get_mut(&Attributes::SPAWN_REINFORCEMENTS.id) {
+                reinforcements.add_or_replace_permanent_modifier(Modifier {
+                    id: LEADER_ZOMBIE_BONUS_ID.to_string(),
+                    amount: random.random::<f64>() * 0.25 + 0.5,
+                    operation: ModifierOperation::Add,
+                });
+            }
+            if let Some(health) = attributes.get_mut(&Attributes::MAX_HEALTH.id) {
+                health.add_or_replace_permanent_modifier(Modifier {
+                    id: LEADER_ZOMBIE_BONUS_ID.to_string(),
+                    amount: random.random::<f64>() * 3.0 + 1.0,
+                    operation: ModifierOperation::MultiplyTotal,
+                });
+            }
+        }
+        leader
+    };
+    if leader && !conversion {
+        living.set_health(living.get_attribute_value(&Attributes::MAX_HEALTH) as f32);
+    }
+    leader
+}
+
+// zombie family: halloween pumpkin head (Zombie.finalizeSpawn)
+pub fn maybe_wear_halloween_head(mob_entity: &MobEntity) {
+    let mut random = rand::rng();
+    if !crate::server::seasonal_events::is_halloween()
+        || !mob_entity
+            .living_entity
+            .entity_equipment
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&EquipmentSlot::HEAD)
+            .is_empty()
+        || random.random::<f32>() >= 0.25
+    {
+        return;
+    }
+    let head = if random.random::<f32>() < 0.1 {
+        &Item::JACK_O_LANTERN
+    } else {
+        &Item::CARVED_PUMPKIN
+    };
+    mob_entity.set_item_slot(&EquipmentSlot::HEAD, ItemStack::new(1, head));
+    mob_entity.set_drop_chance(&EquipmentSlot::HEAD, 0.0);
 }
 
 fn charge_reinforcements(mob: &MobEntity, id: &str, amount: f64) {
