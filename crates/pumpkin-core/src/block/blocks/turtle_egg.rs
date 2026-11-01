@@ -202,6 +202,16 @@ impl BlockBehaviour for TurtleEggBlock {
                     let turtle =
                         from_type(&EntityType::TURTLE, spawn_pos, args.world, Uuid::new_v4());
                     turtle.get_entity().set_age(-24000);
+                    // turtle egg: hatched turtle calls this its home (TurtleEggBlock.randomTick)
+                    if let Some(turtle_mob) = turtle
+                        .get_mob()
+                        .and_then(|mob| {
+                            mob.cast_any()
+                                .downcast_ref::<crate::entity::passive::turtle::TurtleEntity>()
+                        })
+                    {
+                        turtle_mob.set_home_pos(*args.position);
+                    }
                     args.world.spawn_entity(turtle);
                 }
             }
