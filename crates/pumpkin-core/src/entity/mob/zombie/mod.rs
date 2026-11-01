@@ -28,6 +28,7 @@ use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::world::WorldEvent;
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::Difficulty;
+use pumpkin_util::math::boundingbox::EntityDimensions;
 use pumpkin_util::math::vector3::Vector3;
 use rand::RngExt;
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
@@ -181,6 +182,12 @@ impl ZombieEntityBase {
             baby,
         );
         apply_baby_speed(&self.mob_entity, baby);
+        let entity = &self.mob_entity.living_entity.entity;
+        entity.set_default_dimensions(if baby {
+            zombie_baby_dimensions(entity.entity_type)
+        } else {
+            Entity::type_dimensions(entity.entity_type)
+        });
     }
 
     #[must_use]
@@ -402,7 +409,12 @@ impl ZombieEntityBase {
                 Vector3::new(f64::from(pos.0.x), f64::from(pos.0.y), f64::from(pos.0.z));
             let spawn_box =
                 entity_type.get_spawn_bounding_box(spawn_pos.x, spawn_pos.y, spawn_pos.z);
+            // zombie reinforcement: no players near, no entity in the way (Level.isUnobstructed)
             if !world.get_nearby_players(spawn_pos, 7.0).is_empty()
+                || world.get_entities_at_box(&spawn_box).iter().any(|other| {
+                    let other = other.get_entity();
+                    other.is_alive() && other.blocks_building
+                })
                 || !world.is_space_empty(spawn_box)
                 || world.contains_any_liquid(spawn_box)
             {
@@ -586,6 +598,23 @@ fn drowning_conversion(entity_type: &EntityType) -> Option<(&'static EntityType,
 }
 
 // zombie family: shared base of any zombie wrapper
+// zombie family: baby hitbox + eye height (Zombie/Husk/ZombieVillager.BABY_DIMENSIONS)
+#[must_use]
+pub fn zombie_baby_dimensions(entity_type: &EntityType) -> EntityDimensions {
+    let eye_height = if entity_type == &EntityType::HUSK {
+        0.825
+    } else if entity_type == &EntityType::ZOMBIE_VILLAGER {
+        0.67
+    } else {
+        0.775
+    };
+    EntityDimensions {
+        width: 0.49,
+        height: 0.98,
+        eye_height,
+    }
+}
+
 // zombie: baby chicken jockey, nearby or new chicken (Zombie.finalizeSpawn)
 pub fn roll_chicken_jockey(mob_entity: &MobEntity, world: &Arc<World>, random: &mut impl RngExt) {
     let entity = &mob_entity.living_entity.entity;

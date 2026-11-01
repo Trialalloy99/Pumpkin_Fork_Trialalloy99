@@ -31,7 +31,7 @@ use crate::entity::{
         spawn::SpawnReason,
         zombie::{
             apply_baby_speed, handle_zombie_attributes, maybe_wear_halloween_head,
-            roll_chicken_jockey,
+            roll_chicken_jockey, zombie_baby_dimensions,
         },
     },
 };
@@ -187,6 +187,8 @@ impl Mob for ZombifiedPiglinEntity {
     fn spawn_as_baby(&self) -> bool {
         self.mob_entity.set_baby_by_age();
         apply_baby_speed(&self.mob_entity, true);
+        self.get_entity()
+            .set_default_dimensions(zombie_baby_dimensions(&EntityType::ZOMBIFIED_PIGLIN));
         true
     }
 
