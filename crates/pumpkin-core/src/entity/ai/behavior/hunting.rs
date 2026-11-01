@@ -23,6 +23,7 @@ pub struct Hunt {
     condition: TargetCondition,
     only: Option<MobFilter>,
     gate: Option<MobFilter>,
+    start_gate: Option<MobFilter>,
     predicate: Option<TargetPredicateFn>,
     unseen_memory_ticks: Option<i32>,
     range_scale: f64,
@@ -39,6 +40,7 @@ impl Hunt {
             condition: TargetCondition::Always,
             only: None,
             gate: None,
+            start_gate: None,
             predicate: None,
             unseen_memory_ticks: None,
             range_scale: 1.0,
@@ -70,6 +72,13 @@ impl Hunt {
     #[must_use]
     pub const fn gated_by(mut self, gate: MobFilter) -> Self {
         self.gate = Some(gate);
+        self
+    }
+
+    /// See [`ActiveTargetGoal::start_gated_by`].
+    #[must_use]
+    pub const fn starts_only_when(mut self, gate: MobFilter) -> Self {
+        self.start_gate = Some(gate);
         self
     }
 
@@ -107,6 +116,9 @@ impl Hunt {
         }
         if let Some(gate) = self.gate {
             goal = goal.gated_by(gate);
+        }
+        if let Some(gate) = self.start_gate {
+            goal = goal.start_gated_by(gate);
         }
         if let Some(ticks) = self.unseen_memory_ticks {
             goal = goal.forget_unseen_after(ticks);

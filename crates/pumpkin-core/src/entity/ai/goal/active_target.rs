@@ -81,6 +81,8 @@ pub struct ActiveTargetGoal {
     target_predicate: TargetPredicate,
     condition: TargetCondition,
     gate: Option<MobFilter>,
+    /// Gate on starting only, the target is kept after (vanilla `canUse` overrides).
+    start_gate: Option<MobFilter>,
     target_filter: Option<MobFilter>,
     selector: Option<TargetPredicateFn>,
 }
@@ -115,6 +117,7 @@ impl ActiveTargetGoal {
             target_predicate,
             condition: TargetCondition::Always,
             gate: None,
+            start_gate: None,
             target_filter: None,
             selector: None,
         }
@@ -124,6 +127,13 @@ impl ActiveTargetGoal {
     #[must_use]
     pub fn when(mut self: Box<Self>, condition: TargetCondition) -> Box<Self> {
         self.condition = condition;
+        self
+    }
+
+    // active target: start-only gate (NearestAttackableWitchTargetGoal.canAttack)
+    #[must_use]
+    pub fn start_gated_by(mut self: Box<Self>, gate: MobFilter) -> Box<Self> {
+        self.start_gate = Some(gate);
         self
     }
 
@@ -195,6 +205,7 @@ impl ActiveTargetGoal {
             target_predicate,
             condition: TargetCondition::Always,
             gate: None,
+            start_gate: None,
             target_filter: None,
             selector: None,
         })
@@ -251,7 +262,9 @@ impl ActiveTargetGoal {
 
 impl Goal for ActiveTargetGoal {
     fn can_start(&mut self, mob: &dyn Mob) -> bool {
-        if self.gate.is_some_and(|gate| !gate(mob)) {
+        if self.gate.is_some_and(|gate| !gate(mob))
+            || self.start_gate.is_some_and(|gate| !gate(mob))
+        {
             return false;
         }
         if self.reciprocal_chance > 0

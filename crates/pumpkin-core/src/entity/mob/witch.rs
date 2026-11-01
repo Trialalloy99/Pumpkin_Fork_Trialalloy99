@@ -1,6 +1,8 @@
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Weak};
 
+use rand::RngExt;
+
 use pumpkin_data::damage::DamageType;
 use pumpkin_data::data_component_impl::EquipmentSlot;
 use pumpkin_data::effect::StatusEffect;
@@ -17,16 +19,16 @@ use crate::entity::ai::target_match::TargetMatch;
 use crate::entity::{
     Entity, EntityBase,
     ai::goal::{
-        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal,
-        ranged_attack::RangedAttackGoal, revenge::RevengeGoal, swim::SwimGoal,
-        wander_around::WanderAroundGoal,
+        Controls, Goal, active_target::ActiveTargetGoal, look_around::RandomLookAroundGoal,
+        look_at_entity::LookAtEntityGoal, ranged_attack::RangedAttackGoal, revenge::RevengeGoal,
+        swim::SwimGoal, to_goal_ticks, wander_around::WanderAroundGoal,
     },
     mob::{
         Mob, MobEntity, RangedAttackMob,
-        patrol::{PatrolData, PatrollingMonster},
+        patrol::{LongDistancePatrolGoal, PatrolData, PatrollingMonster},
         raider::{
-            PathfindToRaidGoal, Raider, RaiderCelebrationGoal, RaiderData,
-            RaiderMoveThroughVillageGoal, is_raider,
+            ObtainRaidLeaderBannerGoal, PathfindToRaidGoal, Raider, RaiderCelebrationGoal,
+            RaiderData, RaiderMoveThroughVillageGoal, is_raider,
         },
     },
     projectile::splash_potion::SplashPotionEntity,
@@ -54,13 +56,80 @@ fn create_potion_stack(item: &'static Item, potion: &'static Potion) -> ItemStac
 /// Represents a Witch, a hostile ranged mob that throws splash potions and drinks restorative potions.
 ///
 /// Wiki: <https://minecraft.wiki/w/Witch>
-const WITCH_HUNTS: &[Hunt] = &[Hunt::new(3, TargetMatch::Type(&EntityType::PLAYER), true)];
+const WITCH_HUNTS: &[Hunt] =
+    &[Hunt::new(3, TargetMatch::Type(&EntityType::PLAYER), true)
+        .starts_only_when(witch_can_attack)];
+
+const SPEED_MODIFIER_DRINKING_ID: &str = "minecraft:drinking";
+const HEAL_RAIDERS_COOLDOWN: i32 = 200;
+
+// witch: players only while not healing raiders (NearestAttackableWitchTargetGoal.canAttack)
+fn witch_can_attack(mob: &dyn Mob) -> bool {
+    mob.get_entity()
+        .entity_type
+        .eq(&EntityType::WITCH)
+        .then(|| mob_as_witch(mob))
+        .flatten()
+        .is_none_or(|witch| witch.heal_cooldown.load(Ordering::Relaxed) <= 0)
+}
+
+fn mob_as_witch(mob: &dyn Mob) -> Option<&WitchEntity> {
+    let base: &dyn EntityBase = mob;
+    base.cast_any().downcast_ref::<WitchEntity>()
+}
+
+// witch: heal raiders in a raid, 50% per check, 200 tick cooldown (NearestHealableRaiderTargetGoal)
+struct WitchHealRaidersGoal {
+    inner: Box<ActiveTargetGoal>,
+    witch: Weak<WitchEntity>,
+}
+
+impl Goal for WitchHealRaidersGoal {
+    fn can_start(&mut self, mob: &dyn Mob) -> bool {
+        let Some(witch) = self.witch.upgrade() else {
+            return false;
+        };
+        if witch.heal_cooldown.load(Ordering::Relaxed) > 0
+            || !mob.get_random().random::<bool>()
+            || !witch.has_active_raid()
+        {
+            return false;
+        }
+        self.inner.can_start(mob)
+    }
+
+    fn should_continue(&mut self, mob: &dyn Mob) -> bool {
+        self.inner.should_continue(mob)
+    }
+
+    fn start(&mut self, mob: &dyn Mob) {
+        if let Some(witch) = self.witch.upgrade() {
+            witch
+                .heal_cooldown
+                .store(to_goal_ticks(HEAL_RAIDERS_COOLDOWN), Ordering::Relaxed);
+        }
+        self.inner.start(mob);
+    }
+
+    fn stop(&mut self, mob: &dyn Mob) {
+        self.inner.stop(mob);
+    }
+
+    fn tick(&mut self, mob: &dyn Mob) {
+        self.inner.tick(mob);
+    }
+
+    fn controls(&self) -> Controls {
+        self.inner.controls()
+    }
+}
 
 pub struct WitchEntity {
     pub mob_entity: MobEntity,
     pub raider_data: RaiderData,
     drinking_potion: AtomicBool,
     using_time: AtomicI32,
+    heal_cooldown: AtomicI32,
 }
 
 impl WitchEntity {
@@ -72,6 +141,7 @@ impl WitchEntity {
             raider_data: RaiderData::default(),
             drinking_potion: AtomicBool::new(false),
             using_time: AtomicI32::new(0),
+            heal_cooldown: AtomicI32::new(0),
         };
         let mob_arc = Arc::new(witch);
         let mob_weak: Weak<dyn Mob> = {
@@ -87,23 +157,41 @@ impl WitchEntity {
             let goal_selector = &mob_arc.mob_entity.goals_selector;
             let target_selector = &mob_arc.mob_entity.target_selector;
 
+            // witch: raider + patrol goals, then its own (Witch.registerGoals)
+            goal_selector.add_goal(4, Box::new(LongDistancePatrolGoal::new(0.7, 0.595)));
+            goal_selector.add_goal(1, Box::new(ObtainRaidLeaderBannerGoal));
+            goal_selector.add_goal(3, Box::new(PathfindToRaidGoal::default()));
+            goal_selector.add_goal(4, Box::new(RaiderMoveThroughVillageGoal::new(1.05)));
+            goal_selector.add_goal(5, Box::new(RaiderCelebrationGoal));
             goal_selector.add_goal(1, Box::new(SwimGoal::default()));
             goal_selector.add_goal(
                 2,
                 Box::new(RangedAttackGoal::new(ranged_weak, 1.0, 60, 10.0)),
             );
-            goal_selector.add_goal(3, Box::new(RaiderMoveThroughVillageGoal::new(1.05)));
-            goal_selector.add_goal(3, Box::new(PathfindToRaidGoal::default()));
-            goal_selector.add_goal(4, Box::new(RaiderCelebrationGoal));
-            goal_selector.add_goal(4, Box::new(WanderAroundGoal::new(1.0)));
+            goal_selector.add_goal(2, Box::new(WanderAroundGoal::water_avoiding(1.0)));
             goal_selector.add_goal(
-                5,
+                3,
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 8.0),
             );
-            goal_selector.add_goal(6, Box::new(RandomLookAroundGoal::default()));
+            goal_selector.add_goal(3, Box::new(RandomLookAroundGoal::default()));
 
             target_selector.add_goal(1, Box::new(RevengeGoal::new(true).ignoring(is_raider)));
-            // TODO: NearestHealableRaiderTargetGoal at 2, attack goal off while healing in a raid.
+            target_selector.add_goal(
+                2,
+                Box::new(WitchHealRaidersGoal {
+                    inner: ActiveTargetGoal::with_default(
+                        &mob_arc.mob_entity,
+                        TargetMatch::Tag(&tag::EntityType::MINECRAFT_RAIDERS),
+                        true,
+                    )
+                    .every(0)
+                    .selecting(|mob, target, _world| {
+                        mob.as_raider().is_some_and(Raider::has_active_raid)
+                            && target.entity.entity_type != &EntityType::WITCH
+                    }),
+                    witch: Arc::downgrade(&mob_arc),
+                }),
+            );
             hunting::apply(target_selector, &mob_arc.mob_entity, WITCH_HUNTS);
         };
 
@@ -143,7 +231,21 @@ impl WitchEntity {
 
         let mut potion = &Potion::HARMING;
 
-        if let Some(target_living) = target.get_living_entity() {
+        let target_is_raider = target
+            .get_mob()
+            .is_some_and(|mob| mob.as_raider().is_some());
+        if target_is_raider {
+            // witch: heal or regenerate raiders, then drop them as target (Witch.performRangedAttack)
+            potion = if target
+                .get_living_entity()
+                .is_some_and(|living| living.health.load() <= 4.0)
+            {
+                &Potion::HEALING
+            } else {
+                &Potion::REGENERATION
+            };
+            self.mob_entity.set_target(None);
+        } else if let Some(target_living) = target.get_living_entity() {
             let r: f32 = rand::random();
             if dist >= 8.0 && !target_living.has_effect(&StatusEffect::SLOWNESS) {
                 potion = &Potion::SLOWNESS;
@@ -169,7 +271,13 @@ impl WitchEntity {
         splash.thrown.set_velocity(xd, yd + yo, zd, speed, 8.0);
 
         if !entity.silent.load(Ordering::Relaxed) {
-            world.play_sound(Sound::EntityWitchThrow, SoundCategory::Hostile, &witch_pos);
+            world.play_sound_fine(
+                Sound::EntityWitchThrow,
+                SoundCategory::Hostile,
+                &witch_pos,
+                1.0,
+                rand::random::<f32>().mul_add(0.4, 0.8),
+            );
         }
 
         let splash_arc: Arc<dyn EntityBase> = Arc::new(splash);
@@ -215,86 +323,127 @@ impl Mob for WitchEntity {
         amount
     }
 
-    fn mob_tick(&self, caller: &dyn EntityBase) {
+    // witch: heal cooldown, drink potions, particles (Witch.aiStep)
+    fn mob_tick(&self, _caller: &dyn EntityBase) {
         let entity = &self.mob_entity.living_entity.entity;
         let living = &self.mob_entity.living_entity;
-        let world = entity.world.load();
+        if !entity.is_alive() {
+            return;
+        }
+        self.heal_cooldown.fetch_sub(1, Ordering::Relaxed);
+        let mut random = rand::rng();
 
         if self.is_drinking_potion() {
-            let remaining = self.using_time.fetch_sub(1, Ordering::Relaxed) - 1;
-            if remaining <= 0 {
+            if self.using_time.fetch_sub(1, Ordering::Relaxed) <= 0 {
                 self.set_drinking_potion(false);
-                if let Some(witch) = caller.cast_any().downcast_ref::<Self>() {
-                    let living = &witch.mob_entity.living_entity;
-                    let mut equipment = living
-                        .entity_equipment
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    let stack = equipment.get(&EquipmentSlot::MAIN_HAND);
-                    equipment.put(&EquipmentSlot::MAIN_HAND, ItemStack::EMPTY.clone());
-                    drop(equipment);
-                    living.send_equipment_changes(&[(
-                        EquipmentSlot::MAIN_HAND,
-                        ItemStack::EMPTY.clone(),
-                    )]);
-
-                    let effects = crate::item::potion::PotionContents::read_potion_effects(&stack);
+                let stack = self
+                    .mob_entity
+                    .set_item_slot(&EquipmentSlot::MAIN_HAND, ItemStack::EMPTY.clone());
+                if stack.item.id == Item::POTION.id {
+                    let scale = stack
+                        .get_data_component::<pumpkin_data::data_component_impl::PotionDurationScaleImpl>()
+                        .map_or(1.0, |component| component.scale);
                     crate::item::potion::PotionContents::apply_effects_to(
                         living,
-                        effects,
-                        1.0,
+                        crate::item::potion::PotionContents::read_potion_effects(&stack),
+                        scale,
                         crate::item::potion::PotionApplicationSource::Normal,
                         None,
                     );
                 }
+                entity.world.load().emit_game_event_with_context(
+                    pumpkin_data::game_event::GameEvent::Drink.name(),
+                    entity.pos.load(),
+                    &crate::world::game_event::GameEventContext {
+                        source_entity: Some(self),
+                    },
+                );
+                self.set_drinking_speed(false);
             }
         } else {
-            let mut potion: Option<&'static Potion> = None;
-            let r: f32 = rand::random();
-
-            if r < 0.15
-                && entity.touching_water.load(Ordering::Relaxed)
+            let last_fire = living
+                .last_damage_type
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .is_some_and(|damage| damage.has_tag(&tag::DamageType::MINECRAFT_IS_FIRE));
+            let potion = if random.random::<f32>() < 0.15
+                && entity.is_submerged_in_water()
                 && !living.has_effect(&StatusEffect::WATER_BREATHING)
             {
-                potion = Some(&Potion::WATER_BREATHING);
-            } else if r < 0.15
-                && entity.fire_ticks.load(Ordering::Relaxed) > 0
+                Some(&Potion::WATER_BREATHING)
+            } else if random.random::<f32>() < 0.15
+                && (entity.is_on_fire() || last_fire)
                 && !living.has_effect(&StatusEffect::FIRE_RESISTANCE)
             {
-                potion = Some(&Potion::FIRE_RESISTANCE);
-            } else if r < 0.05 && living.health.load() < living.get_max_health() {
-                potion = Some(&Potion::HEALING);
-            } else if r < 0.5
+                Some(&Potion::FIRE_RESISTANCE)
+            } else if random.random::<f32>() < 0.05
+                && living.health.load() < living.get_max_health()
+            {
+                Some(&Potion::HEALING)
+            } else if random.random::<f32>() < 0.5
                 && let Some(target) = self.mob_entity.get_target()
                 && !living.has_effect(&StatusEffect::SPEED)
+                && target
+                    .get_entity()
+                    .pos
+                    .load()
+                    .squared_distance_to_vec(&entity.pos.load())
+                    > 121.0
             {
-                let target_pos = target.get_entity().pos.load();
-                let self_pos = entity.pos.load();
-                if self_pos.squared_distance_to_vec(&target_pos) > 121.0 {
-                    potion = Some(&Potion::SWIFTNESS);
-                }
-            }
+                Some(&Potion::SWIFTNESS)
+            } else {
+                None
+            };
 
             if let Some(potion) = potion {
                 let stack = create_potion_stack(&Item::POTION, potion);
-                if let Some(witch) = caller.cast_any().downcast_ref::<Self>() {
-                    let living = &witch.mob_entity.living_entity;
-                    let mut equipment = living
-                        .entity_equipment
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner);
-                    equipment.put(&EquipmentSlot::MAIN_HAND, stack.clone());
-                    drop(equipment);
-                    living.send_equipment_changes(&[(EquipmentSlot::MAIN_HAND, stack)]);
-                }
-
+                self.mob_entity
+                    .set_item_slot(&EquipmentSlot::MAIN_HAND, stack);
+                // vanilla potion use duration
                 self.using_time.store(32, Ordering::Relaxed);
                 self.set_drinking_potion(true);
-
-                if !entity.silent.load(Ordering::Relaxed) {
-                    let pos = entity.pos.load();
-                    world.play_sound(Sound::EntityWitchDrink, SoundCategory::Hostile, &pos);
+                if !entity.is_silent() {
+                    entity.world.load().play_sound_fine(
+                        Sound::EntityWitchDrink,
+                        SoundCategory::Hostile,
+                        &entity.pos.load(),
+                        1.0,
+                        random.random::<f32>().mul_add(0.4, 0.8),
+                    );
                 }
+                self.set_drinking_speed(true);
+            }
+        }
+
+        if random.random::<f32>() < 7.5E-4 {
+            entity.world.load().send_entity_status(
+                entity,
+                pumpkin_data::entity::EntityStatus::WitchHatMagic,
+                pumpkin_protocol::bedrock::server::actor_event::ActorEventID::None,
+            );
+        }
+    }
+}
+
+impl WitchEntity {
+    // witch: -0.25 speed while drinking (Witch.SPEED_MODIFIER_DRINKING)
+    fn set_drinking_speed(&self, drinking: bool) {
+        let mut attributes = self
+            .mob_entity
+            .living_entity
+            .attributes
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(speed) =
+            attributes.get_mut(&pumpkin_data::attributes::Attributes::MOVEMENT_SPEED.id)
+        {
+            speed.remove_modifier(SPEED_MODIFIER_DRINKING_ID);
+            if drinking {
+                speed.add_or_replace_modifier(crate::entity::attributes::Modifier {
+                    id: SPEED_MODIFIER_DRINKING_ID.to_string(),
+                    amount: -0.25,
+                    operation: crate::entity::attributes::ModifierOperation::Add,
+                });
             }
         }
     }
