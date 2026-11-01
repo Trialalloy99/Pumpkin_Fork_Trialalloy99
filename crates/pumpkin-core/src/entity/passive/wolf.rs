@@ -705,10 +705,8 @@ impl WolfEntity {
             3
         } else if fraction < medium {
             2
-        } else if fraction < low {
-            1
         } else {
-            0
+            u8::from(fraction < low)
         }
     }
 

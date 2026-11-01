@@ -793,7 +793,7 @@ impl SpearItem {
             })
     }
 
-    /// `pvp` is set for player attackers, whose hits on players follow the PvP config.
+    /// `pvp` is set for player attackers, whose hits on players follow the `PvP` config.
     fn can_hit(attacker: &Entity, pvp: Option<&Server>, target: &dyn EntityBase) -> bool {
         let entity = target.get_entity();
         if entity.entity_id == attacker.entity_id

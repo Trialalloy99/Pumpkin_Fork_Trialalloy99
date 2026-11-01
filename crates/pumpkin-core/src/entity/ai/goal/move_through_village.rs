@@ -128,22 +128,22 @@ impl Goal for MoveThroughVillageGoal {
         let Some(found) = path else {
             return false;
         };
-        let door_node = found
+        let door_pos = found
             .get_nodes()
             .iter()
-            .find(|node| DoorBlock::is_wooden_door(&world, &node.pos.up()));
-        self.path = match door_node {
-            Some(node) => {
-                let node_pos = node.pos;
+            .find(|node| DoorBlock::is_wooden_door(&world, &node.pos.up()))
+            .map(|node| node.pos);
+        self.path = door_pos.map_or_else(
+            || Some(found),
+            |pos| {
                 let steered = mob.get_mob_entity().steered();
                 steered.navigator().create_path(
                     &steered.mob_entity().living_entity,
-                    node_pos.to_centered_f64(),
+                    pos.to_centered_f64(),
                     0,
                 )
-            }
-            None => Some(found),
-        };
+            },
+        );
         self.path.is_some()
     }
 

@@ -134,7 +134,7 @@ impl ZombieEntityBase {
                 goal_selector.add_goal(
                     6,
                     MoveThroughVillageGoal::new(1.0, true, 4, |mob| {
-                        zombie_base_of(mob).is_some_and(ZombieEntityBase::can_break_doors)
+                        zombie_base_of(mob).is_some_and(Self::can_break_doors)
                     }),
                 );
             }
@@ -617,7 +617,8 @@ pub fn zombie_baby_dimensions(entity_type: &EntityType) -> EntityDimensions {
 // zombie: baby chicken jockey, nearby or new chicken (Zombie.finalizeSpawn)
 pub fn roll_chicken_jockey(mob_entity: &MobEntity, world: &Arc<World>, random: &mut impl RngExt) {
     let entity = &mob_entity.living_entity.entity;
-    if random.random::<f32>() < 0.05 {
+    let find_existing = random.random::<f32>() < 0.05;
+    if find_existing {
         let search = entity.bounding_box.load().expand(5.0, 3.0, 5.0);
         let chicken = world
             .get_entities_at_box(&search)

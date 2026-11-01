@@ -22,6 +22,10 @@ const ALL_SLOTS: [EquipmentSlot; 8] = [
     EquipmentSlot::SADDLE,
 ];
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "mirrors ConversionType.SINGLE + convertCommon"
+)]
 // mob conversion: replace `from` with a new `to_type` mob (Mob.convertTo, ConversionType.SINGLE)
 pub fn convert_single(
     from: &dyn Mob,

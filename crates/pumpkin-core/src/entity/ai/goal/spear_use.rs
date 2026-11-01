@@ -1,4 +1,4 @@
-use pumpkin_data::data_component_impl::KineticWeaponImpl;
+use pumpkin_data::data_component_impl::{KineticConditionImpl, KineticWeaponImpl};
 use pumpkin_util::Hand;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
@@ -98,7 +98,7 @@ impl SpearUseGoal {
                         + weapon
                             .damage_conditions
                             .as_ref()
-                            .map_or(0, |condition| condition.max_duration_ticks())
+                            .map_or(0, KineticConditionImpl::max_duration_ticks)
                 })
         });
         self.get_tick_count(duration)
