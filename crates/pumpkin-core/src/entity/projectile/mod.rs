@@ -214,7 +214,7 @@ impl ThrownItemEntity {
         }
 
         // Entity collisions
-        let candidates = world.get_entities_at_box(&search_box);
+        let candidates = world.get_all_at_box(&search_box);
         for cand in candidates {
             if self.should_skip_collision(&world, entity, &cand) {
                 continue;
@@ -265,6 +265,10 @@ impl ThrownItemEntity {
         other: &Arc<dyn EntityBase>,
     ) -> bool {
         let other_ent = other.get_entity();
+        // projectile: spectators are not pickable (Projectile.canHitEntity)
+        if other.is_spectator() {
+            return true;
+        }
         if other_ent.entity_id == self_ent.entity_id {
             return true;
         }
@@ -300,7 +304,7 @@ impl ThrownItemEntity {
 }
 
 /// Ray intersection algorithm for AABBs, returning a t value
-fn calculate_ray_intersection(
+pub(crate) fn calculate_ray_intersection(
     start: &Vector3<f64>,
     dir: &Vector3<f64>,
     bb: &BoundingBox,
