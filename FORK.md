@@ -75,6 +75,9 @@ Unser Fortschritt steht auf **https://claude.ai/artifact/KAHK4pXmbbEhd9nXiBuobN*
 | 7 | Items (Mace, Angel, Elytra, Namensschild), Redstone (Druckplatten, Tageslichtsensor, Notenblock, Kolben, Leitung), Welt laden/speichern, alle 22 Boote, Dreizack-Loyalität, Bugfixes aus dem Spieltest | Branch `batch-7`; Test im Spiel steht aus |
 | Blöcke 1 (Gemini) | Bed, Beehive, Campfire, Chest, Chiseled Bookshelf, Conduit, Dirt Path, Dragon Egg, Dried Ghast, Ender Chest | in `playable` gemergt; Beehive offen (Bienen-Bewohner fehlen) |
 | Blöcke 2 (Gemini) | Farmland, Frogspawn, Huge Mushroom, Infested, Jukebox, Lodestone, Potent Sulfur, Fire, Sculk Catalyst, Big Dripleaf | in `playable` gemergt; Sculk Catalyst offen (SculkSpreader fehlt) |
+| 8 (Gemini) | Horse, Donkey, Mule, Skeleton Horse, Zombie Horse, Llama, Trader Llama, Goat, Armadillo, Strider (AbstractHorse-Basis) | in `playable` gemergt; Test im Spiel steht aus |
+| 9 (Gemini) | Camel, Camel Husk, Cod, Salmon, Tropical Fish, Pufferfish, Dolphin, Panda, Nautilus, Zombie Nautilus | in `playable` gemergt; Panda und Delfin-Schatzsuche von Claude nachportiert; Test im Spiel steht aus |
+| Performance | `/recording`, Himmelslicht, Jigsaw-Cache, Mth.floor, Gen-Threads, mimalloc, FxHash-Strukturcache | in `playable`; siehe unten |
 
 Aus dem Tracker entfernt, weil Vanilla sie auf einem dedizierten Server nicht hat: `/publish` und `/unpublish` (nur Einzelspieler) sowie `/jfr` (Java Flight Recorder, braucht eine JVM).
 
@@ -122,6 +125,15 @@ Batch 7, neu dazugekommen:
 - Wetterzyklus lief nie (Bedingung war umgedreht), jetzt mit Spielregel `advance_weather`.
 - `PiglinAi::anger_nearby_piglins`: Container öffnen (Truhe, Fass, Shulker, Enderkiste, Kisten-Lore/-Boot), Kisten-Fahrzeug zerstören, `guarded_by_piglins` abbauen. Näherung: Pumpkins Piglin hat kein Brain, die Wut setzt das Angriffsziel statt `ANGRY_AT`.
 - Leinen wie Vanilla `Leashable`: Feder-Physik mit Drehmoment (`Entity::tick_leash`, `leash_angular_momentum`), Quad-Leine Boot/Happy Ghast, `crate::entity::leash_interact` (Leine anlegen/lösen, Schere, Sneak-Übertragen) für Mobs und Boote.
+
+Performance (Chunk-Laden), neu dazugekommen:
+- `/recording start|stop` (`chunk_system/profiler.rs`): misst jede Generierungsstufe, Disk-IO, Scheduler und Senden; Bericht in `recordings/chunks-*.txt`. Scheduler-Zeiten sind pro Dimension aufsummiert und daher nur grob.
+- Himmelslicht: offener Himmel unbeleuchteter Nachbarn wird beim Ausbreiten übersprungen (22 → 4 ms/Chunk, Licht bit-gleich).
+- `TemplatePool::get_max_size` gecacht (Vanilla `maxSize`), Noise nutzt `math::floor_i32` (Vanilla `Mth.floor`), Gen-Pool = Kerne − 1 (Vanilla), mimalloc als Allocator, Strukturstart-Cache mit FxHash.
+- Windows-exe mit `RUSTFLAGS="-C target-cpu=x86-64-v3"` bauen (`znver5` lässt LLVM abstürzen).
+- Offen: `gen: surface` kostet auf Windows mit 31 Threads ~20 ms/Chunk (lokal 6 ms); `gen: surface setup` in der nächsten Aufnahme zeigt, ob Router/Erzadern oder die Spalten-Regeln schuld sind.
+
+Tracker: Der Tracker liegt jetzt auf https://tracker.trialalloy.eu (API `PUT /api/progress/<kat>:<id>` mit Header `X-Tracker-Password`, Passwort beim Besitzer).
 
 Offene Aufgaben, die nicht Teil einer Batch waren:
 - **Kamel und Camel Husk:** Vanilla nutzt Brain-KI (CamelAi), Sitzen und Dash, Reiten und die ganze `AbstractHorse`-Basis (Zähmen, Sattel, Inventar). Das fehlt in Pumpkin. Erst danach funktioniert der Kamel-Husk-Jockey beim Husk. Der Code dafür ist schon drin und springt an, sobald `CAMEL_HUSK` ein Mob ist.
