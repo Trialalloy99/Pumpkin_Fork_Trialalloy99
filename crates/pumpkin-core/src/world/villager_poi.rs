@@ -1,7 +1,10 @@
 use std::{collections::HashMap, sync::Weak};
 
-use pumpkin_data::{Block, villager::VillagerProfession};
+use pumpkin_data::block_properties::{BedPart, WhiteBedLikeProperties as BedProperties};
+use pumpkin_data::tag::{self, Taggable};
+use pumpkin_data::{Block, BlockStateId, villager::VillagerProfession};
 use pumpkin_util::math::position::BlockPos;
+use pumpkin_world::poi::POI_TYPE_NETHER_PORTAL;
 
 use crate::entity::EntityBase;
 
@@ -169,6 +172,31 @@ pub fn poi_type_for_block(block: &Block) -> Option<&'static str> {
         VillagerProfession::Toolsmith => "minecraft:toolsmith",
         VillagerProfession::Weaponsmith => "minecraft:weaponsmith",
         VillagerProfession::None | VillagerProfession::Nitwit => return None,
+    })
+}
+
+/// Vanilla `PoiTypes.forState`: the POI type a block state registers, with its max tickets.
+#[must_use]
+pub fn poi_type_for_state(state_id: BlockStateId) -> Option<(&'static str, i32)> {
+    let block = Block::from_state_id(state_id);
+    if block.has_tag(&tag::Block::MINECRAFT_BEDS) {
+        return (BedProperties::from_state_id(state_id).part == BedPart::Head)
+            .then_some(("minecraft:home", 1));
+    }
+    if block.has_tag(&tag::Block::MINECRAFT_LIGHTNING_RODS) {
+        return Some(("minecraft:lightning_rod", 0));
+    }
+    if let Some(poi_type) = poi_type_for_block(block) {
+        return Some((poi_type, 1));
+    }
+    Some(match block {
+        block if block == &Block::BELL => ("minecraft:meeting", 32),
+        block if block == &Block::BEEHIVE => ("minecraft:beehive", 0),
+        block if block == &Block::BEE_NEST => ("minecraft:bee_nest", 0),
+        block if block == &Block::NETHER_PORTAL => (POI_TYPE_NETHER_PORTAL, 0),
+        block if block == &Block::LODESTONE => ("minecraft:lodestone", 0),
+        block if block == &Block::TEST_INSTANCE_BLOCK => ("minecraft:test_instance", 0),
+        _ => return None,
     })
 }
 

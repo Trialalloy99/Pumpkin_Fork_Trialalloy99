@@ -455,6 +455,7 @@ impl World {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut newly_active = Vec::new();
         let mut migrations = Vec::new();
+        let mut loaded_chunks = Vec::new();
         let mut current_players = FxHashSet::default();
 
         let spectators_generate_chunks =
@@ -499,6 +500,7 @@ impl World {
         for change in self.level.loaded_chunk_changes() {
             match change {
                 pumpkin_world::level::LoadedChunkChange::Loaded(pos) => {
+                    loaded_chunks.push(pos);
                     if active_chunks.contains(&pos)
                         && self.level.is_chunk_loaded(&pos)
                         && tracker.loaded_active_chunks.insert(pos)
@@ -528,12 +530,68 @@ impl World {
         for pos in migrations {
             self.migrate_pending_block_entities(pos);
         }
+        for pos in loaded_chunks {
+            self.register_chunk_pois(pos);
+        }
 
         self.spawn_state.store(Arc::new(SpawnState::new(
             spawnable_chunks,
             &self.entities,
             self,
         )));
+    }
+
+    /// Vanilla `PoiManager.checkConsistencyWithBlocks`: registers POI blocks a loaded chunk
+    /// already holds, such as the beds and bells of a generated village.
+    fn register_chunk_pois(&self, chunk_pos: Vector2<i32>) {
+        let found = self
+            .level
+            .read_chunk_sync(&chunk_pos, |chunk| {
+                let sections = chunk
+                    .section
+                    .block_sections
+                    .read()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let mut found = Vec::new();
+                for (index, section) in sections.iter().enumerate() {
+                    if !section.contains_matching(|state| {
+                        villager_poi::poi_type_for_state(state).is_some()
+                    }) {
+                        continue;
+                    }
+                    let base_y = chunk.section.min_y + index as i32 * 16;
+                    for y in 0..16 {
+                        for z in 0..16 {
+                            for x in 0..16 {
+                                if let Some(poi) =
+                                    villager_poi::poi_type_for_state(section.get(x, y, z))
+                                {
+                                    let position = BlockPos::new(
+                                        chunk_pos.x * 16 + x as i32,
+                                        base_y + y as i32,
+                                        chunk_pos.y * 16 + z as i32,
+                                    );
+                                    found.push((position, poi));
+                                }
+                            }
+                        }
+                    }
+                }
+                found
+            })
+            .unwrap_or_default();
+        if found.is_empty() {
+            return;
+        }
+        let mut poi = self
+            .portal_poi
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for (position, (poi_type, max_tickets)) in found {
+            if poi.get_type(&position) != Some(poi_type) {
+                poi.add_with_free_tickets(position, poi_type, max_tickets);
+            }
+        }
     }
 
     pub fn get_lighting_config(&self) -> LightingEngineConfig {
@@ -5393,16 +5451,18 @@ impl World {
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .update_block(*position, new_block);
 
-            if is_new_block {
+            let old_poi = villager_poi::poi_type_for_state(replaced_block_state_id);
+            let new_poi = villager_poi::poi_type_for_state(block_state_id);
+            if old_poi.map(|(poi_type, _)| poi_type) != new_poi.map(|(poi_type, _)| poi_type) {
                 let mut poi = self
                     .portal_poi
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
-                if villager_poi::profession_for_block(old_block).is_some() {
+                if old_poi.is_some() {
                     poi.remove(position);
                 }
-                if let Some(poi_type) = villager_poi::poi_type_for_block(new_block) {
-                    poi.add_with_free_tickets(*position, poi_type, 1);
+                if let Some((poi_type, max_tickets)) = new_poi {
+                    poi.add_with_free_tickets(*position, poi_type, max_tickets);
                 }
             }
         }

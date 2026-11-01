@@ -128,6 +128,11 @@ impl PoiRegion {
     }
 
     #[must_use]
+    pub fn get(&self, pos: &BlockPos) -> Option<&PoiEntry> {
+        self.entries.get(&Self::pos_key(pos))
+    }
+
+    #[must_use]
     pub fn get_all(&self) -> Vec<&PoiEntry> {
         self.entries.values().collect()
     }
@@ -481,6 +486,13 @@ impl PoiStorage {
 
     pub fn add_portal(&mut self, pos: BlockPos) {
         self.add(pos, POI_TYPE_NETHER_PORTAL);
+    }
+
+    pub fn get_type(&mut self, pos: &BlockPos) -> Option<&str> {
+        let (rx, rz) = Self::region_coords(pos);
+        self.get_or_load_region(rx, rz)
+            .get(pos)
+            .map(|entry| entry.poi_type.as_str())
     }
 
     pub fn remove(&mut self, pos: &BlockPos) -> bool {
