@@ -651,17 +651,9 @@ impl EntityBase for ArrowEntity {
 
         // Arrow is flying
         let start_pos = entity.pos.load();
-        let mut velocity = entity.velocity.load();
+        let velocity = entity.velocity.load();
 
-        // arrow: water drag before the move, air drag and gravity after it (AbstractArrow.tick)
-        if in_water {
-            velocity = velocity.multiply(
-                Self::WATER_INERTIA,
-                Self::WATER_INERTIA,
-                Self::WATER_INERTIA,
-            );
-            entity.velocity.store(velocity);
-        }
+        // arrow: move with this tick's velocity, drag and gravity for the next (AbstractArrow.tick)
 
         // Update rotation based on velocity
         let len = velocity.horizontal_length();
@@ -768,10 +760,12 @@ impl EntityBase for ArrowEntity {
 
         if !self.in_ground.load(Ordering::Relaxed) && !entity.is_removed() {
             let mut velocity = entity.velocity.load();
-            if !in_water {
-                velocity =
-                    velocity.multiply(Self::AIR_INERTIA, Self::AIR_INERTIA, Self::AIR_INERTIA);
-            }
+            let inertia = if in_water {
+                Self::WATER_INERTIA
+            } else {
+                Self::AIR_INERTIA
+            };
+            velocity = velocity.multiply(inertia, inertia, inertia);
             velocity.y -= Self::GRAVITY;
             entity.velocity.store(velocity);
         }

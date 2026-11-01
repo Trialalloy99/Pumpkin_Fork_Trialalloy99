@@ -10,6 +10,7 @@ use pumpkin_data::damage::DamageType;
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::sound::{Sound, SoundCategory};
+use pumpkin_data::tag::Taggable;
 use pumpkin_protocol::IdOr;
 use pumpkin_protocol::java::client::play::{CEntityVelocity, CSoundEffect};
 use pumpkin_util::math::boundingbox::BoundingBox;
@@ -30,6 +31,9 @@ pub struct TridentEntity {
     pub shake_time: AtomicU8,
     pub has_hit: AtomicBool,
     pub last_block_pos: Arc<std::sync::RwLock<Option<BlockPos>>>,
+    // trident: hit something, loyalty may start (ThrownTrident.dealtDamage)
+    dealt_damage: AtomicBool,
+    return_ticks: AtomicU32,
 }
 
 impl TridentEntity {
@@ -51,6 +55,8 @@ impl TridentEntity {
             shake_time: AtomicU8::new(0),
             has_hit: AtomicBool::new(false),
             last_block_pos: Arc::new(std::sync::RwLock::new(None)),
+            dealt_damage: AtomicBool::new(false),
+            return_ticks: AtomicU32::new(0),
         }
     }
 
@@ -76,7 +82,95 @@ impl TridentEntity {
             shake_time: AtomicU8::new(0),
             has_hit: AtomicBool::new(false),
             last_block_pos: Arc::new(std::sync::RwLock::new(None)),
+            dealt_damage: AtomicBool::new(false),
+            return_ticks: AtomicU32::new(0),
         }
+    }
+
+    fn loyalty(&self) -> i32 {
+        self.item_stack
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_enchantment_level(&pumpkin_data::Enchantment::LOYALTY)
+    }
+
+    // trident: fly back to the owner, drop if the owner is gone (ThrownTrident.tick loyalty)
+    fn tick_loyalty(&self, world: &crate::world::World) -> bool {
+        let entity = &self.entity;
+        if self.in_ground.load(Ordering::Relaxed) && self.in_ground_time.load(Ordering::Relaxed) > 4
+        {
+            self.dealt_damage.store(true, Ordering::Relaxed);
+        }
+        let loyalty = self.loyalty();
+        if loyalty <= 0
+            || !(self.dealt_damage.load(Ordering::Relaxed)
+                || entity.no_physics.load(Ordering::Relaxed))
+        {
+            return false;
+        }
+        let Some(owner) = self.owner.get(world) else {
+            return false;
+        };
+        let owner_entity = owner.get_entity();
+        if !owner_entity.is_alive() || owner.get_player().is_some_and(|p| p.is_spectator()) {
+            if self.pickup == ArrowPickup::Allowed {
+                let stack = self
+                    .item_stack
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
+                entity.spawn_at_location(stack);
+            }
+            entity.remove();
+            return true;
+        }
+        let pos = entity.pos.load();
+        let owner_eye = owner_entity.get_eye_pos();
+        if owner.get_player().is_none()
+            && pos.squared_distance_to_vec(&owner_eye).sqrt()
+                < f64::from(owner_entity.width()) + 1.0
+        {
+            entity.remove();
+            return true;
+        }
+        entity.no_physics.store(true, Ordering::Relaxed);
+        self.in_ground.store(false, Ordering::Relaxed);
+        let to_owner = owner_eye - pos;
+        let loyalty = f64::from(loyalty);
+        let pos = Vector3::new(pos.x, pos.y + to_owner.y * 0.015 * loyalty, pos.z);
+        let accel = 0.05 * loyalty;
+        let velocity = entity
+            .velocity
+            .load()
+            .multiply(0.95, 0.95, 0.95)
+            .add(&to_owner.normalize().multiply(accel, accel, accel));
+        if self.return_ticks.fetch_add(1, Ordering::Relaxed) == 0 {
+            world.play_sound_fine(
+                Sound::ItemTridentReturn,
+                SoundCategory::Neutral,
+                &pos,
+                10.0,
+                1.0,
+            );
+        }
+        // trident: no-physics flight, no collisions or gravity (AbstractArrow.tick isNoPhysics)
+        entity.set_pos(pos.add(&velocity));
+        let len = velocity.horizontal_length();
+        entity.set_rotation(
+            (-velocity.x).atan2(-velocity.z) as f32 * 57.295_776,
+            velocity.y.atan2(len) as f32 * 57.295_776,
+        );
+        let inertia = if entity.touching_water.load(Ordering::Relaxed) {
+            Self::WATER_INERTIA
+        } else {
+            Self::AIR_INERTIA
+        };
+        entity
+            .velocity
+            .store(velocity.multiply(inertia, inertia, inertia));
+        let packet = CEntityVelocity::new(entity.entity_id.into(), velocity);
+        world.broadcast_to_chunk(entity.chunk_pos.load(), &packet);
+        true
     }
 
     /// Applies projectile-spawned enchantment effects matching vanilla `Projectile::applyOnProjectileSpawned`.
@@ -139,7 +233,7 @@ impl TridentEntity {
         }
 
         // Don't collide with self
-        if other_ent.entity_id == self_ent.entity_id {
+        if other_ent.entity_id == self_ent.entity_id || self.dealt_damage.load(Ordering::Relaxed) {
             return true;
         }
 
@@ -176,31 +270,29 @@ impl EntityBase for TridentEntity {
             self.shake_time.store(shake - 1, Ordering::Relaxed);
         }
 
+        if self.tick_loyalty(&world) {
+            entity.update_fluid_state(caller);
+            return;
+        }
+
         if self.in_ground.load(Ordering::Relaxed) {
             let _in_ground_time = self.in_ground_time.fetch_add(1, Ordering::Relaxed);
-            let life = self.life.fetch_add(1, Ordering::Relaxed);
-
-            // Despawn after enough time
-            if life >= Self::DESPAWN_TIME {
-                entity.remove();
+            // trident: loyal tridents never despawn (ThrownTrident.tickDespawn)
+            if self.pickup != ArrowPickup::Allowed || self.loyalty() <= 0 {
+                let life = self.life.fetch_add(1, Ordering::Relaxed);
+                if life >= Self::DESPAWN_TIME {
+                    entity.remove();
+                }
             }
             return;
         }
 
         // Trident is flying
         let start_pos = entity.pos.load();
-        let mut velocity = entity.velocity.load();
+        let velocity = entity.velocity.load();
 
-        // trident: water drag before the move, air drag and gravity after it (AbstractArrow.tick)
+        // trident: move with this tick's velocity, drag and gravity for the next (AbstractArrow.tick)
         let in_water = entity.touching_water.load(Ordering::Relaxed);
-        if in_water {
-            velocity = velocity.multiply(
-                Self::WATER_INERTIA,
-                Self::WATER_INERTIA,
-                Self::WATER_INERTIA,
-            );
-            entity.velocity.store(velocity);
-        }
 
         // Update rotation based on velocity
         let len = velocity.horizontal_length();
@@ -291,10 +383,12 @@ impl EntityBase for TridentEntity {
 
         if !self.in_ground.load(Ordering::Relaxed) && !entity.is_removed() {
             let mut velocity = entity.velocity.load();
-            if !in_water {
-                velocity =
-                    velocity.multiply(Self::AIR_INERTIA, Self::AIR_INERTIA, Self::AIR_INERTIA);
-            }
+            let inertia = if in_water {
+                Self::WATER_INERTIA
+            } else {
+                Self::AIR_INERTIA
+            };
+            velocity = velocity.multiply(inertia, inertia, inertia);
             velocity.y -= Self::GRAVITY;
             entity.velocity.store(velocity);
         }
@@ -354,28 +448,39 @@ impl EntityBase for TridentEntity {
                 hit_pos,
                 ..
             } => {
+                // trident: 8 damage, impaling vs sensitive mobs, reverse and slow down (ThrownTrident.onHitEntity)
                 let mut damage = Self::BASE_DAMAGE;
-
-                // Apply Impaling enchantment extra damage
-                if let Some(enchantments) = self
+                let impaling = self
                     .item_stack
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .get_data_component::<pumpkin_data::data_component_impl::EnchantmentsImpl>()
+                    .get_enchantment_level(&pumpkin_data::Enchantment::IMPALING);
+                if impaling > 0
+                    && target
+                        .get_entity()
+                        .entity_type
+                        .has_tag(&pumpkin_data::tag::EntityType::MINECRAFT_SENSITIVE_TO_IMPALING)
                 {
-                    for (enchantment, level) in enchantments.enchantment.iter() {
-                        if **enchantment == pumpkin_data::Enchantment::IMPALING {
-                            let in_water =
-                                target.get_entity().touching_water.load(Ordering::Relaxed);
-                            if in_water {
-                                damage += 1.25 * f64::from(*level);
-                            }
-                        }
-                    }
+                    damage += 2.5 * f64::from(impaling);
                 }
 
-                let damage_val = damage as f32;
-                target.damage(&*target, damage_val, DamageType::TRIDENT);
+                self.dealt_damage.store(true, Ordering::Relaxed);
+                let owner = self.owner.get(&world);
+                target.damage_with_context(
+                    target.as_ref(),
+                    damage as f32,
+                    DamageType::TRIDENT,
+                    Some(hit_pos),
+                    Some(self),
+                    Some(owner.as_deref().unwrap_or(self)),
+                );
+
+                let velocity = entity.velocity.load();
+                entity
+                    .velocity
+                    .store(velocity.multiply(-0.5 * 0.02, -0.5 * 0.2, -0.5 * 0.02));
+                let yaw = entity.yaw.load();
+                entity.set_rotation(yaw + 180.0, entity.pitch.load());
 
                 // Play hit sound
                 let sound_packet = CSoundEffect::new(
@@ -388,17 +493,20 @@ impl EntityBase for TridentEntity {
                 );
                 let chunk_pos = entity.chunk_pos.load();
                 world.broadcast_to_chunk(chunk_pos, &sound_packet);
-
-                // Standard bounce/fall-back behavior
-                entity.velocity.store(Vector3::new(0.0, -0.1, 0.0));
-                self.has_hit.store(false, Ordering::Relaxed); // Let it hit the ground
+                self.has_hit.store(false, Ordering::Relaxed);
             }
         }
     }
 
     fn on_player_collision(&self, player: &Arc<Player>) {
-        // Can only pick up when on the ground
-        if !self.in_ground.load(Ordering::Relaxed) {
+        // trident: pick up when grounded or returning to its owner (ThrownTrident.tryPickup)
+        let returning = self.entity.no_physics.load(Ordering::Relaxed);
+        if !(self.in_ground.load(Ordering::Relaxed) || returning)
+            || self.shake_time.load(Ordering::Relaxed) > 0
+        {
+            return;
+        }
+        if returning && !self.owner.matches(player.get_entity()) {
             return;
         }
 
