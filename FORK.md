@@ -72,6 +72,8 @@ Unser Fortschritt steht auf **https://claude.ai/artifact/KAHK4pXmbbEhd9nXiBuobN*
 | 5 (Codex) | Slime, Magma Cube, Phantom, Silverfish, Blaze, Pillager, Piglin Brute, Hoglin, Zoglin, Polar Bear | Auftrag in `CODEX_BATCH5.md`, Branch `batch-5-codex` |
 | 4 | Parched, Skeleton, Stray, Bogged, Creeper, Spider, Cave Spider, Drowned, Witch | fertig, in `playable` gemergt; Test im Spiel steht aus. Camel Husk verschoben (braucht das ganze Kamel) |
 | 6 | Cow, Mooshroom, Pig, Sheep, Chicken, Rabbit, Iron Golem, Snow Golem, Squid, Glow Squid | Branch `batch-6`; Iron Golem bis auf „Villager will Golem“ (siehe unten); Test im Spiel steht aus |
+| 7 | Items (Mace, Angel, Elytra, Namensschild), Redstone (Druckplatten, Tageslichtsensor, Notenblock, Kolben, Leitung), Welt laden/speichern, alle 22 Boote, Dreizack-Loyalität, Bugfixes aus dem Spieltest | Branch `batch-7`; Test im Spiel steht aus |
+| Blöcke 1 (Gemini) | Bed, Beehive, Campfire, Chest, Chiseled Bookshelf, Conduit, Dirt Path, Dragon Egg, Dried Ghast, Ender Chest | Auftrag als Prompt an Gemini (Antigravity), Branch `blocks-1-gemini` |
 
 Aus dem Tracker entfernt, weil Vanilla sie auf einem dedizierten Server nicht hat: `/publish` und `/unpublish` (nur Einzelspieler) sowie `/jfr` (Java Flight Recorder, braucht eine JVM).
 
@@ -107,7 +109,20 @@ Batch 6, neu dazugekommen:
 - `land_random_pos::get_pos_towards`, `VillagerEntity::get_player_reputation`.
 - Codegen: `Biome::snow_golem_melts` (heiße Biome schmelzen Schneegolems).
 
+Batch 7, neu dazugekommen:
+- **Regel:** Beim Portieren auch den mitbenutzten Code gegen Vanilla prüfen (z. B. den Pfeil beim Skelett), nicht nur die Klasse selbst.
+- Projektile treffen Spieler (`get_all_at_box` statt `get_entities_at_box`), Projektile haben Wasser-Physik (`Entity::update_fluid_state` ist `pub(crate)`).
+- `default_push` (Vanilla `Entity.push`) als freie Funktion; der Server schiebt Spieler nie (Client-seitig).
+- Natürliches Spawnen: Gewichte aus den Biom-Daten (Codegen `Spawner::weight`), Himmelsverdunkelung beim Monster-Licht, Tier-Spawns beim Chunk-Generieren lesen Boden und Licht aus der Proto-Chunk.
+- `World::is_handling_tick` (Vanilla `isHandlingTick`), `block::write_block_state_nbt` / `read_block_state_nbt` (BlockState.CODEC).
+- `EntityBase::on_above_bubble_column` (Boote verzögern den Effekt).
+- Kisten-Boote nutzen `minecart::container::MinecartInventory`.
+- Weltdaten: Spielzeit, Tageszeit und Wetter werden geladen und gespeichert, `DataVersion` liegt in den `data/minecraft/*.dat` neben `data` (sonst kann Vanilla sie nicht lesen). Getestet per Rundlauf Vanilla → Pumpkin → Vanilla mit `bench/vanilla` (Java 25 liegt unter `scratchpad/bench/jre`).
+- Wetterzyklus lief nie (Bedingung war umgedreht), jetzt mit Spielregel `advance_weather`.
+
 Offene Aufgaben, die nicht Teil einer Batch waren:
+- **Piglin-Wut beim Öffnen von Kisten** (Vanilla `PiglinAi.angerNearbyPiglins`): fehlt überall, auch bei Kisten-Booten.
+- **Leinen an Booten** (Vanilla Quad-Leash) sind nicht umgesetzt.
 - **Kamel und Camel Husk:** Vanilla nutzt Brain-KI (CamelAi), Sitzen und Dash, Reiten und die ganze `AbstractHorse`-Basis (Zähmen, Sattel, Inventar). Das fehlt in Pumpkin. Erst danach funktioniert der Kamel-Husk-Jockey beim Husk. Der Code dafür ist schon drin und springt an, sobald `CAMEL_HUSK` ein Mob ist.
 - **Zombie-Nautilus:** fehlt als Mob. Der Drowned-Jockey springt automatisch an, sobald er existiert.
 - **`/effect`:** geht in Pumpkin nur für Spieler, in Vanilla für alle Lebewesen.
