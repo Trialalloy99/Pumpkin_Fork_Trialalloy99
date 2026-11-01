@@ -162,6 +162,10 @@ impl MoveControlTrait for MoveControl {
     fn has_wanted(&self) -> bool {
         self.operation == Operation::MoveTo
     }
+
+    fn speed_modifier(&self) -> f64 {
+        self.speed_modifier
+    }
 }
 
 impl MoveControl {

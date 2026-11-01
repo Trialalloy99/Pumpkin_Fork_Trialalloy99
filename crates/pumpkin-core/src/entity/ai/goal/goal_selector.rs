@@ -153,6 +153,15 @@ impl GoalSelector {
         }));
     }
 
+    // goal selector: PrioritizedGoal.isRunning of the goal of type G
+    pub fn is_running<G: Goal + 'static>(&self) -> bool {
+        let type_id = TypeId::of::<G>();
+        Self::lock(self)
+            .goals
+            .iter()
+            .any(|entry| entry.type_id == type_id && entry.is_running())
+    }
+
     pub fn remove_goal<G: Goal + 'static>(&self, mob: &dyn Mob) {
         self.remove_goal_by_type_id(TypeId::of::<G>(), mob);
     }

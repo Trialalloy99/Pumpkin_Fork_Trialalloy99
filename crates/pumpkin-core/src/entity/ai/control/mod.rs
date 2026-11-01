@@ -30,6 +30,11 @@ pub trait MoveControlTrait: Control {
     fn has_wanted(&self) -> bool {
         false
     }
+
+    // move control: MoveControl.getSpeedModifier
+    fn speed_modifier(&self) -> f64 {
+        0.0
+    }
 }
 
 pub trait LookControlTrait: Control {

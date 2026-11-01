@@ -3,7 +3,8 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
-use pumpkin_data::entity::{EntityStatus, EntityType};
+use pumpkin_data::Block;
+use pumpkin_data::entity::{EntityPose, EntityStatus, EntityType};
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::tag::{self, Taggable};
@@ -18,12 +19,16 @@ use crate::entity::{
         fleeing::{self, Flee},
         hunting::{self, Hunt},
     },
-    ai::goal::swim::SwimGoal,
+    ai::goal::{swim::SwimGoal, tempt::TemptGoal},
     ai::target_match::TargetMatch,
-    mob::{Mob, MobEntity},
+    mob::{Mob, MobEntity, spawn::SpawnGroupData},
     passive::animal::Animal,
     player::Player,
 };
+use crate::world::World;
+
+const CROUCH_SPEED_MOD: f64 = 0.6;
+const SPRINT_SPEED_MOD: f64 = 1.33;
 
 const OCELOT_FLEES: &[Flee] = &[feline::flee_players(4, is_wary)];
 
@@ -121,6 +126,76 @@ impl Mob for OcelotEntity {
         &self.mob_entity
     }
 
+    // ocelot: Ocelot.removeWhenFarAway
+    fn remove_when_far_away(&self, _distance_sq: f64) -> bool {
+        !self.is_trusting() && self.get_entity().tick_count.load(Ordering::Relaxed) > 2400
+    }
+
+    fn get_ambient_sound_interval(&self) -> i32 {
+        900
+    }
+
+    // ocelot: BABY_DIMENSIONS
+    fn baby_dimensions(&self) -> Option<pumpkin_util::math::boundingbox::EntityDimensions> {
+        Some(pumpkin_util::math::boundingbox::EntityDimensions {
+            width: 0.3,
+            height: 0.35,
+            eye_height: 0.343_75,
+        })
+    }
+
+    // ocelot: kittens follow adults in a spawn group (Ocelot.finalizeSpawn)
+    fn finalize_spawn(
+        &self,
+        _world: &Arc<World>,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        self.finalize_spawn_super(group_data.or(Some(SpawnGroupData::Ageable {
+            group_size: 0,
+            should_spawn_baby: true,
+            baby_spawn_chance: 1.0,
+        })))
+    }
+
+    // ocelot: Ocelot.checkSpawnObstruction, above sea level on grass or leaves
+    fn check_spawn_obstruction(&self, world: &World) -> bool {
+        let bounding_box = self.get_entity().bounding_box.load();
+        if !world.get_entities_at_box(&bounding_box).is_empty()
+            || world.contains_any_liquid(bounding_box)
+        {
+            return false;
+        }
+        let pos = self.get_entity().block_pos.load();
+        if pos.0.y < world.sea_level {
+            return false;
+        }
+        let below = world.get_block(&pos.down());
+        below == &Block::GRASS_BLOCK || below.has_tag(&tag::Block::MINECRAFT_LEAVES)
+    }
+
+    // ocelot: crouch and sprint follow the move speed (Ocelot.customServerAiStep)
+    fn custom_server_ai_step(&self, _caller: &dyn EntityBase) {
+        let entity = self.get_entity();
+        let (pose, sprinting) = {
+            let steered = self.mob_entity.steered();
+            let control = steered.move_control();
+            if control.has_wanted() {
+                let speed = control.speed_modifier();
+                if speed == CROUCH_SPEED_MOD {
+                    (EntityPose::Crouching, false)
+                } else if speed == SPRINT_SPEED_MOD {
+                    (EntityPose::Standing, true)
+                } else {
+                    (EntityPose::Standing, false)
+                }
+            } else {
+                (EntityPose::Standing, false)
+            }
+        };
+        entity.set_pose(pose);
+        entity.set_sprinting(sprinting);
+    }
+
     fn mob_init_data_tracker(&self) {
         let entity = self.get_entity();
         let is_baby = entity.age.load(Ordering::Relaxed) < 0;
@@ -141,7 +216,12 @@ impl Mob for OcelotEntity {
             .load()
             .squared_distance_to_vec(&player.get_entity().pos.load());
 
-        if !self.is_trusting() && is_food && dist_sqr < 9.0 {
+        // ocelot: trust only while the tempt goal runs (Ocelot.mobInteract)
+        if self.mob_entity.goals_selector.is_running::<TemptGoal>()
+            && !self.is_trusting()
+            && is_food
+            && dist_sqr < 9.0
+        {
             item_stack.decrement_unless_creative(player.gamemode.load(), 1);
 
             let mut rng = rand::rng();

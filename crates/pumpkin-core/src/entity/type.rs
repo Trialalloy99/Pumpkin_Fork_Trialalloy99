@@ -666,10 +666,8 @@ pub fn check_spawn_rules(
             && mob::MobEntity::is_bright_enough_to_spawn(world, pos);
     }
     if id == EntityType::OCELOT.id {
-        if rand::random_range(0..3) == 0 {
-            return false;
-        }
-        return mob::MobEntity::check_mob_spawn_rules(world, pos);
+        // ocelot: Ocelot.checkOcelotSpawnRules
+        return rand::random_range(0..3) != 0;
     }
     if id == EntityType::POLAR_BEAR.id {
         let below = pos.down();
