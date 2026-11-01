@@ -73,7 +73,8 @@ Unser Fortschritt steht auf **https://claude.ai/artifact/KAHK4pXmbbEhd9nXiBuobN*
 | 4 | Parched, Skeleton, Stray, Bogged, Creeper, Spider, Cave Spider, Drowned, Witch | fertig, in `playable` gemergt; Test im Spiel steht aus. Camel Husk verschoben (braucht das ganze Kamel) |
 | 6 | Cow, Mooshroom, Pig, Sheep, Chicken, Rabbit, Iron Golem, Snow Golem, Squid, Glow Squid | Branch `batch-6`; Iron Golem bis auf „Villager will Golem“ (siehe unten); Test im Spiel steht aus |
 | 7 | Items (Mace, Angel, Elytra, Namensschild), Redstone (Druckplatten, Tageslichtsensor, Notenblock, Kolben, Leitung), Welt laden/speichern, alle 22 Boote, Dreizack-Loyalität, Bugfixes aus dem Spieltest | Branch `batch-7`; Test im Spiel steht aus |
-| Blöcke 1 (Gemini) | Bed, Beehive, Campfire, Chest, Chiseled Bookshelf, Conduit, Dirt Path, Dragon Egg, Dried Ghast, Ender Chest | Auftrag als Prompt an Gemini (Antigravity), Branch `blocks-1-gemini` |
+| Blöcke 1 (Gemini) | Bed, Beehive, Campfire, Chest, Chiseled Bookshelf, Conduit, Dirt Path, Dragon Egg, Dried Ghast, Ender Chest | in `playable` gemergt; Beehive offen (Bienen-Bewohner fehlen) |
+| Blöcke 2 (Gemini) | Farmland, Frogspawn, Huge Mushroom, Infested, Jukebox, Lodestone, Potent Sulfur, Fire, Sculk Catalyst, Big Dripleaf | Branch `blocks-2-gemini` |
 
 Aus dem Tracker entfernt, weil Vanilla sie auf einem dedizierten Server nicht hat: `/publish` und `/unpublish` (nur Einzelspieler) sowie `/jfr` (Java Flight Recorder, braucht eine JVM).
 
@@ -119,10 +120,10 @@ Batch 7, neu dazugekommen:
 - Kisten-Boote nutzen `minecart::container::MinecartInventory`.
 - Weltdaten: Spielzeit, Tageszeit und Wetter werden geladen und gespeichert, `DataVersion` liegt in den `data/minecraft/*.dat` neben `data` (sonst kann Vanilla sie nicht lesen). Getestet per Rundlauf Vanilla → Pumpkin → Vanilla mit `bench/vanilla` (Java 25 liegt unter `scratchpad/bench/jre`).
 - Wetterzyklus lief nie (Bedingung war umgedreht), jetzt mit Spielregel `advance_weather`.
+- `PiglinAi::anger_nearby_piglins`: Container öffnen (Truhe, Fass, Shulker, Enderkiste, Kisten-Lore/-Boot), Kisten-Fahrzeug zerstören, `guarded_by_piglins` abbauen. Näherung: Pumpkins Piglin hat kein Brain, die Wut setzt das Angriffsziel statt `ANGRY_AT`.
+- Leinen wie Vanilla `Leashable`: Feder-Physik mit Drehmoment (`Entity::tick_leash`, `leash_angular_momentum`), Quad-Leine Boot/Happy Ghast, `crate::entity::leash_interact` (Leine anlegen/lösen, Schere, Sneak-Übertragen) für Mobs und Boote.
 
 Offene Aufgaben, die nicht Teil einer Batch waren:
-- **Piglin-Wut beim Öffnen von Kisten** (Vanilla `PiglinAi.angerNearbyPiglins`): fehlt überall, auch bei Kisten-Booten.
-- **Leinen an Booten** (Vanilla Quad-Leash) sind nicht umgesetzt.
 - **Kamel und Camel Husk:** Vanilla nutzt Brain-KI (CamelAi), Sitzen und Dash, Reiten und die ganze `AbstractHorse`-Basis (Zähmen, Sattel, Inventar). Das fehlt in Pumpkin. Erst danach funktioniert der Kamel-Husk-Jockey beim Husk. Der Code dafür ist schon drin und springt an, sobald `CAMEL_HUSK` ein Mob ist.
 - **Zombie-Nautilus:** fehlt als Mob. Der Drowned-Jockey springt automatisch an, sobald er existiert.
 - **`/effect`:** geht in Pumpkin nur für Spieler, in Vanilla für alle Lebewesen.
