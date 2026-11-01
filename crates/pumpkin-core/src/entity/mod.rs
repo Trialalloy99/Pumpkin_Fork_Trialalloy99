@@ -1017,6 +1017,9 @@ pub trait EntityBase: Send + Sync + std::any::Any {
             let other_entities = world.get_entities_at_box(&entity_bb);
             for other in other_entities {
                 if other.get_entity().entity_id != self_entity.entity_id {
+                    if let Some(mob) = dyn_self.get_mob() {
+                        mob.mob_entity_collision(other.as_ref());
+                    }
                     dyn_self.push(other.as_ref());
                     pushed = true;
                 }

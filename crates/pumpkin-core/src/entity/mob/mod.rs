@@ -2184,6 +2184,8 @@ pub trait Mob: EntityBase + Send + Sync {
 
     fn mob_player_collision(&self, _player: &Arc<Player>) {}
 
+    fn mob_entity_collision(&self, _entity: &dyn EntityBase) {}
+
     fn get_owner_uuid(&self) -> Option<Uuid> {
         self.as_tamable()
             .and_then(crate::entity::passive::tamable::TamableAnimal::get_owner)
