@@ -5649,6 +5649,21 @@ impl World {
             crate::entity::mob::piglin_ai::PiglinAi::anger_nearby_piglins(player, false);
         }
 
+        // beehive: player breaking releases and angers the bees unless silk touch (BeehiveBlock.playerDestroy)
+        if let Some(player) = cause
+            && pumpkin_data::tag::Taggable::has_tag(
+                broken_block,
+                &pumpkin_data::tag::Block::MINECRAFT_BEEHIVES,
+            )
+            && player
+                .inventory()
+                .held_item()
+                .get_enchantment_level(&pumpkin_data::Enchantment::SILK_TOUCH)
+                == 0
+        {
+            crate::block::blocks::beehive::release_bees_for_player_break(self, position, player);
+        }
+
         if event.drop {
             flags.remove(BlockFlags::SKIP_DROPS);
         } else {

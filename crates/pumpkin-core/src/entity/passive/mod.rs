@@ -6,6 +6,7 @@ pub mod animal;
 pub mod armadillo;
 pub mod axolotl;
 pub mod bee;
+pub mod bee_goals;
 pub mod camel;
 pub mod cat;
 pub mod chicken;

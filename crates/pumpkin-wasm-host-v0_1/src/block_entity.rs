@@ -960,7 +960,7 @@ impl HostBeehiveBlockEntity for PluginHostState {
             .bees
             .try_lock()
             .ok()
-            .and_then(|g| g.as_ref().map(|v| v.len() as u32))
+            .map(|g| g.len() as u32)
             .unwrap_or(0))
     }
 

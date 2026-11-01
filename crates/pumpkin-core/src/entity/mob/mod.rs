@@ -411,7 +411,12 @@ impl MobEntity {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             self.apply_navigation_updates(&mut navigator);
-            navigator.tick(&self.living_entity)
+            // bee: navigation pauses while pollinating (Bee.createNavigation tick)
+            if mob.ticks_navigation() {
+                navigator.tick(&self.living_entity)
+            } else {
+                None
+            }
         };
 
         // Vanilla PathNavigation.tick hands its waypoint to `mob.getMoveControl()`.
@@ -926,10 +931,13 @@ impl MobEntity {
             mob.outgoing_attack_damage(mob.mob_attack_damage(attack_damage))
         });
 
+        let damage_type = caller
+            .get_mob()
+            .map_or(DamageType::MOB_ATTACK, |mob| mob.melee_damage_type());
         let damaged = target.damage_with_context(
             target,
             attack_damage,
-            DamageType::MOB_ATTACK,
+            damage_type,
             None,
             Some(caller),
             Some(caller),
@@ -1288,6 +1296,15 @@ pub trait Mob: EntityBase + Send + Sync {
 
     fn get_max_head_rotation(&self) -> f32 {
         75.0
+    }
+
+    fn ticks_navigation(&self) -> bool {
+        true
+    }
+
+    // mob: melee damage source (Bee.doHurtTarget sting)
+    fn melee_damage_type(&self) -> DamageType {
+        DamageType::MOB_ATTACK
     }
 
     /// Vanilla `LookControl.resetXRotOnTick`: the look control levels the pitch each tick.
