@@ -31,7 +31,7 @@ fn locate_caches_generation_height_village_start() {
     let WorldGenerator::Noise(generator) = &*world_gen else {
         unreachable!()
     };
-    let mut start = generator
+    let start = generator
         .global_structure_cache
         .get_or_compute_structure_start(key, -9, -52, || panic!("start was not cached"))
         .expect("cached start");

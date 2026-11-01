@@ -115,7 +115,8 @@ impl Goal for EnterHiveGoal {
         };
         if bee.wants_to_enter_hive()
             && closer_to_center_than(&hive, &bee.get_entity().pos.load(), 2.0)
-            && let Some(full) = bee.with_hive(|hive| hive.is_full())
+            && let Some(full) =
+                bee.with_hive(crate::block::entities::beehive::BeehiveBlockEntity::is_full)
         {
             if !full {
                 return true;
@@ -315,22 +316,21 @@ impl Goal for PollinateGoal {
         if world.is_raining() {
             return false;
         }
-        if let Some(flower) = self.find_nearby_flower(bee) {
-            bee.set_saved_flower_pos(flower);
-            let mut navigator = nav_of(bee);
-            navigator.move_to_coords(
-                f64::from(flower.0.x) + 0.5,
-                f64::from(flower.0.y) + 0.5,
-                f64::from(flower.0.z) + 0.5,
-                1.2,
-                &bee.mob_entity.living_entity,
-            );
-            true
-        } else {
+        let Some(flower) = self.find_nearby_flower(bee) else {
             bee.cooldown_before_locating_new_flower
                 .store(rand::random_range(20..=60), Relaxed);
-            false
-        }
+            return false;
+        };
+        bee.set_saved_flower_pos(flower);
+        let mut navigator = nav_of(bee);
+        navigator.move_to_coords(
+            f64::from(flower.0.x) + 0.5,
+            f64::from(flower.0.y) + 0.5,
+            f64::from(flower.0.z) + 0.5,
+            1.2,
+            &bee.mob_entity.living_entity,
+        );
+        true
     }
 
     fn should_continue(&mut self, mob: &dyn Mob) -> bool {
@@ -562,7 +562,9 @@ impl GoToHiveGoal {
             close_enough,
         );
         navigator.move_to_path(path, 1.0, &bee.mob_entity.living_entity);
-        navigator.get_path().is_some_and(|path| path.can_reach())
+        navigator
+            .get_path()
+            .is_some_and(crate::entity::ai::pathfinder::path::Path::can_reach)
     }
 
     fn drop_and_blacklist_hive(bee: &BeeEntity) {
@@ -756,7 +758,7 @@ impl GrowCropGoal {
             });
         }
         if block == &Block::BEETROOTS || block == &Block::SWEET_BERRY_BUSH {
-            let max_age = if block == &Block::BEETROOTS { 3 } else { 3 };
+            let max_age = 3;
             let mut props = NetherWartLikeProperties::from_state_id(state_id);
             return (props.age < max_age).then(|| {
                 props.age += 1;
@@ -900,5 +902,35 @@ impl Goal for BeeWanderGoal {
         let mut navigator = nav_of(bee);
         let path = navigator.create_path(&bee.mob_entity.living_entity, target, 1);
         navigator.move_to_path(path, 1.0, &bee.mob_entity.living_entity);
+    }
+}
+
+impl Default for ValidateHiveGoal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for ValidateFlowerGoal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for PollinateGoal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for GoToHiveGoal {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Default for GoToKnownFlowerGoal {
+    fn default() -> Self {
+        Self::new()
     }
 }

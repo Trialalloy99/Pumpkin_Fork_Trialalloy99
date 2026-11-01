@@ -117,16 +117,15 @@ fn alertable(mob: &dyn Mob) -> bool {
         {
             return !tamable.is_tame();
         }
-        if let Some(player) = other.get_player() {
-            if player.is_spectator() || player.is_creative() {
-                return false;
-            }
+        if let Some(player) = other.get_player()
+            && (player.is_spectator() || player.is_creative())
+        {
+            return false;
         }
         !own.trusts(other_entity.entity_uuid)
-            && !other.get_living_entity().is_some()
-            && other
+            && !other
                 .get_player()
-                .is_some_and(|player| player.is_sleeping())
+                .is_some_and(crate::entity::player::Player::is_sleeping)
             && !other_entity.is_sneaking()
     })
 }
@@ -288,7 +287,7 @@ impl Goal for PerchAndSearchGoal {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .look_at_with_range(
                 pos.x + self.rel_x,
-                pos.y + f64::from(entity.get_eye_height()),
+                pos.y + entity.get_eye_height(),
                 pos.z + self.rel_z,
                 mob.get_max_look_yaw_change(),
                 mob.get_max_look_pitch_change(),
@@ -313,10 +312,10 @@ pub struct SeekShelterGoal {
 
 impl SeekShelterGoal {
     #[must_use]
-    pub fn new(speed: f64) -> Self {
+    pub const fn new(speed: f64) -> Self {
         Self {
             speed,
-            interval: to_goal_ticks(SHELTER_INTERVAL),
+            interval: SHELTER_INTERVAL,
             wanted: None,
         }
     }
@@ -603,9 +602,9 @@ pub struct StrollThroughVillageGoal {
 
 impl StrollThroughVillageGoal {
     #[must_use]
-    pub fn new() -> Self {
+    pub const fn new() -> Self {
         Self {
-            interval: to_goal_ticks(VILLAGE_STROLL_INTERVAL),
+            interval: VILLAGE_STROLL_INTERVAL,
             wanted: None,
         }
     }
@@ -639,9 +638,8 @@ impl Goal for StrollThroughVillageGoal {
         if !world.is_close_to_village(&pos, 6) {
             return false;
         }
-        let village_world = world.clone();
         let target = land_random_pos::get_pos_weighted(mob, 15, 7, |candidate| {
-            -f64::from(village_world.sections_to_village(candidate))
+            -f64::from(world.sections_to_village(candidate))
         });
         self.wanted = target.map(|vec| {
             BlockPos::new(

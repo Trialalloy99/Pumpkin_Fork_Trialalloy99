@@ -556,13 +556,16 @@ impl Goal for ParrotWanderGoal {
 impl ParrotWanderGoal {
     // parrot: getPosition, water exit, then tree top with 1 - probability, else default
     fn tree_or_default(mob: &dyn Mob, default: Option<Vector3<f64>>) -> Option<Vector3<f64>> {
-        let mut pos = None;
-        if mob.get_entity().is_in_water() {
-            pos = land_random_pos::get_pos(mob, 15, 15);
-        }
-        if mob.get_random().random::<f32>() >= 0.001 {
-            pos = Self::tree_pos(mob);
-        }
+        let water_exit = mob
+            .get_entity()
+            .is_in_water()
+            .then(|| land_random_pos::get_pos(mob, 15, 15))
+            .flatten();
+        let pos = if mob.get_random().random::<f32>() >= 0.001 {
+            Self::tree_pos(mob)
+        } else {
+            water_exit
+        };
         pos.or(default)
     }
 

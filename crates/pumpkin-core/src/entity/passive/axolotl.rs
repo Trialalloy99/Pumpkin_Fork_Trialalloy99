@@ -196,6 +196,7 @@ pub struct AxolotlEntity {
 }
 
 impl AxolotlEntity {
+    #[expect(clippy::too_many_lines, reason = "one block of goal registrations")]
     pub fn new(entity: Entity) -> Arc<Self> {
         let mut mob_entity = MobEntity::new(entity);
         let navigator = mob_entity

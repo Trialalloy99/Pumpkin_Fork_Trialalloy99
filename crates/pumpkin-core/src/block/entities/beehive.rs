@@ -191,13 +191,12 @@ impl BeehiveBlockEntity {
 
     /// Vanilla `addOccupant`.
     pub fn add_occupant(&self, world: &Arc<World>, bee: &BeeEntity) {
-        {
-            let mut bees = self.bees();
-            if bees.len() >= MAX_OCCUPANTS {
-                return;
-            }
-            bees.push(BeeData::of(bee));
+        let mut bees = self.bees();
+        if bees.len() >= MAX_OCCUPANTS {
+            return;
         }
+        bees.push(BeeData::of(bee));
+        drop(bees);
         // beehive: the bee passes its flower on, or keeps the hive's with a coin flip
         if let Some(bee_flower) = bee.saved_flower_pos() {
             let mut flower = self
@@ -333,7 +332,7 @@ fn release_occupant(
                 next.honey_level = (honey + increase) as u8;
                 world.set_block_state(
                     pos,
-                    next.to_state_id(&Block::from_state_id(state.id)),
+                    next.to_state_id(Block::from_state_id(state.id)),
                     BlockFlags::NOTIFY_ALL,
                 );
             }
@@ -500,6 +499,7 @@ impl BlockEntity for BeehiveBlockEntity {
 }
 
 /// Bees that just left the hive wait this long before re-entering (`MIN_TICKS_BEFORE_REENTERING_HIVE`).
+#[must_use]
 pub const fn reenter_delay() -> i32 {
     MIN_TICKS_BEFORE_REENTERING_HIVE
 }

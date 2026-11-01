@@ -933,7 +933,7 @@ impl MobEntity {
 
         let damage_type = caller
             .get_mob()
-            .map_or(DamageType::MOB_ATTACK, |mob| mob.melee_damage_type());
+            .map_or(DamageType::MOB_ATTACK, Mob::melee_damage_type);
         let damaged = target.damage_with_context(
             target,
             attack_damage,

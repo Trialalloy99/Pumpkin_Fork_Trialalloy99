@@ -49,6 +49,7 @@ fn world_age(mob: &dyn Mob) -> i64 {
     mob.get_entity().world.load().get_world_age()
 }
 
+#[must_use]
 pub fn time_between_long_jumps() -> i32 {
     rand::random_range(TIME_BETWEEN_LONG_JUMPS_MIN..=TIME_BETWEEN_LONG_JUMPS_MAX)
 }
@@ -342,11 +343,11 @@ impl Goal for CroakGoal {
     }
 
     fn start(&mut self, mob: &dyn Mob) {
-        if !mob.get_entity().is_in_water() {
+        if mob.get_entity().is_in_water() {
+            self.croak_counter = CROAK_TICKS;
+        } else {
             mob.get_entity().set_pose(EntityPose::Croaking);
             self.croak_counter = 0;
-        } else {
-            self.croak_counter = CROAK_TICKS;
         }
     }
 
@@ -404,7 +405,7 @@ impl Goal for TryFindLandGoal {
         self.next_ok_start_time = now + 60;
         let Some(target) = find_by_manhattan(&body, self.range, |pos| {
             (pos.0.x != body.0.x || pos.0.z != body.0.z)
-                && world.get_fluid(pos).has_tag(&tag::Fluid::MINECRAFT_WATER) == false
+                && !world.get_fluid(pos).has_tag(&tag::Fluid::MINECRAFT_WATER)
                 && world
                     .get_block_state(pos)
                     .get_block_collision_shapes_at(pos)
