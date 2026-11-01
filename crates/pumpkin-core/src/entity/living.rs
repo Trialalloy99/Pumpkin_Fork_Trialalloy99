@@ -1656,7 +1656,18 @@ impl LivingEntity {
 
         // Strider is the only entity that has canWalkOnFluid = false
 
-        if !effective_ai || caller.get_mob().is_some_and(|mob| mob.travel(caller)) {
+        // living: player-controlled vehicle, client simulates (LivingEntity.travelRidden)
+        let player_controller = caller.get_mob().and_then(|mob| {
+            mob.mob_controlling_passenger()
+                .filter(|rider| rider.get_player().is_some())
+                .map(|rider| (mob, rider))
+        });
+        if let Some((mob, controller)) = player_controller {
+            if self.entity.is_alive() {
+                mob.tick_ridden(&controller);
+                self.entity.velocity.store(Vector3::default());
+            }
+        } else if !effective_ai || caller.get_mob().is_some_and(|mob| mob.travel(caller)) {
         } else if (touching_water || self.entity.touching_lava.load(SeqCst))
             && should_swim_in_fluids
             && self.entity.entity_type != &EntityType::STRIDER

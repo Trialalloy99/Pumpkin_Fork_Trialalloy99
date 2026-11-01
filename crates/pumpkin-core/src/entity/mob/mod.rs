@@ -1327,6 +1327,9 @@ pub trait Mob: EntityBase + Send + Sync {
         self.get_mob_entity().living_entity.is_dead_or_dying()
     }
 
+    // mob: player rider steers, client moves the vehicle (LivingEntity.tickRidden)
+    fn tick_ridden(&self, _controller: &Arc<dyn EntityBase>) {}
+
     fn mob_controlling_passenger(&self) -> Option<Arc<dyn EntityBase>> {
         if self.get_mob_entity().is_no_ai() {
             return None;

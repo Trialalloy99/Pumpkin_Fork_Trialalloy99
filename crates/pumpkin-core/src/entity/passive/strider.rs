@@ -194,8 +194,20 @@ impl Mob for StriderEntity {
 }
 
 impl ItemSteerable for StriderEntity {
+    // strider: sync boost time (ItemBasedSteering.boost)
     fn boost(&self) -> bool {
-        self.steering.boost()
+        if !self.steering.boost() {
+            return false;
+        }
+        self.get_entity().set_synced_data(
+            pumpkin_data::tracked_data::strider::DATA_BOOST_TIME,
+            pumpkin_protocol::codec::var_int::VarInt(
+                self.steering
+                    .boost_time_total
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            ),
+        );
+        true
     }
 
     fn as_any(&self) -> &dyn std::any::Any {

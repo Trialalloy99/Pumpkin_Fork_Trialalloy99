@@ -26,9 +26,8 @@ impl ItemBasedSteering {
         } else {
             self.boosting.store(true, Ordering::Relaxed);
             self.boost_time.store(0, Ordering::Relaxed);
-            let random_range = Self::MAX_BOOST_TIME - Self::MIN_BOOST_TIME + 1;
-            let random_time =
-                (rand::random::<u32>() as i32).abs() % random_range + Self::MIN_BOOST_TIME;
+            // steering: nextInt(841) + 140 (ItemBasedSteering.boost)
+            let random_time = rand::random_range(0..841) + Self::MIN_BOOST_TIME;
             self.boost_time_total.store(random_time, Ordering::Relaxed);
             true
         }
@@ -36,9 +35,10 @@ impl ItemBasedSteering {
 
     pub fn tick_boost(&self) {
         if self.boosting.load(Ordering::Relaxed) {
-            let current = self.boost_time.fetch_add(1, Ordering::Relaxed) + 1;
+            // steering: boostTime++ > total (ItemBasedSteering.tickBoost)
+            let current = self.boost_time.fetch_add(1, Ordering::Relaxed);
             let total = self.boost_time_total.load(Ordering::Relaxed);
-            if current >= total {
+            if current > total {
                 self.boosting.store(false, Ordering::Relaxed);
             }
         }
