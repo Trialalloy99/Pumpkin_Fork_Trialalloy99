@@ -4,6 +4,7 @@ use std::sync::{Arc, Weak};
 use uuid::Uuid;
 
 use pumpkin_data::entity::EntityType;
+use pumpkin_data::game_event::GameEvent;
 use pumpkin_data::sound::Sound;
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::math::vector3::Vector3;
@@ -24,10 +25,13 @@ use crate::entity::{
             self, ObtainRaidLeaderBannerGoal, PathfindToRaidGoal, Raider, RaiderCelebrationGoal,
             RaiderData, RaiderMoveThroughVillageGoal,
         },
+        spawn::finalize_spawn,
+        vex::VexEntity,
     },
     projectile::evoker_fangs::EvokerFangsEntity,
     r#type::from_type,
 };
+use crate::world::game_event::GameEventContext;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
@@ -469,20 +473,41 @@ impl Goal for EvokerSummonSpellGoal {
             let evoker_ent = &evoker.mob_entity.living_entity.entity;
             evoker_ent.play_sound(Sound::EntityEvokerCastSpell);
 
-            let world = evoker_ent.world.load();
-            let evoker_pos = evoker_ent.pos.load();
+            let world = evoker_ent.world.load_full();
+            let evoker_block_pos = evoker_ent.block_pos.load();
+            let evoker_team = evoker.get_team_name();
 
             for _ in 0..3 {
-                let offset_x = (rand::random::<i32>() % 5 - 2) as f64;
-                let offset_z = (rand::random::<i32>() % 5 - 2) as f64;
+                let pos = evoker_block_pos.add(
+                    rand::random_range(0..5) - 2,
+                    1,
+                    rand::random_range(0..5) - 2,
+                );
                 let spawn_pos = Vector3::new(
-                    evoker_pos.x + offset_x,
-                    evoker_pos.y + 1.0,
-                    evoker_pos.z + offset_z,
+                    f64::from(pos.0.x) + 0.5,
+                    f64::from(pos.0.y),
+                    f64::from(pos.0.z) + 0.5,
                 );
 
                 let vex = from_type(&EntityType::VEX, spawn_pos, &world, Uuid::new_v4());
+                finalize_spawn(&vex, &world, None);
+                if let Some(vex_entity) = vex.cast_any().downcast_ref::<VexEntity>() {
+                    vex_entity.set_owner(evoker_ent);
+                    vex_entity.set_bound_origin(Some(pos));
+                    vex_entity.set_limited_life(20 * (30 + rand::random_range(0..90)));
+                }
+                if let Some(team) = &evoker_team {
+                    vex.get_entity().join_team(team);
+                }
+
                 world.spawn_entity(vex);
+                world.emit_game_event_with_context(
+                    GameEvent::EntityPlace.name(),
+                    pos.to_centered_f64(),
+                    &GameEventContext {
+                        source_entity: Some(&*evoker),
+                    },
+                );
             }
         }
     }

@@ -93,6 +93,10 @@ impl EntityReference {
         }
     }
 
+    pub fn set(&self, entity: Option<&Entity>) {
+        self.set_uuid(entity.map(|entity| entity.entity_uuid));
+    }
+
     /// Forgets the entity, e.g. `data remove`.
     pub fn clear(&self) {
         self.set_uuid(None);

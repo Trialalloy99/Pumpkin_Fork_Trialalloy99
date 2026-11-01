@@ -1,31 +1,45 @@
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::{Arc, Weak};
 
+use crossbeam::atomic::AtomicCell;
+use pumpkin_data::damage::DamageType;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::sound::Sound;
 use pumpkin_data::tracked_data;
+use pumpkin_nbt::compound::NbtCompound;
+use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 use rand::RngExt;
 
 use crate::entity::ai::behavior::hunting::{self, Hunt};
+use crate::entity::ai::brain::memory::codec::{block_pos_from_tag, block_pos_to_tag};
 use crate::entity::ai::control::move_control::Operation;
 use crate::entity::ai::control::{Control, MoveControlTrait};
+use crate::entity::ai::goal::track_target::TrackTargetGoal;
 use crate::entity::ai::goal::{Controls, Goal, to_goal_ticks};
 use crate::entity::ai::target_match::TargetMatch;
+use crate::entity::ai::target_predicate::TargetPredicate;
 use crate::entity::mob::raider;
+use crate::entity::projectile::owner::EntityReference;
 use crate::entity::{
     Entity, EntityBase,
     ai::goal::{look_at_entity::LookAtEntityGoal, swim::SwimGoal},
     mob::{Mob, MobEntity},
 };
+use crate::plugin::api::events::entity::entity_target::TargetReason;
 
 const VEX_HUNTS: &[Hunt] = &[Hunt::new(3, TargetMatch::Type(&EntityType::PLAYER), true)];
 
 const FLAG_IS_CHARGING: u8 = 1;
 const TICKS_PER_FLAP: i32 = 4;
+const LIMITED_LIFE_DAMAGE_INTERVAL: i32 = 20;
 
 pub struct VexEntity {
     pub mob_entity: MobEntity,
+    owner: EntityReference,
+    bound_origin: AtomicCell<Option<BlockPos>>,
+    has_limited_life: AtomicBool,
+    limited_life_ticks: AtomicI32,
     charging: AtomicBool,
 }
 
@@ -34,6 +48,10 @@ impl VexEntity {
         let mob_entity = MobEntity::new(entity);
         let vex = Self {
             mob_entity,
+            owner: EntityReference::none(),
+            bound_origin: AtomicCell::new(None),
+            has_limited_life: AtomicBool::new(false),
+            limited_life_ticks: AtomicI32::new(0),
             charging: AtomicBool::new(false),
         };
         let mob_arc = Arc::new(vex);
@@ -57,7 +75,10 @@ impl VexEntity {
                 4,
                 Box::new(VexChargeAttackGoal::new(Arc::downgrade(&mob_arc))),
             );
-            goal_selector.add_goal(8, Box::new(VexRandomMoveGoal));
+            goal_selector.add_goal(
+                8,
+                Box::new(VexRandomMoveGoal::new(Arc::downgrade(&mob_arc))),
+            );
             goal_selector.add_goal(
                 9,
                 Box::new(LookAtEntityGoal::new(
@@ -71,6 +92,10 @@ impl VexEntity {
 
             let target_selector = &mob_arc.mob_entity.target_selector;
             target_selector.add_goal(1, raider::revenge_goal());
+            target_selector.add_goal(
+                2,
+                Box::new(VexCopyOwnerTargetGoal::new(Arc::downgrade(&mob_arc))),
+            );
             hunting::apply(target_selector, &mob_arc.mob_entity, VEX_HUNTS);
         };
 
@@ -96,6 +121,30 @@ impl VexEntity {
         self.get_entity()
             .set_synced_data(tracked_data::vex::DATA_FLAGS_ID, flags);
     }
+
+    #[must_use]
+    pub fn get_owner(&self) -> Option<Arc<dyn EntityBase>> {
+        let world = self.get_entity().world.load();
+        self.owner.get(&world)
+    }
+
+    pub fn set_owner(&self, owner: &Entity) {
+        self.owner.set(Some(owner));
+    }
+
+    #[must_use]
+    pub fn get_bound_origin(&self) -> Option<BlockPos> {
+        self.bound_origin.load()
+    }
+
+    pub fn set_bound_origin(&self, bound_origin: Option<BlockPos>) {
+        self.bound_origin.store(bound_origin);
+    }
+
+    pub fn set_limited_life(&self, life_ticks: i32) {
+        self.has_limited_life.store(true, Ordering::Relaxed);
+        self.limited_life_ticks.store(life_ticks, Ordering::Relaxed);
+    }
 }
 
 impl Mob for VexEntity {
@@ -119,6 +168,13 @@ impl Mob for VexEntity {
         let entity = self.get_entity();
         entity.no_physics.store(false, Ordering::Relaxed);
         entity.set_has_no_gravity(true);
+        if self.has_limited_life.load(Ordering::Relaxed)
+            && self.limited_life_ticks.fetch_sub(1, Ordering::Relaxed) - 1 <= 0
+        {
+            self.limited_life_ticks
+                .store(LIMITED_LIFE_DAMAGE_INTERVAL, Ordering::Relaxed);
+            self.damage(self, 1.0, DamageType::STARVE);
+        }
     }
 
     fn mob_init_data_tracker(&self) {
@@ -127,6 +183,30 @@ impl Mob for VexEntity {
 
     fn get_ambient_sound(&self) -> Option<Sound> {
         Some(Sound::EntityVexAmbient)
+    }
+
+    fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
+        if let Some(bound_origin) = self.get_bound_origin() {
+            nbt.put("bound_pos", block_pos_to_tag(bound_origin));
+        }
+        if self.has_limited_life.load(Ordering::Relaxed) {
+            nbt.put_int(
+                "life_ticks",
+                self.limited_life_ticks.load(Ordering::Relaxed),
+            );
+        }
+        self.owner.write_nbt(nbt, "owner");
+    }
+
+    fn mob_read_nbt(&self, nbt: &NbtCompound) {
+        self.set_bound_origin(nbt.get("bound_pos").and_then(block_pos_from_tag));
+        if let Some(life_ticks) = nbt.get_int("life_ticks") {
+            self.set_limited_life(life_ticks);
+        } else {
+            self.has_limited_life.store(false, Ordering::Relaxed);
+        }
+        self.owner.clear();
+        self.owner.read_nbt(nbt, "owner");
     }
 }
 
@@ -289,7 +369,15 @@ impl Goal for VexChargeAttackGoal {
     }
 }
 
-struct VexRandomMoveGoal;
+struct VexRandomMoveGoal {
+    vex: Weak<VexEntity>,
+}
+
+impl VexRandomMoveGoal {
+    const fn new(vex: Weak<VexEntity>) -> Self {
+        Self { vex }
+    }
+}
 
 impl Goal for VexRandomMoveGoal {
     fn can_start(&mut self, mob: &dyn Mob) -> bool {
@@ -303,7 +391,11 @@ impl Goal for VexRandomMoveGoal {
 
     fn tick(&mut self, mob: &dyn Mob) {
         let entity = mob.get_entity();
-        let bound_origin = entity.block_pos.load();
+        let bound_origin = self
+            .vex
+            .upgrade()
+            .and_then(|vex| vex.get_bound_origin())
+            .unwrap_or_else(|| entity.block_pos.load());
         let world = entity.world.load();
         let mut random = mob.get_random();
         for _ in 0..3 {
@@ -330,5 +422,61 @@ impl Goal for VexRandomMoveGoal {
 
     fn controls(&self) -> Controls {
         Controls::MOVE
+    }
+}
+
+struct VexCopyOwnerTargetGoal {
+    vex: Weak<VexEntity>,
+    track_target_goal: TrackTargetGoal,
+    copy_owner_targeting: TargetPredicate,
+}
+
+impl VexCopyOwnerTargetGoal {
+    fn new(vex: Weak<VexEntity>) -> Self {
+        Self {
+            vex,
+            track_target_goal: TrackTargetGoal::with_default(false),
+            copy_owner_targeting: TargetPredicate::create_non_attackable()
+                .ignore_visibility()
+                .ignore_distance_scaling_factor(),
+        }
+    }
+
+    fn owner_target(&self) -> Option<Arc<dyn EntityBase>> {
+        self.vex
+            .upgrade()?
+            .get_owner()?
+            .get_mob()?
+            .get_mob_entity()
+            .get_target()
+    }
+}
+
+impl Goal for VexCopyOwnerTargetGoal {
+    fn can_start(&mut self, mob: &dyn Mob) -> bool {
+        let target = self.owner_target();
+        self.track_target_goal
+            .can_track(mob, target.as_deref(), &self.copy_owner_targeting)
+    }
+
+    fn should_continue(&mut self, mob: &dyn Mob) -> bool {
+        self.track_target_goal.should_continue(mob)
+    }
+
+    fn start(&mut self, mob: &dyn Mob) {
+        self.track_target_goal.start_targeting(
+            mob,
+            self.owner_target(),
+            TargetReason::OwnerAttackedTarget,
+        );
+        self.track_target_goal.start(mob);
+    }
+
+    fn stop(&mut self, mob: &dyn Mob) {
+        self.track_target_goal.stop(mob);
+    }
+
+    fn controls(&self) -> Controls {
+        self.track_target_goal.controls()
     }
 }
