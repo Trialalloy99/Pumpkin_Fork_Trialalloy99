@@ -637,6 +637,26 @@ impl Animal for CamelEntity {
 }
 
 impl Mob for CamelEntity {
+    // camel_husk: despawn rules (CamelHusk.removeWhenFarAway)
+    fn remove_when_far_away(&self, _distance_sq: f64) -> bool {
+        self.get_entity().entity_type == &EntityType::CAMEL_HUSK
+    }
+
+    // camel_husk: leashing forbidden when mob controlled (CamelHusk.canBeLeashed)
+    fn can_be_leashed(&self) -> bool {
+        if self.get_entity().entity_type == &EntityType::CAMEL_HUSK {
+            let passengers = self
+                .get_entity()
+                .passengers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if passengers.first().is_some_and(|p| p.get_mob().is_some()) {
+                return false;
+            }
+        }
+        true
+    }
+
     // camel husk: spear charge mount factor (CamelHusk.chargeSpeedModifier)
     fn charge_speed_modifier(&self) -> f32 {
         if self.get_entity().entity_type == &EntityType::CAMEL_HUSK {
