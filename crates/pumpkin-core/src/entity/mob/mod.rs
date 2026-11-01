@@ -1645,6 +1645,20 @@ pub trait Mob: EntityBase + Send + Sync {
     /// Start of vanilla `doHurtTarget`, run on every melee attempt even when it misses or is blocked.
     fn pre_attack(&self, _target: &dyn EntityBase) {}
 
+    // melee attack: species preparation (PolarBearMeleeAttackGoal)
+    fn melee_attack_cooldown_tick(
+        &self,
+        _target: &dyn EntityBase,
+        cooldown: i32,
+        _in_attack_range: bool,
+        _max_cooldown: i32,
+    ) -> i32 {
+        cooldown
+    }
+
+    // melee attack: species cleanup (PolarBearMeleeAttackGoal.stop)
+    fn melee_attack_stopped(&self) {}
+
     /// Vanilla `blockedByItem`: this mob's attack hit a raised shield of `defender`.
     fn blocked_by_item(&self, _defender: &dyn EntityBase) {}
 

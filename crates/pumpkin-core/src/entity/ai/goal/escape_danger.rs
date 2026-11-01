@@ -5,6 +5,7 @@ use pumpkin_util::math::vector3::Vector3;
 use std::sync::atomic::Ordering::Relaxed;
 
 use super::{Controls, Goal, GoalReach};
+use crate::entity::ai::goal::revenge::MobFilter;
 use crate::entity::ai::goal::try_find_water::TryFindWaterGoal;
 use crate::entity::ai::util::default_random_pos;
 use crate::entity::{ai::pathfinder::NavigatorGoal, mob::Mob};
@@ -19,6 +20,7 @@ pub struct EscapeDangerGoal {
     goal_control: Controls,
     target: Option<Vector3<f64>>,
     running: bool,
+    panic_gate: Option<MobFilter>,
 }
 
 impl EscapeDangerGoal {
@@ -29,7 +31,15 @@ impl EscapeDangerGoal {
             goal_control: Controls::MOVE,
             target: None,
             running: false,
+            panic_gate: None,
         })
+    }
+
+    // PanicGoal: species damage predicate
+    #[must_use]
+    pub fn gated_by(mut self: Box<Self>, gate: MobFilter) -> Box<Self> {
+        self.panic_gate = Some(gate);
+        self
     }
 
     #[must_use]
@@ -39,7 +49,10 @@ impl EscapeDangerGoal {
 
     /// Only `#minecraft:panic_causes` damage makes a mob flee, and only while the source is still
     /// remembered.
-    fn should_panic(mob: &dyn Mob) -> bool {
+    fn should_panic(&self, mob: &dyn Mob) -> bool {
+        if let Some(gate) = self.panic_gate {
+            return gate(mob);
+        }
         mob.get_mob_entity()
             .living_entity
             .get_last_damage_type()
@@ -94,7 +107,7 @@ impl Goal for EscapeDangerGoal {
         let living = &mob.get_mob_entity().living_entity;
         let entity = &living.entity;
         let may_flee = running
-            || Self::should_panic(mob)
+            || self.should_panic(mob)
             || entity.fire_ticks.load(Relaxed) > 0
             || entity.frozen_ticks.load(Relaxed) > 0
             || entity.touching_lava.load(Relaxed)
@@ -107,7 +120,7 @@ impl Goal for EscapeDangerGoal {
     }
 
     fn can_start(&mut self, mob: &dyn Mob) -> bool {
-        if !Self::should_panic(mob) {
+        if !self.should_panic(mob) {
             return false;
         }
 

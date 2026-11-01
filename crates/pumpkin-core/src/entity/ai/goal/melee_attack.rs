@@ -139,6 +139,7 @@ impl Goal for MeleeAttackGoal {
     }
 
     fn stop(&mut self, mob: &dyn Mob) {
+        mob.melee_attack_stopped();
         // Only clear target if they switched to creative/spectator
         let should_clear = mob
             .get_mob_entity()
@@ -203,6 +204,13 @@ impl Goal for MeleeAttackGoal {
         }
 
         self.cooldown = (self.cooldown - 1).max(0);
+
+        self.cooldown = mob.melee_attack_cooldown_tick(
+            target.as_ref(),
+            self.cooldown,
+            mob.get_mob_entity().is_in_attack_range(target.as_ref()),
+            self.get_max_cooldown(),
+        );
 
         if self.cooldown <= 0
             && mob.get_mob_entity().is_in_attack_range(target.as_ref())
