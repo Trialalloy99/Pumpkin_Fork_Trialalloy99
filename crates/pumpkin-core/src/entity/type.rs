@@ -31,7 +31,6 @@ use crate::entity::mob::breeze::BreezeEntity;
 use crate::entity::mob::cave_spider::CaveSpiderEntity;
 use crate::entity::mob::creaking::CreakingEntity;
 use crate::entity::mob::creeper::CreeperEntity;
-use crate::entity::mob::elder_guardian::ElderGuardianEntity;
 use crate::entity::mob::enderman::EndermanEntity;
 use crate::entity::mob::endermite::EndermiteEntity;
 use crate::entity::mob::evoker::EvokerEntity;
@@ -176,7 +175,7 @@ pub fn from_type(
         id if id == EntityType::EVOKER.id => EvokerEntity::new(entity),
         id if id == EntityType::RAVAGER.id => RavagerEntity::new(entity),
         id if id == EntityType::GUARDIAN.id => GuardianEntity::new(entity),
-        id if id == EntityType::ELDER_GUARDIAN.id => ElderGuardianEntity::new(entity),
+        id if id == EntityType::ELDER_GUARDIAN.id => GuardianEntity::new_elder(entity),
         id if id == EntityType::WARDEN.id => WardenEntity::new(entity),
         id if id == EntityType::HOGLIN.id => HoglinEntity::new(entity),
         id if id == EntityType::ZOGLIN.id => ZoglinEntity::new(entity),
