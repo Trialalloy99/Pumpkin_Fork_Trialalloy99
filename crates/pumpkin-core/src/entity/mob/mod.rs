@@ -1496,6 +1496,15 @@ pub trait Mob: EntityBase + Send + Sync {
         self.can_hold_item(stack)
     }
 
+    /// Species inventory pickup before generic equipment looting.
+    fn mob_pick_up_item(
+        &self,
+        _item: &crate::entity::item::ItemEntity,
+        _stack: &ItemStack,
+    ) -> bool {
+        false
+    }
+
     /// Vanilla `Mob.canHoldItem`.
     fn can_hold_item(&self, _stack: &ItemStack) -> bool {
         true

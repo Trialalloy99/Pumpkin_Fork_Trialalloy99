@@ -3,9 +3,12 @@ use std::sync::{
     atomic::{AtomicBool, Ordering},
 };
 
+use pumpkin_data::data_component_impl::EquipmentSlot;
 use pumpkin_data::entity::EntityType;
+use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
-use pumpkin_data::sound::Sound;
+use pumpkin_data::sound::{Sound, SoundCategory};
+use pumpkin_data::tag;
 use pumpkin_data::tracked_data;
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_nbt::tag::NbtTag;
@@ -13,16 +16,18 @@ use pumpkin_nbt::tag::NbtTag;
 use crate::entity::ai::behavior::fleeing::{self, Flee};
 use crate::entity::ai::behavior::hunting::{self, Hunt};
 use crate::entity::ai::target_match::TargetMatch;
+use crate::entity::custom_sound::CustomSound;
+use crate::entity::mob::spawn::SpawnGroupData;
 use crate::entity::{
     Entity, EntityBase,
     ai::goal::{
-        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal,
-        ranged_crossbow_attack::RangedCrossbowAttackGoal, swim::SwimGoal,
-        wander_around::WanderAroundGoal,
+        look_at_entity::LookAtEntityGoal, ranged_crossbow_attack::RangedCrossbowAttackGoal,
+        swim::SwimGoal, wander_around::WanderAroundGoal,
     },
     mob::{
         Mob, MobEntity,
         crossbow_attack_mob::CrossbowAttackMob,
+        equipment::{RegionalDifficulty, apply_pillager_crossbow_enchantments},
         patrol::{LongDistancePatrolGoal, PatrolData, PatrollingMonster},
         raider::{
             self, HoldGroundAttackGoal, ObtainRaidLeaderBannerGoal, PathfindToRaidGoal, Raider,
@@ -30,6 +35,7 @@ use crate::entity::{
         },
     },
 };
+use crate::world::World;
 
 const PILLAGER_FLEES: &[Flee] = &[raider::flee_creaking(1, 1.0, 1.2)];
 
@@ -75,12 +81,18 @@ impl PillagerEntity {
             goal_selector.add_goal(4, Box::new(RaiderMoveThroughVillageGoal::new(1.05)));
             goal_selector.add_goal(4, Box::new(PathfindToRaidGoal::default()));
             goal_selector.add_goal(5, Box::new(RaiderCelebrationGoal));
-            goal_selector.add_goal(5, Box::new(WanderAroundGoal::new(1.0)));
+            goal_selector.add_goal(8, Box::new(WanderAroundGoal::new(0.6)));
             goal_selector.add_goal(
-                6,
-                LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 8.0),
+                9,
+                Box::new(LookAtEntityGoal::new(
+                    mob_weak.clone(),
+                    &EntityType::PLAYER,
+                    15.0,
+                    1.0,
+                    false,
+                )),
             );
-            goal_selector.add_goal(7, Box::new(RandomLookAroundGoal::default()));
+            goal_selector.add_goal(10, LookAtEntityGoal::any_mob(mob_weak, 15.0, 0.02));
 
             let target_selector = &mob_arc.mob_entity.target_selector;
             target_selector.add_goal(1, raider::revenge_goal());
@@ -118,10 +130,12 @@ impl PillagerEntity {
     }
 
     pub fn drop_inventory(&self) {
-        let items = self
-            .inventory
-            .try_lock()
-            .map_or_else(|_| Vec::new(), |mut inv| std::mem::take(&mut *inv));
+        let items = std::mem::take(
+            &mut *self
+                .inventory
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
         let entity = &self.mob_entity.living_entity.entity;
         let world = entity.world.load();
         let pos = entity.pos.load();
@@ -154,6 +168,102 @@ impl Mob for PillagerEntity {
         Some(self)
     }
 
+    fn as_custom_sound(&self) -> Option<&dyn CustomSound> {
+        Some(self)
+    }
+
+    fn get_ambient_sound(&self) -> Option<Sound> {
+        Some(Sound::EntityPillagerAmbient)
+    }
+
+    // pillager: crossbow and spawn enchantments (Pillager.finalizeSpawn)
+    fn finalize_spawn(
+        &self,
+        world: &Arc<World>,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        let difficulty = RegionalDifficulty::at(world, self.get_entity().pos.load());
+        self.populate_default_equipment_slots(world, &difficulty);
+        self.populate_default_equipment_enchantments(&difficulty);
+        self.finalize_spawn_super(group_data)
+    }
+
+    fn populate_default_equipment_slots(
+        &self,
+        _world: &Arc<World>,
+        _difficulty: &RegionalDifficulty,
+    ) {
+        self.mob_entity.set_item_slot(
+            &EquipmentSlot::MAIN_HAND,
+            ItemStack::new(1, &Item::CROSSBOW),
+        );
+    }
+
+    fn enchant_spawned_weapon(&self, difficulty: &RegionalDifficulty) {
+        self.enchant_spawned_equipment(
+            &EquipmentSlot::MAIN_HAND,
+            MobEntity::MAX_ENCHANTED_WEAPON_CHANCE,
+            difficulty,
+        );
+        if rand::random_range(0..300) == 0 {
+            let living = &self.mob_entity.living_entity;
+            let mut equipment = living
+                .entity_equipment
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let mut weapon = equipment.get(&EquipmentSlot::MAIN_HAND);
+            if weapon.item.id == Item::CROSSBOW.id {
+                apply_pillager_crossbow_enchantments(&mut weapon, None);
+                equipment.put(&EquipmentSlot::MAIN_HAND, weapon);
+            }
+        }
+    }
+
+    fn preferred_weapon_type(&self) -> Option<&'static pumpkin_data::tag::Tag> {
+        Some(&tag::Item::MINECRAFT_PILLAGER_PREFERRED_WEAPONS)
+    }
+
+    fn mob_wants_to_pick_up(&self, stack: &ItemStack) -> bool {
+        (self.has_active_raid() && stack.item.id == Item::WHITE_BANNER.id)
+            || self.can_hold_item(stack)
+    }
+
+    // pillager: raid banners go into the five-slot inventory (Pillager.pickUpItem)
+    fn mob_pick_up_item(&self, item: &crate::entity::item::ItemEntity, stack: &ItemStack) -> bool {
+        if !self.has_active_raid() || stack.item.id != Item::WHITE_BANNER.id {
+            return false;
+        }
+        let Some(remainder) = self.add_to_inventory(stack.clone()) else {
+            let _ = self
+                .mob_entity
+                .living_entity
+                .pickup(item.get_entity(), u32::from(stack.item_count));
+            item.get_entity().remove();
+            return true;
+        };
+        if remainder.item_count == stack.item_count {
+            return false;
+        }
+        let picked_up = stack.item_count - remainder.item_count;
+        if !self
+            .mob_entity
+            .living_entity
+            .pickup(item.get_entity(), u32::from(picked_up))
+        {
+            return false;
+        }
+        *item
+            .get_item_stack()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = remainder;
+        item.init_data_tracker();
+        true
+    }
+
+    fn is_max_group_size_reached(&self, group_size: i32) -> bool {
+        group_size >= 1
+    }
+
     fn mob_init_data_tracker(&self) {
         self.set_charging_crossbow(self.is_charging_crossbow.load(Ordering::Relaxed));
     }
@@ -183,6 +293,7 @@ impl Mob for PillagerEntity {
 
     fn mob_read_nbt(&self, nbt: &NbtCompound) {
         self.read_raider_nbt(nbt);
+        self.mob_entity.set_can_pick_up_loot(true);
 
         if let Some(inv_list) = nbt.get_list("Inventory") {
             let mut inv = self
@@ -200,14 +311,22 @@ impl Mob for PillagerEntity {
         }
     }
 
-    fn on_damage(
-        &self,
-        _damage_type: pumpkin_data::damage::DamageType,
-        _source: Option<&dyn EntityBase>,
-    ) {
-        if self.mob_entity.living_entity.dead.load(Ordering::Relaxed) {
-            self.drop_inventory();
-        }
+    fn drop_inventory(&self) {
+        PillagerEntity::drop_inventory(self);
+    }
+}
+
+impl CustomSound for PillagerEntity {
+    fn death_sound(&self) -> Option<Sound> {
+        Some(Sound::EntityPillagerDeath)
+    }
+
+    fn hurt_sound(&self) -> Option<Sound> {
+        Some(Sound::EntityPillagerHurt)
+    }
+
+    fn sound_category(&self) -> SoundCategory {
+        SoundCategory::Hostile
     }
 }
 
@@ -224,6 +343,48 @@ impl Raider for PillagerEntity {
 
     fn get_celebrate_sound(&self) -> Sound {
         Sound::EntityPillagerCelebrate
+    }
+
+    // pillager: raid wave crossbow providers (Pillager.applyRaidBuffs)
+    fn apply_raid_buffs(&self, wave: i32, _is_captain: bool) {
+        let Some(raid_id) = self.raider_data.raid_id.load() else {
+            return;
+        };
+        let world = self.get_entity().world.load();
+        let raids = world
+            .raids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let Some(raid) = raids.get(raid_id) else {
+            return;
+        };
+        let enchant_odds = match raid.raid_omen_level {
+            2 => 0.1,
+            3 => 0.25,
+            4 => 0.5,
+            5 => 0.75,
+            _ => 0.0,
+        };
+        if rand::random::<f32>() > enchant_odds {
+            return;
+        }
+        let provider_wave = if wave
+            > crate::world::raid::Raid::get_num_groups(pumpkin_util::Difficulty::Normal)
+        {
+            Some(5)
+        } else if wave > crate::world::raid::Raid::get_num_groups(pumpkin_util::Difficulty::Easy) {
+            Some(3)
+        } else {
+            None
+        };
+        let Some(provider_wave) = provider_wave else {
+            return;
+        };
+        drop(raids);
+        let mut crossbow = ItemStack::new(1, &Item::CROSSBOW);
+        apply_pillager_crossbow_enchantments(&mut crossbow, Some(provider_wave));
+        self.mob_entity
+            .set_item_slot(&EquipmentSlot::MAIN_HAND, crossbow);
     }
 }
 

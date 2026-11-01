@@ -44,6 +44,9 @@ pub fn tick_looting(mob: &dyn Mob) {
         if stack.is_empty() || !mob.mob_wants_to_pick_up(&stack) {
             continue;
         }
+        if mob.mob_pick_up_item(item, &stack) {
+            continue;
+        }
         let equipped = equip_item_if_possible(mob, stack);
         if equipped.is_empty() || !living.pickup(item.get_entity(), u32::from(equipped.item_count))
         {
