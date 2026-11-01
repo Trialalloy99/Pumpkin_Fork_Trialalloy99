@@ -18,6 +18,7 @@ use rand::RngExt;
 
 use crate::entity::ai::pathfinder::node::PathType;
 use crate::entity::custom_sound::CustomSound;
+use crate::world::loot::{LootContextParameters, generate_loot_from_handle};
 use crate::entity::{
     Entity, EntityBase,
     ageable::AgeableMob,
@@ -104,20 +105,39 @@ impl ChickenEntity {
         mob_arc
     }
 
+    // chicken: variant egg from gift table (Chicken.aiStep, gameplay/chicken_lay)
     fn lay_egg(&self) -> bool {
         let entity = self.get_entity();
-        let mut drop_event =
-            EntityDropItemEvent::new(entity.entity_id, "minecraft:egg".to_string(), 1);
-        if let Some(server) = entity.world.load().server.upgrade() {
-            server
-                .plugin_manager
-                .fire_blocking(&server, &mut drop_event);
-        }
-        if drop_event.cancelled {
+        let world = entity.world.load();
+        let Some(table) = world.get_loot_table("minecraft:gameplay/chicken_lay") else {
             return false;
+        };
+        let params = LootContextParameters {
+            world: Some(&world),
+            position: Some(entity.pos.load()),
+            this_entity: Some(self),
+            ..Default::default()
+        };
+        let drops = generate_loot_from_handle(&table, self.get_random().random(), &params);
+        let mut dropped = false;
+        for stack in drops {
+            let mut drop_event = EntityDropItemEvent::new(
+                entity.entity_id,
+                format!("minecraft:{}", stack.item.registry_key),
+                stack.item_count,
+            );
+            if let Some(server) = world.server.upgrade() {
+                server
+                    .plugin_manager
+                    .fire_blocking(&server, &mut drop_event);
+            }
+            if drop_event.cancelled {
+                continue;
+            }
+            entity.spawn_at_location(stack);
+            dropped = true;
         }
-        entity.spawn_at_location(ItemStack::new(1, &Item::EGG));
-        true
+        dropped
     }
 
     pub fn is_chicken_jockey(&self) -> bool {
@@ -376,6 +396,13 @@ impl Mob for ChickenEntity {
             pumpkin_data::tracked_data::chicken::DATA_SOUND_VARIANT_ID,
             VarInt(self.sound_variant.load(Ordering::Relaxed) as i32),
         );
+    }
+
+    fn get_ambient_sound(&self) -> Option<Sound> {
+        let sound_variant =
+            ChickenSoundVariant::from_id(self.sound_variant.load(Ordering::Relaxed))
+                .unwrap_or_default();
+        Some(sound_variant.ambient_sound(self.is_baby()))
     }
 
     fn mob_ai_step(&self) {
