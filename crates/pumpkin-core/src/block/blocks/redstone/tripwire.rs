@@ -137,16 +137,14 @@ impl BlockBehaviour for TripwireBlock {
 
         let aabb = BoundingBox::from_block(args.position);
         // TODO entity.canAvoidTraps()
-        let has_entity = args
+        let has_entity = args.world.get_entities_at_box(&aabb).iter().any(|e| {
+            !e.get_entity().is_spectator()
+                && !crate::entity::mob::ignores_block_triggers(e.as_ref())
+        }) || args
             .world
-            .get_entities_at_box(&aabb)
+            .get_players_at_box(&aabb)
             .iter()
-            .any(|e| !e.get_entity().is_spectator())
-            || args
-                .world
-                .get_players_at_box(&aabb)
-                .iter()
-                .any(|p| !p.get_entity().is_spectator());
+            .any(|p| !p.get_entity().is_spectator());
         if has_entity {
             args.world
                 .schedule_block_tick(args.block, *args.position, 10, TickPriority::Normal);

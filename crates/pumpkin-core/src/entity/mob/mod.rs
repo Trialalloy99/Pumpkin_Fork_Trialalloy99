@@ -1298,6 +1298,16 @@ pub trait Mob: EntityBase + Send + Sync {
         75.0
     }
 
+    // bat: Bat.isIgnoringBlockTriggers (pressure plates, tripwires)
+    fn ignores_block_triggers(&self) -> bool {
+        false
+    }
+
+    // bat: Bat.isPushable false
+    fn mob_is_pushable(&self) -> bool {
+        true
+    }
+
     fn ticks_navigation(&self) -> bool {
         true
     }
@@ -2321,7 +2331,7 @@ impl<T: Mob + Send + 'static> EntityBase for T {
     }
 
     fn is_pushable(&self) -> bool {
-        self.get_mob_entity().living_entity.is_pushable()
+        self.mob_is_pushable() && self.get_mob_entity().living_entity.is_pushable()
     }
 
     fn on_lightning_strike(
@@ -3092,4 +3102,10 @@ mod lifecycle_tests {
         assert!(steers_itself);
         Ok(())
     }
+}
+
+// bat: Entity.isIgnoringBlockTriggers
+#[must_use]
+pub fn ignores_block_triggers(entity: &dyn EntityBase) -> bool {
+    entity.get_mob().is_some_and(Mob::ignores_block_triggers)
 }

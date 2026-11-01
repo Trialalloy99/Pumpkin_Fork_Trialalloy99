@@ -6,6 +6,7 @@ use pumpkin_data::damage::DamageType;
 use pumpkin_data::sound::{Sound, SoundCategory};
 use pumpkin_data::tag::{self, Taggable};
 use pumpkin_data::tracked_data;
+use pumpkin_data::world::WorldEvent;
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
@@ -110,22 +111,26 @@ impl BatEntity {
                 .is_some()
             {
                 self.set_roosting(false);
-                world.play_sound_fine(
-                    Sound::EntityBatTakeoff,
-                    SoundCategory::Ambient,
-                    pos,
-                    0.1,
-                    0.95,
+                world.sync_world_event(
+                    WorldEvent::SoundBatLiftoff,
+                    BlockPos::new(
+                        pos.x.floor() as i32,
+                        pos.y.floor() as i32,
+                        pos.z.floor() as i32,
+                    ),
+                    0,
                 );
             }
         } else {
             self.set_roosting(false);
-            world.play_sound_fine(
-                Sound::EntityBatTakeoff,
-                SoundCategory::Ambient,
-                pos,
-                0.1,
-                0.95,
+            world.sync_world_event(
+                WorldEvent::SoundBatLiftoff,
+                BlockPos::new(
+                    pos.x.floor() as i32,
+                    pos.y.floor() as i32,
+                    pos.z.floor() as i32,
+                ),
+                0,
             );
         }
     }
@@ -149,16 +154,20 @@ impl BatEntity {
             let should_pick = hanging_pos.is_none()
                 || rng.random_range(0u32..30) == 0
                 || hanging_pos.is_some_and(|hp| {
+                    // bat: BlockPos.closerToCenterThan(position, 2.0)
                     let dx = f64::from(hp.0.x) + 0.5 - pos.x;
-                    let dy = f64::from(hp.0.y) + 0.1 - pos.y;
+                    let dy = f64::from(hp.0.y) + 0.5 - pos.y;
                     let dz = f64::from(hp.0.z) + 0.5 - pos.z;
                     dx * dx + dy * dy + dz * dz < 4.0
                 });
             let new_target = should_pick.then(|| {
+                // bat: BlockPos.containing floors
                 BlockPos::new(
-                    pos.x as i32 + rng.random_range(0i32..7) - rng.random_range(0i32..7),
-                    (pos.y + f64::from(rng.random_range(0i32..6)) - 2.0) as i32,
-                    pos.z as i32 + rng.random_range(0i32..7) - rng.random_range(0i32..7),
+                    (pos.x + f64::from(rng.random_range(0i32..7) - rng.random_range(0i32..7)))
+                        .floor() as i32,
+                    (pos.y + f64::from(rng.random_range(0i32..6)) - 2.0).floor() as i32,
+                    (pos.z + f64::from(rng.random_range(0i32..7) - rng.random_range(0i32..7)))
+                        .floor() as i32,
                 )
             });
             let try_roost = rng.random_range(0u32..100) == 0;
@@ -190,6 +199,13 @@ impl BatEntity {
                 velo.z + (f.signum() * 0.5 - velo.z) * 0.1,
             );
             entity.velocity.store(new_velo);
+
+            // bat: zza = 0.5F
+            let input = self.mob_entity.living_entity.movement_input.load();
+            self.mob_entity
+                .living_entity
+                .movement_input
+                .store(Vector3::new(input.x, input.y, 0.5));
 
             let yaw = (new_velo.z.atan2(new_velo.x) as f32).to_degrees() - 90.0;
             let yaw_diff = pumpkin_util::math::wrap_degrees(yaw - entity.yaw.load());
@@ -269,6 +285,14 @@ impl Mob for BatEntity {
         }
     }
 
+    fn mob_is_pushable(&self) -> bool {
+        false
+    }
+
+    fn ignores_block_triggers(&self) -> bool {
+        true
+    }
+
     fn get_mob_gravity(&self) -> f64 {
         0.0
     }
@@ -280,15 +304,6 @@ impl Mob for BatEntity {
     fn on_damage(&self, _damage_type: DamageType, _source: Option<&dyn EntityBase>) {
         if self.is_roosting() {
             self.set_roosting(false);
-            let entity = &self.mob_entity.living_entity.entity;
-            let pos = entity.pos.load();
-            entity.world.load().play_sound_fine(
-                Sound::EntityBatTakeoff,
-                SoundCategory::Ambient,
-                &pos,
-                0.1,
-                0.95,
-            );
         }
     }
 }

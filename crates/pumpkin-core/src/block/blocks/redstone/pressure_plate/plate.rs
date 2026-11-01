@@ -93,7 +93,9 @@ impl PressurePlate for PressurePlateBlock {
         let require_living = block == &Block::STONE_PRESSURE_PLATE
             || block == &Block::POLISHED_BLACKSTONE_PRESSURE_PLATE;
         let has_entity = world.get_entities_at_box(&aabb).iter().any(|e| {
-            !e.get_entity().is_spectator() && (!require_living || e.get_living_entity().is_some())
+            !e.get_entity().is_spectator()
+                && !crate::entity::mob::ignores_block_triggers(e.as_ref())
+                && (!require_living || e.get_living_entity().is_some())
         }) || world
             .get_players_at_box(&aabb)
             .iter()
