@@ -2264,7 +2264,11 @@ impl LivingEntity {
         let safe_fall_distance = self.get_attribute_value(&Attributes::SAFE_FALL_DISTANCE) as f32;
         let unsafe_fall_distance = fall_distance + 1.0E-6 - safe_fall_distance;
 
-        let damage = (unsafe_fall_distance * damage_per_distance).floor();
+        // frog: Frog.calculateFallDamage subtracts 5
+        let reduction = caller
+            .get_mob()
+            .map_or(0, |mob| mob.fall_damage_reduction()) as f32;
+        let damage = (unsafe_fall_distance * damage_per_distance).floor() - reduction;
         if damage > 0.0 {
             caller.play_entity_sound(Self::get_fall_damage_sound(caller, damage), 1.0, 1.0);
             self.play_block_fall_sound(caller);

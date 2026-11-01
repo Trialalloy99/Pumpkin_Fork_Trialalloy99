@@ -1301,6 +1301,11 @@ pub trait Mob: EntityBase + Send + Sync {
     // parrot: LivingEntity.setRecordPlayingNearby (jukebox song start and stop)
     fn set_record_playing_nearby(&self, _jukebox: BlockPos, _playing: bool) {}
 
+    // frog: Frog.calculateFallDamage reduction
+    fn fall_damage_reduction(&self) -> i32 {
+        0
+    }
+
     // turtle: replaces BreedGoal.breed, true when handled (TurtleBreedGoal.breed)
     fn custom_breed(&self, _mate: &dyn EntityBase) -> bool {
         false
