@@ -12,6 +12,7 @@ use crate::entity::ai::goal::move_towards_restriction::MoveTowardsRestrictionGoa
 use crate::entity::ai::goal::revenge::RevengeGoal;
 use crate::entity::ai::pathfinder::node::PathType;
 use crate::entity::ai::target_match::TargetMatch;
+use crate::entity::ai::util::RandomExt;
 use crate::entity::custom_sound::CustomSound;
 use crate::entity::{
     Entity, EntityBase,
@@ -83,7 +84,7 @@ impl BlazeEntity {
             navigator.set_pathfinding_malus(PathType::Lava, 8.0);
             navigator.set_pathfinding_malus(PathType::DangerFire, 0.0);
             navigator.set_pathfinding_malus(PathType::DamageFire, 0.0);
-        }
+        };
 
         mob_arc
     }
@@ -143,7 +144,6 @@ impl Mob for BlazeEntity {
         {
             self.next_height_offset_change_tick
                 .store(100, Ordering::Relaxed);
-            use crate::entity::ai::util::RandomExt;
             self.allowed_height_offset
                 .store(rand::rng().triangle(0.5, 6.891) as f32);
         }

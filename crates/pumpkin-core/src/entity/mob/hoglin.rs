@@ -100,16 +100,17 @@ impl Goal for HoglinRetreatGoal {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner)
                 .clone();
-            if let Some(target) = target {
-                (Some(target.get_entity().pos.load()), 1.3, 16, 7)
-            } else {
-                (
-                    hoglin.nearest_repellent.load().map(|pos| pos.to_f64()),
-                    1.0,
-                    8,
-                    4,
-                )
-            }
+            target.map_or_else(
+                || {
+                    (
+                        hoglin.nearest_repellent.load().map(|pos| pos.to_f64()),
+                        1.0,
+                        8,
+                        4,
+                    )
+                },
+                |target| (Some(target.get_entity().pos.load()), 1.3, 16, 7),
+            )
         };
         let Some(away_from) = away_from else {
             return;
@@ -294,7 +295,7 @@ impl HoglinEntity {
             .collect()
     }
 
-    fn broadcast_attack_target(&self, target: Arc<dyn EntityBase>) {
+    fn broadcast_attack_target(&self, target: &Arc<dyn EntityBase>) {
         for nearby in self.visible_adult_hoglins() {
             let Some(hoglin) = nearby.get_mob() else {
                 continue;
@@ -322,7 +323,7 @@ impl HoglinEntity {
         }
     }
 
-    fn broadcast_retreat(&self, target: Arc<dyn EntityBase>) {
+    fn broadcast_retreat(&self, target: &Arc<dyn EntityBase>) {
         for nearby in self.visible_adult_hoglins() {
             if let Some(hoglin) = nearby.get_mob() {
                 hoglin.begin_avoiding_entity(target.clone());
@@ -696,7 +697,7 @@ impl Mob for HoglinEntity {
                         target.get_entity().entity_uuid,
                     ) {
                         self.begin_avoidance(target.clone());
-                        self.broadcast_retreat(target);
+                        self.broadcast_retreat(&target);
                     }
                 } else {
                     let world = self.get_entity().world.load();
@@ -704,7 +705,7 @@ impl Mob for HoglinEntity {
                         &world,
                         target.get_entity().entity_uuid,
                     ) {
-                        self.broadcast_attack_target(target);
+                        self.broadcast_attack_target(&target);
                     }
                 }
             } else {
@@ -713,7 +714,7 @@ impl Mob for HoglinEntity {
                     &world,
                     target.get_entity().entity_uuid,
                 ) {
-                    self.broadcast_attack_target(target);
+                    self.broadcast_attack_target(&target);
                 }
             }
             throw_target(&self.mob_entity.living_entity, target);
@@ -772,7 +773,7 @@ impl Mob for HoglinEntity {
                 200,
                 crate::plugin::api::events::entity::entity_target::TargetReason::TargetAttackedEntity,
             );
-            self.broadcast_attack_target(attacker);
+            self.broadcast_attack_target(&attacker);
         }
         true
     }

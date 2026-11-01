@@ -312,7 +312,7 @@ impl Mob for PillagerEntity {
     }
 
     fn drop_inventory(&self) {
-        PillagerEntity::drop_inventory(self);
+        Self::drop_inventory(self);
     }
 }
 

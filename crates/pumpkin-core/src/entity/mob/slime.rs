@@ -543,6 +543,7 @@ pub struct SlimeFloatGoal {
 }
 
 impl SlimeFloatGoal {
+    #[must_use]
     pub const fn new(slime: Weak<SlimeEntity>) -> Self {
         Self { slime }
     }
@@ -587,6 +588,7 @@ pub struct SlimeAttackGoal {
 }
 
 impl SlimeAttackGoal {
+    #[must_use]
     pub const fn new(slime: Weak<SlimeEntity>) -> Self {
         Self {
             slime,
@@ -646,6 +648,7 @@ pub struct SlimeRandomDirectionGoal {
 }
 
 impl SlimeRandomDirectionGoal {
+    #[must_use]
     pub const fn new(slime: Weak<SlimeEntity>) -> Self {
         Self {
             slime,

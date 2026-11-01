@@ -360,7 +360,7 @@ impl Goal for SweepGoal {
         *p.move_target
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) =
-            Vector3::new(pos.x, pos.y + f64::from(te.get_eye_height()) * 0.5, pos.z);
+            Vector3::new(pos.x, pos.y + te.get_eye_height() * 0.5, pos.z);
         if p.get_entity()
             .bounding_box
             .load()
