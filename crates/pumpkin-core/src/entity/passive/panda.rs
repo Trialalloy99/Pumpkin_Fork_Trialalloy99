@@ -1,7 +1,11 @@
 use std::sync::{
-    Arc, Weak,
-    atomic::{AtomicI32, AtomicU8, Ordering::Relaxed},
+    Arc, Mutex, Weak,
+    atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering::Relaxed},
 };
+
+use crossbeam::atomic::AtomicCell;
+use pumpkin_data::attributes::Attributes;
+use pumpkin_data::data_component_impl::EquipmentSlot;
 
 use pumpkin_data::{
     Block, BlockState,
@@ -21,11 +25,23 @@ use crate::entity::{
     Entity, EntityBase,
     ageable::{AgeableData, AgeableMob},
     ai::goal::{
-        Controls, Goal, breed::BreedGoal, escape_danger::EscapeDangerGoal,
-        follow_parent::FollowParentGoal, look_around::RandomLookAroundGoal,
-        look_at_entity::LookAtEntityGoal, melee_attack::MeleeAttackGoal, revenge::RevengeGoal,
-        swim::SwimGoal, tempt::TemptGoal, wander_around::WanderAroundGoal,
+        Controls, Goal,
+        avoid_entity::{AvoidEntityGoal, not_spectator},
+        breed::BreedGoal,
+        escape_danger::EscapeDangerGoal,
+        follow_parent::FollowParentGoal,
+        gated::GatedGoal,
+        look_around::RandomLookAroundGoal,
+        look_at_entity::LookAtEntityGoal,
+        melee_attack::MeleeAttackGoal,
+        revenge::RevengeGoal,
+        swim::SwimGoal,
+        tempt::TemptGoal,
+        to_goal_ticks,
+        wander_around::WanderAroundGoal,
     },
+    ai::pathfinder::NavigatorGoal,
+    ai::target_match::TargetMatch,
     custom_sound::CustomSound,
     mob::{Mob, MobEntity},
     passive::animal::Animal,
@@ -145,11 +161,23 @@ pub struct PandaEntity {
     pub sneeze_counter: AtomicI32,
     pub unhappy_counter: AtomicI32,
     pub roll_counter: AtomicI32,
+    // panda: Panda.gotBamboo / didBite / rollDelta
+    pub got_bamboo: AtomicBool,
+    pub did_bite: AtomicBool,
+    roll_delta: AtomicCell<Vector3<f64>>,
+    // panda: PandaLookAtPlayerGoal.setTarget from the breed goal
+    look_player: Mutex<Option<Weak<Player>>>,
 }
 
 impl PandaEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
-        let mob_entity = MobEntity::new(entity);
+        let mut mob_entity = MobEntity::new(entity);
+        *mob_entity
+            .move_control
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Box::new(PandaMoveControl::default());
+        mob_entity.set_can_pick_up_loot(true);
         let gene = PandaGene::random_gene();
         let hidden = PandaGene::random_gene();
         let panda = Self {
@@ -162,6 +190,10 @@ impl PandaEntity {
             sneeze_counter: AtomicI32::new(0),
             unhappy_counter: AtomicI32::new(0),
             roll_counter: AtomicI32::new(0),
+            got_bamboo: AtomicBool::new(false),
+            did_bite: AtomicBool::new(false),
+            roll_delta: AtomicCell::new(Vector3::new(0.0, 0.0, 0.0)),
+            look_player: Mutex::new(None),
         };
         let mob_arc = Arc::new(panda);
         let mob_weak: Weak<dyn Mob> = {
@@ -173,31 +205,64 @@ impl PandaEntity {
             let goal_selector = &mob_arc.mob_entity.goals_selector;
 
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
-            goal_selector.add_goal(2, EscapeDangerGoal::new(2.0));
-            // panda: breeding requires nearby bamboo blocks (Panda.PandaBreedGoal)
+            // panda: Panda.PandaPanicGoal, stops while sitting
+            goal_selector.add_goal(2, EscapeDangerGoal::new(2.0).gated_by(not_sitting));
             goal_selector.add_goal(2, Box::new(PandaBreedGoal::new(1.0)));
-            // panda: aggressive panda attack goal (Panda.PandaAttackGoal)
-            goal_selector.add_goal(3, Box::new(MeleeAttackGoal::new(1.2, true)));
+            // panda: Panda.PandaAttackGoal
+            goal_selector.add_goal(
+                3,
+                Box::new(MeleeAttackGoal::new(1.2, true).gated_by(can_perform_action)),
+            );
             goal_selector.add_goal(4, Box::new(TemptGoal::new(1.0, TEMPT_ITEMS, false)));
-            goal_selector.add_goal(5, Box::new(FollowParentGoal::new(1.25)));
-            // panda: sit, lie on back, sneeze, roll goals (Panda)
-            goal_selector.add_goal(7, Box::new(PandaSitGoal));
-            goal_selector.add_goal(8, Box::new(PandaLieOnBackGoal));
+            // panda: Panda.PandaAvoidGoal, worried pandas avoid players and monsters
+            goal_selector.add_goal(
+                6,
+                Box::new(
+                    AvoidEntityGoal::new(&EntityType::PLAYER, 8.0, 2.0, 2.0)
+                        .when(worried_and_can_act)
+                        .matching(not_spectator),
+                ),
+            );
+            goal_selector.add_goal(
+                6,
+                Box::new(
+                    AvoidEntityGoal::new(TargetMatch::Monster, 4.0, 2.0, 2.0)
+                        .when(worried_and_can_act)
+                        .matching(not_spectator),
+                ),
+            );
+            goal_selector.add_goal(7, Box::new(PandaSitGoal::default()));
+            goal_selector.add_goal(8, Box::new(PandaLieOnBackGoal::default()));
             goal_selector.add_goal(8, Box::new(PandaSneezeGoal));
+            // panda: Panda.PandaLookAtPlayerGoal
             goal_selector.add_goal(
                 9,
-                LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 6.0),
+                Box::new(GatedGoal::new(
+                    PandaLookAtPlayerGoal {
+                        inner: LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 6.0),
+                    },
+                    can_perform_action,
+                )),
             );
             goal_selector.add_goal(10, Box::new(RandomLookAroundGoal::default()));
-            goal_selector.add_goal(11, Box::new(WanderAroundGoal::new(1.0)));
             goal_selector.add_goal(12, Box::new(PandaRollGoal));
+            goal_selector.add_goal(13, Box::new(FollowParentGoal::new(1.25)));
+            goal_selector.add_goal(14, Box::new(WanderAroundGoal::new(1.0)));
         };
 
         {
             let target_selector = &mob_arc.mob_entity.target_selector;
-            // panda: aggressive retaliation when hurt (Panda.PandaHurtByTargetGoal)
-            target_selector.add_goal(1, Box::new(RevengeGoal::new(true).alerting_others()));
+            // panda: Panda.PandaHurtByTargetGoal, alerts aggressive pandas, drops after bamboo or a bite
+            target_selector.add_goal(
+                1,
+                Box::new(
+                    RevengeGoal::new(true)
+                        .alerting_only(is_aggressive_panda)
+                        .continuing_while(still_angry),
+                ),
+            );
         };
+        mob_arc.set_attributes();
 
         mob_arc
     }
@@ -330,6 +395,158 @@ impl PandaEntity {
         );
     }
 
+    #[must_use]
+    pub fn is_baby(&self) -> bool {
+        self.get_entity().age.load(Relaxed) < 0
+    }
+
+    // panda: Panda.isScared, worried pandas fear thunder
+    #[must_use]
+    pub fn is_scared(&self) -> bool {
+        self.is_worried() && self.get_entity().world.load().is_thundering()
+    }
+
+    #[must_use]
+    pub fn is_eating(&self) -> bool {
+        self.eat_counter.load(Relaxed) > 0
+    }
+
+    pub fn eat(&self, value: bool) {
+        self.set_eat_counter(i32::from(value));
+    }
+
+    fn set_eat_counter(&self, value: i32) {
+        self.eat_counter.store(value, Relaxed);
+        self.get_entity().set_synced_data(
+            pumpkin_data::tracked_data::panda::EAT_COUNTER,
+            VarInt(value),
+        );
+    }
+
+    // panda: Panda.canPerformAction
+    #[must_use]
+    pub fn can_perform_action(&self) -> bool {
+        !self.is_on_back()
+            && !self.is_scared()
+            && !self.is_eating()
+            && !self.is_rolling()
+            && !self.is_sitting()
+    }
+
+    #[must_use]
+    pub fn held_item(&self) -> ItemStack {
+        self.mob_entity
+            .living_entity
+            .entity_equipment
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(&EquipmentSlot::MAIN_HAND)
+    }
+
+    pub fn set_held_item(&self, stack: ItemStack) {
+        self.mob_entity
+            .set_item_slot(&EquipmentSlot::MAIN_HAND, stack);
+        self.mob_entity
+            .set_drop_chance(&EquipmentSlot::MAIN_HAND, 2.0);
+    }
+
+    fn drop_stack(&self, stack: ItemStack) {
+        let entity = self.get_entity();
+        let world = entity.world.load();
+        world.spawn_entity(Arc::new(crate::entity::item::ItemEntity::new(
+            Entity::new(world.clone(), entity.pos.load(), &EntityType::ITEM),
+            stack,
+        )));
+    }
+
+    // panda: Panda.tryToSit
+    fn try_to_sit(&self) {
+        if !self.get_entity().touching_water.load(Relaxed) {
+            self.mob_entity.steered().navigator().stop();
+            self.set_sitting(true);
+        }
+    }
+
+    // panda: Panda.setAttributes, weak pandas have 10 health, lazy ones walk slower
+    pub fn set_attributes(&self) {
+        let living = &self.mob_entity.living_entity;
+        if self.is_weak() {
+            living.set_attribute_base(&Attributes::MAX_HEALTH, 10.0);
+        }
+        if self.is_lazy() {
+            living.set_attribute_base(&Attributes::MOVEMENT_SPEED, 0.07);
+        }
+    }
+
+    // panda: Panda.handleEating, sitting pandas eat what they hold
+    fn handle_eating(&self) {
+        let held = self.held_item();
+        let mut rng = self.get_random();
+        if !self.is_eating() && self.is_sitting() && !self.is_scared() && !held.is_empty() {
+            if rng.random_range(0..80) == 1 {
+                self.eat(true);
+            }
+        } else if held.is_empty() || !self.is_sitting() {
+            self.eat(false);
+        }
+        if !self.is_eating() {
+            return;
+        }
+        let counter = self.eat_counter.load(Relaxed);
+        if counter % 5 == 0 {
+            let volume = 0.5 + 0.5 * rng.random_range(0..2) as f32;
+            let pitch = (rng.random::<f32>() - rng.random::<f32>()) * 0.2 + 1.0;
+            self.play_entity_sound(Sound::EntityPandaEat, volume, pitch);
+        }
+        if counter > 80 && rng.random_range(0..20) == 1 {
+            if counter > 100
+                && held
+                    .item
+                    .has_tag(&tag::Item::MINECRAFT_PANDA_EATS_FROM_GROUND)
+            {
+                self.set_held_item(ItemStack::EMPTY.clone());
+                self.set_sitting(false);
+            }
+            self.eat(false);
+            return;
+        }
+        self.set_eat_counter(counter + 1);
+    }
+
+    // panda: Panda.handleRoll, three hops over 32 ticks
+    fn handle_roll(&self) {
+        let rc = self.roll_counter.fetch_add(1, Relaxed) + 1;
+        if rc > 32 {
+            self.set_rolling(false);
+            return;
+        }
+        let entity = self.get_entity();
+        let movement = entity.velocity.load();
+        if rc == 1 {
+            let angle = entity.yaw.load().to_radians();
+            let multiplier = if self.is_baby() { 0.1 } else { 0.2 };
+            let delta = Vector3::new(
+                movement.x + f64::from(-angle.sin() * multiplier),
+                0.0,
+                movement.z + f64::from(angle.cos() * multiplier),
+            );
+            self.roll_delta.store(delta);
+            entity.velocity.store(Vector3::new(delta.x, 0.27, delta.z));
+        } else if rc != 7 && rc != 15 && rc != 23 {
+            let delta = self.roll_delta.load();
+            entity
+                .velocity
+                .store(Vector3::new(delta.x, movement.y, delta.z));
+        } else {
+            let y = if entity.on_ground.load(Relaxed) {
+                0.27
+            } else {
+                movement.y
+            };
+            entity.velocity.store(Vector3::new(0.0, y, 0.0));
+        }
+    }
+
     // panda: inherit genes from parents (Panda.setGeneFromParents)
     pub fn set_genes_from_parents(&self, parent1: &Self, parent2: &Self) {
         let mut rng = self.get_random();
@@ -371,6 +588,18 @@ impl PandaEntity {
             Particle::Sneeze,
         );
         self.play_entity_sound(Sound::EntityPandaSneeze, 1.0, 1.0);
+        // panda: startled adult pandas within 10 blocks jump (Panda.afterSneeze)
+        let area = entity.bounding_box.load().expand(10.0, 10.0, 10.0);
+        for other in world.get_entities_at_box(&area) {
+            if let Some(other) = other.cast_any().downcast_ref::<Self>()
+                && !other.is_baby()
+                && other.get_entity().on_ground.load(Relaxed)
+                && !other.get_entity().touching_water.load(Relaxed)
+                && other.can_perform_action()
+            {
+                other.mob_entity.living_entity.jump();
+            }
+        }
 
         // 1/700 chance to drop a slimeball (Panda.afterSneeze, BuiltInLootTables.PANDA_SNEEZE)
         if self.get_random().random_range(0..700) == 0 {
@@ -400,8 +629,21 @@ impl AgeableMob for PandaEntity {
 impl Animal for PandaEntity {
     fn is_food(&self, item_stack: &ItemStack) -> bool {
         item_stack.item.has_tag(&tag::Item::MINECRAFT_PANDA_FOOD)
-            || item_stack.item == &Item::BAMBOO
-            || item_stack.item == &Item::CAKE
+    }
+
+    // panda: Panda.getBreedOffspring, genes from both parents
+    fn get_breed_offspring(&self, partner: &dyn EntityBase) -> Arc<dyn EntityBase> {
+        let entity = self.get_entity();
+        let baby = Self::new(Entity::new(
+            entity.world.load_full(),
+            entity.pos.load(),
+            &EntityType::PANDA,
+        ));
+        if let Some(partner) = partner.cast_any().downcast_ref::<Self>() {
+            baby.set_genes_from_parents(self, partner);
+        }
+        baby.set_attributes();
+        baby
     }
 }
 
@@ -446,44 +688,66 @@ impl Mob for PandaEntity {
         }
     }
 
-    fn mob_tick(&self, _caller: &dyn EntityBase) {
+    // panda: Panda.tick after LivingEntity.tick
+    fn post_tick(&self) {
         let entity = self.get_entity();
-        if !entity.is_alive() || self.mob_entity.living_entity.is_dead_or_dying() {
+        if !entity.is_alive() {
             return;
         }
-
-        // Unhappy counter decay
-        let unhappy = self.unhappy_counter.load(Relaxed);
-        if unhappy > 0 {
-            self.unhappy_counter.store(unhappy - 1, Relaxed);
-            if unhappy == 29 || unhappy == 14 {
-                self.play_entity_sound(Sound::EntityPandaCantBreed, 1.0, 1.0);
+        if self.is_worried() {
+            if entity.world.load().is_thundering() && !entity.touching_water.load(Relaxed) {
+                self.set_sitting(true);
+                self.eat(false);
+            } else if !self.is_eating() {
+                self.set_sitting(false);
             }
         }
 
-        // Sneeze sequence (Panda.tick)
+        let target = self.mob_entity.get_target();
+        if target.is_none() {
+            self.got_bamboo.store(false, Relaxed);
+            self.did_bite.store(false, Relaxed);
+        }
+
+        let unhappy = self.unhappy_counter.load(Relaxed);
+        if unhappy > 0 {
+            if let Some(target) = &target {
+                self.mob_entity
+                    .look_control
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .look_at_entity_with_range(target, 90.0, 90.0);
+            }
+            if unhappy == 29 || unhappy == 14 {
+                self.play_entity_sound(Sound::EntityPandaCantBreed, 1.0, 1.0);
+            }
+            self.set_unhappy_counter(unhappy - 1);
+        }
+
         if self.is_sneezing() {
             let sc = self.sneeze_counter.fetch_add(1, Relaxed) + 1;
             entity.set_synced_data(
                 pumpkin_data::tracked_data::panda::SNEEZE_COUNTER,
                 VarInt(sc),
             );
-            if sc == 1 {
-                self.play_entity_sound(Sound::EntityPandaPreSneeze, 1.0, 1.0);
-            } else if sc > 20 {
+            if sc > 20 {
                 self.set_sneezing(false);
                 self.after_sneeze();
+            } else if sc == 1 {
+                self.play_entity_sound(Sound::EntityPandaPreSneeze, 1.0, 1.0);
             }
         }
 
-        // Roll handling
         if self.is_rolling() {
-            let rc = self.roll_counter.fetch_add(1, Relaxed) + 1;
-            if rc > 32 {
-                self.set_rolling(false);
-                self.roll_counter.store(0, Relaxed);
-            }
+            self.handle_roll();
+        } else {
+            self.roll_counter.store(0, Relaxed);
         }
+
+        if self.is_sitting() {
+            entity.pitch.store(0.0);
+        }
+        self.handle_eating();
     }
 
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
@@ -538,39 +802,202 @@ impl Mob for PandaEntity {
         );
     }
 
+    // panda: Panda.mobInteract
     fn mob_interact(&self, player: &Arc<Player>, item_stack: &mut ItemStack) -> bool {
-        self.animal_interact(player, item_stack, Sound::EntityPandaAmbient)
+        if self.is_scared() {
+            return false;
+        }
+        if self.is_on_back() {
+            self.set_on_back(false);
+            return true;
+        }
+        if !self.is_food(item_stack) {
+            return self.is_baby()
+                && item_stack.item == &Item::GOLDEN_DANDELION
+                && self.animal_interact(player, item_stack, Sound::EntityPandaAmbient);
+        }
+        if self.mob_entity.get_target().is_some() {
+            self.got_bamboo.store(true, Relaxed);
+        }
+        let age = self.get_entity().age.load(Relaxed);
+        let gamemode = player.gamemode.load();
+        if age < 0 {
+            item_stack.decrement_unless_creative(gamemode, 1);
+            self.age_up(((-age / 20) as f32 * 0.1) as i32, true);
+            return true;
+        }
+        if age == 0 && self.can_fall_in_love() && !self.mob_entity.is_in_love() {
+            return self.animal_interact(player, item_stack, Sound::EntityPandaAmbient);
+        }
+        let entity = self.get_entity();
+        if self.is_sitting() || entity.touching_water.load(Relaxed) {
+            return false;
+        }
+        self.try_to_sit();
+        self.eat(true);
+        let current = self.held_item();
+        if !current.is_empty() && !player.is_creative() {
+            self.drop_stack(current);
+        }
+        self.set_held_item(ItemStack::new(1, item_stack.item));
+        item_stack.decrement_unless_creative(gamemode, 1);
+        true
+    }
+
+    // panda: Panda.pickUpItem, only food from the ground into an empty hand
+    fn mob_wants_to_pick_up(&self, stack: &ItemStack) -> bool {
+        self.held_item().is_empty()
+            && stack
+                .item
+                .has_tag(&tag::Item::MINECRAFT_PANDA_EATS_FROM_GROUND)
+    }
+
+    fn mob_pick_up_item(&self, item: &crate::entity::item::ItemEntity, stack: &ItemStack) -> bool {
+        if self.held_item().is_empty()
+            && stack
+                .item
+                .has_tag(&tag::Item::MINECRAFT_PANDA_EATS_FROM_GROUND)
+        {
+            self.set_held_item(stack.clone());
+            item.get_entity().remove();
+        }
+        true
+    }
+
+    // panda: Panda.hurtServer stands up
+    fn on_damage(
+        &self,
+        _damage_type: pumpkin_data::damage::DamageType,
+        _source: Option<&dyn EntityBase>,
+    ) {
+        self.set_sitting(false);
+    }
+
+    // panda: Panda.doHurtTarget, a non-aggressive panda lets go after one bite
+    fn pre_attack(&self, _target: &dyn EntityBase) {
+        if !self.is_aggressive() {
+            self.did_bite.store(true, Relaxed);
+        }
+        self.play_entity_sound(Sound::EntityPandaBite, 1.0, 1.0);
     }
 }
 
-// panda: breeding requires at least 8 bamboo blocks within 5 blocks radius (Panda.PandaBreedGoal)
+fn as_panda(mob: &dyn Mob) -> Option<&PandaEntity> {
+    mob.cast_any().downcast_ref::<PandaEntity>()
+}
+
+fn not_sitting(mob: &dyn Mob) -> bool {
+    !as_panda(mob).is_some_and(PandaEntity::is_sitting)
+}
+
+fn is_aggressive_panda(mob: &dyn Mob) -> bool {
+    as_panda(mob).is_some_and(PandaEntity::is_aggressive)
+}
+
+fn still_angry(mob: &dyn Mob) -> bool {
+    as_panda(mob).is_some_and(|p| !p.got_bamboo.load(Relaxed) && !p.did_bite.load(Relaxed))
+}
+
+fn can_perform_action(mob: &dyn Mob) -> bool {
+    as_panda(mob).is_some_and(PandaEntity::can_perform_action)
+}
+
+fn worried_and_can_act(mob: &dyn Mob) -> bool {
+    as_panda(mob).is_some_and(|p| p.is_worried() && p.can_perform_action())
+}
+
+// panda: Panda.canPickUpAndEat
+fn can_pick_up_and_eat(item: &crate::entity::item::ItemEntity) -> bool {
+    item.get_entity().is_alive()
+        && item.get_pickup_delay() == 0
+        && item
+            .get_item_stack()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .item
+            .has_tag(&tag::Item::MINECRAFT_PANDA_EATS_FROM_GROUND)
+}
+
+fn nearest_edible_item(panda: &PandaEntity, range: f64) -> Option<Arc<dyn EntityBase>> {
+    let entity = panda.get_entity();
+    let area = entity.bounding_box.load().expand(range, range, range);
+    entity
+        .world
+        .load()
+        .get_entities_at_box(&area)
+        .into_iter()
+        .find(|candidate| {
+            candidate
+                .cast_any()
+                .downcast_ref::<crate::entity::item::ItemEntity>()
+                .is_some_and(can_pick_up_and_eat)
+        })
+}
+
+// panda: Panda.PandaMoveControl, frozen while sitting, eating, rolling or on its back
+#[derive(Default)]
+struct PandaMoveControl {
+    inner: crate::entity::ai::control::move_control::MoveControl,
+}
+
+impl crate::entity::ai::control::Control for PandaMoveControl {}
+
+impl crate::entity::ai::control::MoveControlTrait for PandaMoveControl {
+    fn tick(&mut self, mob: &dyn Mob) {
+        if can_perform_action(mob) {
+            self.inner.tick(mob);
+        }
+    }
+
+    fn set_wanted_position(&mut self, x: f64, y: f64, z: f64, speed_modifier: f64) {
+        self.inner.set_wanted_position(x, y, z, speed_modifier);
+    }
+
+    fn strafe(&mut self, forwards: f32, right: f32) {
+        self.inner.strafe(forwards, right);
+    }
+
+    fn has_wanted(&self) -> bool {
+        self.inner.has_wanted()
+    }
+
+    fn speed_modifier(&self) -> f64 {
+        self.inner.speed_modifier
+    }
+}
+
+// panda: Panda.PandaBreedGoal, needs bamboo within 8 blocks, otherwise shakes its head
 struct PandaBreedGoal {
     inner: Box<BreedGoal>,
+    unhappy_cooldown: i32,
 }
 
 impl PandaBreedGoal {
     fn new(speed: f64) -> Self {
         Self {
             inner: BreedGoal::new(speed),
+            unhappy_cooldown: 0,
         }
     }
 
-    fn has_nearby_bamboo(panda: &PandaEntity) -> bool {
+    // panda: PandaBreedGoal.canFindBamboo, spiral search, 3 layers up
+    fn can_find_bamboo(panda: &PandaEntity) -> bool {
         let entity = panda.get_entity();
         let pos = entity.block_pos.load();
         let world = entity.world.load();
-        let mut count = 0;
-        for dy in -2..=2 {
-            for dx in -5..=5 {
-                for dz in -5..=5 {
-                    let check_pos = BlockPos::new(pos.0.x + dx, pos.0.y + dy, pos.0.z + dz);
-                    let block = world.get_block(&check_pos);
-                    if block.id == Block::BAMBOO.id {
-                        count += 1;
-                        if count >= 8 {
+        for y_off in 0..3 {
+            for r in 0..8 {
+                let mut x = 0;
+                while x <= r {
+                    let mut z = if x < r && x > -r { r } else { 0 };
+                    while z <= r {
+                        let check = BlockPos::new(pos.0.x + x, pos.0.y + y_off, pos.0.z + z);
+                        if world.get_block(&check) == &Block::BAMBOO {
                             return true;
                         }
+                        z = if z > 0 { -z } else { 1 - z };
                     }
+                    x = if x > 0 { -x } else { 1 - x };
                 }
             }
         }
@@ -580,20 +1007,31 @@ impl PandaBreedGoal {
 
 impl Goal for PandaBreedGoal {
     fn can_start(&mut self, mob: &dyn Mob) -> bool {
-        let Some(panda) = mob.cast_any().downcast_ref::<PandaEntity>() else {
+        let Some(panda) = as_panda(mob) else {
             return false;
         };
-        if panda.unhappy_counter.load(Relaxed) > 0 {
+        if !self.inner.can_start(mob) || panda.unhappy_counter.load(Relaxed) != 0 {
             return false;
         }
-        if !self.inner.can_start(mob) {
-            return false;
+        if Self::can_find_bamboo(panda) {
+            return true;
         }
-        if !Self::has_nearby_bamboo(panda) {
+        let tick_count = panda.get_entity().tick_count.load(Relaxed);
+        if self.unhappy_cooldown <= tick_count {
             panda.set_unhappy_counter(32);
-            return false;
+            self.unhappy_cooldown = tick_count + 600;
+            let entity = panda.get_entity();
+            let player = entity
+                .world
+                .load()
+                .get_closest_player(entity.pos.load(), 8.0);
+            *panda
+                .look_player
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) =
+                player.map(|p| Arc::downgrade(&p));
         }
-        true
+        false
     }
 
     fn should_continue(&mut self, mob: &dyn Mob) -> bool {
@@ -617,91 +1055,275 @@ impl Goal for PandaBreedGoal {
     }
 }
 
-// panda: baby sneeze goal (Panda.PandaSneezeGoal)
+// panda: Panda.PandaLookAtPlayerGoal, the breed goal can force the target
+struct PandaLookAtPlayerGoal {
+    inner: Box<LookAtEntityGoal>,
+}
+
+impl PandaLookAtPlayerGoal {
+    fn forced(mob: &dyn Mob) -> Option<Arc<Player>> {
+        let panda = as_panda(mob)?;
+        let mut slot = panda
+            .look_player
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let player = slot.as_ref().and_then(Weak::upgrade);
+        if player.is_none() {
+            *slot = None;
+        }
+        player
+    }
+}
+
+impl Goal for PandaLookAtPlayerGoal {
+    fn can_start(&mut self, mob: &dyn Mob) -> bool {
+        Self::forced(mob).is_some() || self.inner.can_start(mob)
+    }
+
+    fn should_continue(&mut self, mob: &dyn Mob) -> bool {
+        Self::forced(mob).is_some() || self.inner.should_continue(mob)
+    }
+
+    fn start(&mut self, mob: &dyn Mob) {
+        self.inner.start(mob);
+    }
+
+    fn stop(&mut self, mob: &dyn Mob) {
+        if let Some(panda) = as_panda(mob) {
+            *panda
+                .look_player
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
+        }
+        self.inner.stop(mob);
+    }
+
+    fn tick(&mut self, mob: &dyn Mob) {
+        if let Some(player) = Self::forced(mob) {
+            let target: Arc<dyn EntityBase> = player;
+            mob.get_mob_entity()
+                .look_control
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .look_at_entity(mob, &target);
+        } else {
+            self.inner.tick(mob);
+        }
+    }
+
+    fn controls(&self) -> Controls {
+        self.inner.controls()
+    }
+}
+
+// panda: Panda.PandaSneezeGoal, babies sneeze, weak ones more often
 struct PandaSneezeGoal;
 
 impl Goal for PandaSneezeGoal {
     fn can_start(&mut self, mob: &dyn Mob) -> bool {
-        let Some(panda) = mob.cast_any().downcast_ref::<PandaEntity>() else {
+        let Some(panda) = as_panda(mob) else {
             return false;
         };
-        let entity = panda.get_entity();
-        let is_baby = entity.age.load(Relaxed) < 0;
-        if !is_baby || panda.is_sneezing() {
+        if !panda.is_baby() || !panda.can_perform_action() {
             return false;
         }
-        let chance = if panda.is_weak() { 100 } else { 500 };
-        panda.get_random().random_range(0..chance) == 0
+        let mut rng = panda.get_random();
+        (panda.is_weak() && rng.random_range(0..to_goal_ticks(500)) == 1)
+            || rng.random_range(0..to_goal_ticks(6000)) == 1
+    }
+
+    fn should_continue(&mut self, _mob: &dyn Mob) -> bool {
+        false
     }
 
     fn start(&mut self, mob: &dyn Mob) {
-        if let Some(panda) = mob.cast_any().downcast_ref::<PandaEntity>() {
+        if let Some(panda) = as_panda(mob) {
             panda.set_sneezing(true);
         }
     }
 }
 
-// panda: sitting goal (Panda.PandaSitGoal)
-struct PandaSitGoal;
+// panda: Panda.PandaSitGoal, walks to food on the ground, sits and eats it
+#[derive(Default)]
+struct PandaSitGoal {
+    cooldown: i32,
+}
 
 impl Goal for PandaSitGoal {
     fn can_start(&mut self, mob: &dyn Mob) -> bool {
-        let Some(panda) = mob.cast_any().downcast_ref::<PandaEntity>() else {
+        let Some(panda) = as_panda(mob) else {
             return false;
         };
-        if panda.is_sitting() || panda.is_rolling() || panda.is_on_back() {
+        let entity = panda.get_entity();
+        if self.cooldown > entity.tick_count.load(Relaxed)
+            || panda.is_baby()
+            || entity.touching_water.load(Relaxed)
+            || !panda.can_perform_action()
+            || panda.unhappy_counter.load(Relaxed) > 0
+        {
             return false;
         }
-        let chance = if panda.is_lazy() { 100 } else { 400 };
-        panda.get_random().random_range(0..chance) == 0
+        !panda.held_item().is_empty() || nearest_edible_item(panda, 6.0).is_some()
+    }
+
+    fn should_continue(&mut self, mob: &dyn Mob) -> bool {
+        let Some(panda) = as_panda(mob) else {
+            return false;
+        };
+        let mut rng = panda.get_random();
+        !panda.get_entity().touching_water.load(Relaxed)
+            && (panda.is_lazy() || rng.random_range(0..to_goal_ticks(600)) != 1)
+            && rng.random_range(0..to_goal_ticks(2000)) != 1
+    }
+
+    fn tick(&mut self, mob: &dyn Mob) {
+        if let Some(panda) = as_panda(mob)
+            && !panda.is_sitting()
+            && !panda.held_item().is_empty()
+        {
+            panda.try_to_sit();
+        }
     }
 
     fn start(&mut self, mob: &dyn Mob) {
-        if let Some(panda) = mob.cast_any().downcast_ref::<PandaEntity>() {
-            panda.set_sitting(true);
+        let Some(panda) = as_panda(mob) else {
+            return;
+        };
+        if panda.held_item().is_empty() {
+            if let Some(item) = nearest_edible_item(panda, 8.0) {
+                let mob_pos = panda.get_entity().pos.load();
+                let item_pos = item.get_entity().pos.load();
+                panda
+                    .mob_entity
+                    .steered()
+                    .navigator()
+                    .set_progress(NavigatorGoal::new(mob_pos, item_pos, 1.2));
+            }
+        } else {
+            panda.try_to_sit();
         }
+        self.cooldown = 0;
+    }
+
+    fn stop(&mut self, mob: &dyn Mob) {
+        let Some(panda) = as_panda(mob) else {
+            return;
+        };
+        let held = panda.held_item();
+        if !held.is_empty() {
+            panda.drop_stack(held);
+            panda.set_held_item(ItemStack::EMPTY.clone());
+            let mut rng = panda.get_random();
+            let wait_seconds = if panda.is_lazy() {
+                rng.random_range(0..50) + 10
+            } else {
+                rng.random_range(0..150) + 10
+            };
+            self.cooldown = panda.get_entity().tick_count.load(Relaxed) + wait_seconds * 20;
+        }
+        panda.set_sitting(false);
+    }
+
+    fn controls(&self) -> Controls {
+        Controls::MOVE
     }
 }
 
-// panda: lying on back goal (Panda.PandaLieOnBackGoal)
-struct PandaLieOnBackGoal;
+// panda: Panda.PandaLieOnBackGoal, lazy pandas roll onto their back
+#[derive(Default)]
+struct PandaLieOnBackGoal {
+    cooldown: i32,
+}
 
 impl Goal for PandaLieOnBackGoal {
     fn can_start(&mut self, mob: &dyn Mob) -> bool {
-        let Some(panda) = mob.cast_any().downcast_ref::<PandaEntity>() else {
+        let Some(panda) = as_panda(mob) else {
             return false;
         };
-        if !panda.is_lazy() || panda.is_on_back() || panda.is_rolling() {
+        self.cooldown < panda.get_entity().tick_count.load(Relaxed)
+            && panda.is_lazy()
+            && panda.can_perform_action()
+            && panda.get_random().random_range(0..to_goal_ticks(400)) == 1
+    }
+
+    fn should_continue(&mut self, mob: &dyn Mob) -> bool {
+        let Some(panda) = as_panda(mob) else {
             return false;
-        }
-        panda.get_random().random_range(0..400) == 0
+        };
+        let mut rng = panda.get_random();
+        !panda.get_entity().touching_water.load(Relaxed)
+            && (panda.is_lazy() || rng.random_range(0..to_goal_ticks(600)) != 1)
+            && rng.random_range(0..to_goal_ticks(2000)) != 1
     }
 
     fn start(&mut self, mob: &dyn Mob) {
-        if let Some(panda) = mob.cast_any().downcast_ref::<PandaEntity>() {
+        if let Some(panda) = as_panda(mob) {
             panda.set_on_back(true);
+        }
+        self.cooldown = 0;
+    }
+
+    fn stop(&mut self, mob: &dyn Mob) {
+        if let Some(panda) = as_panda(mob) {
+            panda.set_on_back(false);
+            self.cooldown = panda.get_entity().tick_count.load(Relaxed) + 200;
         }
     }
 }
 
-// panda: playful roll goal (Panda.PandaRollGoal)
+// panda: Panda.PandaRollGoal, babies and playful pandas roll, also off ledges
 struct PandaRollGoal;
 
 impl Goal for PandaRollGoal {
     fn can_start(&mut self, mob: &dyn Mob) -> bool {
-        let Some(panda) = mob.cast_any().downcast_ref::<PandaEntity>() else {
+        let Some(panda) = as_panda(mob) else {
             return false;
         };
-        if !panda.is_playful() || panda.is_rolling() {
+        let entity = panda.get_entity();
+        if !(panda.is_baby() || panda.is_playful())
+            || !entity.on_ground.load(Relaxed)
+            || !panda.can_perform_action()
+        {
             return false;
         }
-        panda.get_random().random_range(0..200) == 0
+        let angle = entity.yaw.load().to_radians();
+        let x_dir = -angle.sin();
+        let z_dir = angle.cos();
+        let x_step = if x_dir.abs() > 0.5 {
+            x_dir.signum() as i32
+        } else {
+            0
+        };
+        let z_step = if z_dir.abs() > 0.5 {
+            z_dir.signum() as i32
+        } else {
+            0
+        };
+        let pos = entity.block_pos.load();
+        let below = BlockPos::new(pos.0.x + x_step, pos.0.y - 1, pos.0.z + z_step);
+        if entity.world.load().get_block_state(&below).is_air() {
+            return true;
+        }
+        let mut rng = panda.get_random();
+        (panda.is_playful() && rng.random_range(0..to_goal_ticks(60)) == 1)
+            || rng.random_range(0..to_goal_ticks(500)) == 1
+    }
+
+    fn should_continue(&mut self, _mob: &dyn Mob) -> bool {
+        false
     }
 
     fn start(&mut self, mob: &dyn Mob) {
-        if let Some(panda) = mob.cast_any().downcast_ref::<PandaEntity>() {
+        if let Some(panda) = as_panda(mob) {
             panda.set_rolling(true);
-            panda.roll_counter.store(0, Relaxed);
         }
+    }
+
+    fn can_stop(&self) -> bool {
+        false
+    }
+
+    fn controls(&self) -> Controls {
+        Controls::MOVE | Controls::LOOK | Controls::JUMP
     }
 }
