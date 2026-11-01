@@ -32,6 +32,8 @@ pub trait LightProvider {
         level: u8,
     );
     fn propagate_level(current_level: u8, opacity: u8, dir: BlockDirection) -> u8;
+    /// Open sky in an unlit neighbor becomes 15 once that chunk lights itself.
+    const SKIP_UNLIT_OPEN_SKY: bool = false;
 }
 
 pub struct BlockLightProvider;
@@ -114,6 +116,8 @@ impl LightProvider for SkyLightProvider {
             c.set(lx, ly, lz, level);
         }
     }
+    const SKIP_UNLIT_OPEN_SKY: bool = true;
+
     #[inline]
     fn propagate_level(current_level: u8, opacity: u8, dir: BlockDirection) -> u8 {
         if current_level == 15 && dir == BlockDirection::Down && opacity == 0 {
@@ -271,6 +275,7 @@ impl<P: LightProvider> LightPropagator<P> {
         let size_y = (max_y - min_y) as usize;
         self.visited
             .ensure_capacity(min_x, min_y, min_z, size_x, size_y, size_z);
+        let center_idx = ((cache_size / 2) * cache_size + cache_size / 2) as usize;
 
         while let Some(entry) = self.queue.pop_front() {
             let pos = entry.pos;
@@ -315,6 +320,14 @@ impl<P: LightProvider> LightPropagator<P> {
 
                 let (opacity, neighbor_light) = match &cache.chunks[chunk_idx] {
                     Chunk::Proto(c) => {
+                        // light: skip open sky of unlit neighbors, vanilla keeps it implicitly 15
+                        if P::SKIP_UNLIT_OPEN_SKY
+                            && chunk_idx != center_idx
+                            && c.stage < crate::chunk_system::chunk_state::StagedChunkEnum::Lighting
+                            && ny >= c.top_block_height_exclusive(nx, nz)
+                        {
+                            continue;
+                        }
                         let local_y_proto = ny - min_y;
                         let state_id =
                             c.get_block_state_raw(local_x as i32, local_y_proto, local_z as i32);
