@@ -990,43 +990,14 @@ impl MobEntity {
         item_stack: &mut ItemStack,
         can_be_leashed: bool,
     ) -> bool {
-        let entity = &self.living_entity.entity;
-
-        // If already leashed to player, right-clicking unleashes the mob
-        let currently_leashed = entity
-            .leashed_to
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_some();
-
-        if currently_leashed {
-            entity.unleash();
-            let lead_item =
-                pumpkin_data::item_stack::ItemStack::new(1, &pumpkin_data::item::Item::LEAD);
-            entity
-                .world
-                .load()
-                .drop_stack(&entity.block_pos.load(), lead_item);
-            return true;
-        }
-
-        // If holding a lead, leash the mob to the player
-        if (item_stack.item.registry_key == "lead"
-            || item_stack.item.registry_key == "minecraft:lead")
-            && can_be_leashed
-        {
-            let diff = entity.pos.load() - player.get_entity().pos.load();
-            let dist_sq = diff.length_squared();
-            if dist_sq <= Entity::LEASH_SNAP_DISTANCE * Entity::LEASH_SNAP_DISTANCE {
-                entity.leash_to(player.clone() as Arc<dyn EntityBase>);
-                if player.gamemode.load() != pumpkin_util::GameMode::Creative {
-                    item_stack.decrement(1);
-                }
-                return true;
-            }
-        }
-
-        false
+        // mob: leash handling shared with every leashable (Entity.interact)
+        crate::entity::leash_interact(
+            &self.living_entity.entity,
+            player,
+            item_stack,
+            can_be_leashed,
+            self.living_entity.is_baby(),
+        )
     }
 
     pub fn check_despawn(&self, mob: &dyn Mob) {

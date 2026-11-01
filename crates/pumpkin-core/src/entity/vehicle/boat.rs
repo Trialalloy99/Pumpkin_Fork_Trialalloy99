@@ -550,6 +550,8 @@ impl BoatEntity {
     fn destroy(&self, source: Option<&dyn EntityBase>) {
         let entity = &self.vehicle.entity;
         let world = entity.world.load();
+        // boat: a destroyed boat drops its leash (AbstractBoat.remove)
+        entity.drop_leash();
         entity.remove();
         if !world.level_info.load().game_rules.entity_drops {
             return;
@@ -607,6 +609,7 @@ impl EntityBase for BoatEntity {
 
         self.vehicle.tick();
         entity.tick(caller, server);
+        entity.tick_leash();
 
         let player_controlled = self
             .first_passenger()
@@ -746,8 +749,11 @@ impl EntityBase for BoatEntity {
     }
 
     // boat: board unless sneaking or sunk, chest boats open when full or sneaking (AbstractBoat.interact)
-    fn interact(&self, player: &Arc<Player>, _item_stack: &mut ItemStack) -> bool {
+    fn interact(&self, player: &Arc<Player>, item_stack: &mut ItemStack) -> bool {
         let entity = &self.vehicle.entity;
+        if crate::entity::leash_interact(entity, player, item_stack, true, false) {
+            return true;
+        }
         let sneaking = player.get_entity().is_sneaking();
         let out_of_control = self.lock_state().out_of_control_ticks;
         if !sneaking
@@ -774,13 +780,16 @@ impl EntityBase for BoatEntity {
         self.set_paddles(left, right);
     }
 
+    // boat: leash saved with the boat (AbstractBoat.addAdditionalSaveData)
     fn write_custom_nbt(&self, nbt: &mut NbtCompound) {
+        self.vehicle.entity.write_leash_data(nbt);
         if let Some(chest) = &self.chest {
             chest.write_nbt(nbt);
         }
     }
 
     fn read_custom_nbt(&self, nbt: &NbtCompound) {
+        self.vehicle.entity.read_leash_data(nbt);
         if let Some(chest) = &self.chest {
             chest.read_nbt(nbt);
         }

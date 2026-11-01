@@ -1226,6 +1226,8 @@ pub struct Entity {
     pub vehicle: std::sync::Mutex<Option<Arc<dyn EntityBase>>>,
     /// The entity this entity is attached/leashed to (if any)
     pub leashed_to: std::sync::Mutex<Option<Arc<dyn EntityBase>>>,
+    // leash: spin from off-center pulls (Leashable.LeashData.angularMomentum)
+    pub leash_angular_momentum: AtomicCell<f64>,
     pub delayed_leash: std::sync::Mutex<Option<DelayedLeash>>,
     /// Cooldown before entity can mount again after dismounting
     pub riding_cooldown: AtomicI32,
@@ -1409,6 +1411,7 @@ impl Entity {
         )
     }
 
+    #[expect(clippy::too_many_lines, reason = "field-by-field entity initializer")]
     pub fn from_uuid_with_id(
         entity_id: i32,
         entity_uuid: uuid::Uuid,
@@ -1487,6 +1490,7 @@ impl Entity {
             passengers: std::sync::Mutex::new(Vec::new()),
             vehicle: std::sync::Mutex::new(None),
             leashed_to: std::sync::Mutex::new(None),
+            leash_angular_momentum: AtomicCell::new(0.0),
             delayed_leash: std::sync::Mutex::new(None),
 
             riding_cooldown: AtomicI32::new(0),
@@ -4282,6 +4286,7 @@ impl Entity {
         }
     }
 
+    // leash: spring pull with torque, snaps past 12 blocks (Leashable.tickLeash)
     pub fn tick_leash(&self) {
         let delayed = *self
             .delayed_leash
@@ -4297,37 +4302,144 @@ impl Entity {
             };
             guard.clone()
         };
+        let Some(holder) = holder else {
+            return;
+        };
+        let holder_entity = holder.get_entity();
+        let world = self.world.load();
 
-        if let Some(holder) = holder {
-            let holder_entity = holder.get_entity();
-
-            // Drop leash if entity or holder is removed or dead
-            if !self.is_alive() || !holder_entity.is_alive() {
+        if !self.is_alive() || !holder_entity.is_alive() {
+            if world.level_info.load().game_rules.entity_drops {
+                self.drop_leash();
+            } else {
                 self.unleash();
-                return;
             }
+            return;
+        }
+        if holder_entity.world.load().uuid != world.uuid {
+            return;
+        }
 
-            let self_pos = self.pos.load();
-            let holder_pos = holder_entity.pos.load();
-            let diff = self_pos - holder_pos;
-            let distance = diff.length();
+        let center = |b: BoundingBox| (b.min + b.max) * 0.5;
+        let distance = center(self.bounding_box.load())
+            .squared_distance_to_vec(&center(holder_entity.bounding_box.load()))
+            .sqrt();
+        if distance > Self::LEASH_SNAP_DISTANCE {
+            world.play_sound(
+                pumpkin_data::sound::Sound::ItemLeadBreak,
+                pumpkin_data::sound::SoundCategory::Neutral,
+                &holder_entity.pos.load(),
+            );
+            self.drop_leash();
+        } else if distance
+            > Self::LEASH_ELASTIC_DISTANCE
+                - f64::from(holder_entity.width())
+                - f64::from(self.width())
+        {
+            self.check_elastic_leash(&holder);
+        }
 
-            if distance > Self::LEASH_SNAP_DISTANCE {
-                // Too far: snap/break leash and drop lead item
-                self.unleash();
-                let lead_item =
-                    pumpkin_data::item_stack::ItemStack::new(1, &pumpkin_data::item::Item::LEAD);
-                self.world
-                    .load()
-                    .drop_stack(&self.block_pos.load(), lead_item);
-            } else if distance > Self::LEASH_ELASTIC_DISTANCE {
-                // Elastic pull force towards leash holder
-                let dir = (holder_pos - self_pos).normalize();
-                let pull_strength = (distance - Self::LEASH_ELASTIC_DISTANCE) * 0.11;
-                let current_vel = self.velocity.load();
-                self.velocity.store(current_vel + dir * pull_strength);
-                self.velocity_dirty.store(true, Relaxed);
-            }
+        let momentum = self.leash_angular_momentum.load();
+        let yaw = self.yaw.load();
+        self.set_rotation((f64::from(yaw) - momentum) as f32, self.pitch.load());
+        self.leash_angular_momentum
+            .store(momentum * f64::from(self.leash_angular_friction()));
+    }
+
+    // leash: unleash and drop the lead item (Leashable.dropLeash)
+    pub fn drop_leash(&self) {
+        if !self.is_leashed() {
+            return;
+        }
+        self.unleash();
+        if !self.is_leashed() {
+            self.spawn_at_location(ItemStack::new(1, &pumpkin_data::item::Item::LEAD));
+        }
+    }
+
+    // leash: movement others see, client-reported for players (Entity.getKnownMovement)
+    fn known_movement(entity: &dyn EntityBase) -> Vector3<f64> {
+        if entity.get_player().is_some() {
+            entity.get_entity().movement.load()
+        } else if entity
+            .get_mob()
+            .is_some_and(|mob| mob.get_mob_entity().is_no_ai())
+        {
+            Vector3::default()
+        } else {
+            entity.get_entity().velocity.load()
+        }
+    }
+
+    // leash: damped spring between the attachment points (Leashable.checkElasticInteractions)
+    fn check_elastic_leash(&self, holder: &Arc<dyn EntityBase>) {
+        const AXIS_SPECIFIC_ELASTICITY: Vector3<f64> = Vector3::new(0.8, 0.2, 0.8);
+        const TORSIONAL_ELASTICITY: f64 = 10.0;
+        const STIFFNESS: f64 = 0.11;
+        let holder_entity = holder.get_entity();
+        let rotate = |v: Vector3<f64>, yaw_degrees: f32| {
+            let angle = -yaw_degrees.to_radians();
+            let (sin, cos) = (f64::from(angle.sin()), f64::from(angle.cos()));
+            Vector3::new(v.x * cos + v.z * sin, v.y, v.z * cos - v.x * sin)
+        };
+        let own_dims = Vector3::new(
+            f64::from(self.width()),
+            f64::from(self.height()),
+            f64::from(self.width()),
+        );
+        let holder_dims = Vector3::new(
+            f64::from(holder_entity.width()),
+            f64::from(holder_entity.height()),
+            f64::from(holder_entity.width()),
+        );
+        let lever = rotate(
+            Vector3::new(0.0, 0.5 * own_dims.y, 0.5 * own_dims.z),
+            self.yaw.load(),
+        );
+        let attach = self.pos.load() + lever;
+        let pivot = holder_entity.pos.load()
+            + rotate(
+                Vector3::new(0.0, 0.5 * holder_dims.y, 0.0),
+                holder_entity.yaw.load(),
+            );
+
+        let distance = attach.squared_distance_to_vec(&pivot).sqrt();
+        if distance < Self::LEASH_ELASTIC_DISTANCE {
+            return;
+        }
+        let scale = distance - Self::LEASH_ELASTIC_DISTANCE;
+        let mut displacement = (pivot - attach).normalize() * scale;
+        let torque = lever.z * displacement.x - lever.x * displacement.z;
+        let own_movement = self.velocity.load();
+        if own_movement.x * displacement.x
+            + own_movement.y * displacement.y
+            + own_movement.z * displacement.z
+            >= 0.0
+        {
+            displacement = displacement * f64::from(0.3f32);
+        }
+
+        self.leash_angular_momentum
+            .store(self.leash_angular_momentum.load() + TORSIONAL_ELASTICITY * torque);
+        let relative = Self::known_movement(holder.as_ref()) - own_movement;
+        let push = Vector3::new(
+            displacement.x * AXIS_SPECIFIC_ELASTICITY.x,
+            displacement.y * AXIS_SPECIFIC_ELASTICITY.y,
+            displacement.z * AXIS_SPECIFIC_ELASTICITY.z,
+        ) + relative * STIFFNESS;
+        self.velocity.store(own_movement + push);
+        self.velocity_dirty.store(true, Relaxed);
+    }
+
+    // leash: spin decay from ground or fluid (Leashable.angularFriction)
+    fn leash_angular_friction(&self) -> f32 {
+        if self.on_ground.load(Relaxed) {
+            let below = self.block_pos.load().down();
+            self.world.load().get_block(&below).slipperiness * 0.91
+        } else if self.touching_water.load(Relaxed) || self.touching_lava.load(Relaxed) {
+            0.8
+        } else {
+            0.91
         }
     }
 
@@ -5391,6 +5503,131 @@ pub(crate) fn default_push<T: EntityBase + ?Sized>(this: &T, entity: &dyn Entity
             other_entity.velocity_dirty.store(true, Ordering::SeqCst);
         }
     }
+}
+
+// leash: sneak-transfer, shears, untie and tie with a lead (Entity.interact leash part)
+#[expect(clippy::too_many_lines, reason = "mirrors Entity.interact")]
+pub(crate) fn leash_interact(
+    entity: &Entity,
+    player: &Arc<Player>,
+    item_stack: &mut ItemStack,
+    can_be_leashed: bool,
+    is_baby: bool,
+) -> bool {
+    let world = entity.world.load();
+    let player_id = player.entity_id();
+    let leashed_to = |e: &Entity, id: i32| {
+        e.leashed_to
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .is_some_and(|holder| holder.get_entity().entity_id == id)
+    };
+    let area = |center: Vector3<f64>| BoundingBox::new(center, center).expand(16.0, 16.0, 16.0);
+
+    if player.get_entity().is_sneaking() && can_be_leashed && entity.is_alive() && !is_baby {
+        let mut any = false;
+        if let Some(this_arc) = world.get_entity_by_id(entity.entity_id) {
+            for other in world.get_entities_at_box(&area(entity.pos.load())) {
+                let other_entity = other.get_entity();
+                if other_entity.entity_id != entity.entity_id
+                    && leashed_to(other_entity, player_id)
+                    && other_entity
+                        .pos
+                        .load()
+                        .squared_distance_to_vec(&entity.pos.load())
+                        <= Entity::LEASH_SNAP_DISTANCE * Entity::LEASH_SNAP_DISTANCE
+                {
+                    other_entity.attach_leash(this_arc.clone());
+                    any = true;
+                }
+            }
+        }
+        if any {
+            world.emit_game_event(
+                GameEvent::EntityAction.name(),
+                entity.block_pos.load().to_f64(),
+            );
+            world.play_sound(
+                Sound::ItemLeadTied,
+                SoundCategory::Neutral,
+                &entity.pos.load(),
+            );
+            return true;
+        }
+    }
+
+    if item_stack.item == &pumpkin_data::item::Item::SHEARS {
+        // leash: shears cut every leash on and from this entity (Entity.dropAllLeashConnections)
+        let mut sheared = false;
+        for other in world.get_entities_at_box(&area(entity.pos.load())) {
+            let other_entity = other.get_entity();
+            if leashed_to(other_entity, entity.entity_id) {
+                other_entity.drop_leash();
+                sheared = true;
+            }
+        }
+        if entity.is_leashed() {
+            entity.drop_leash();
+            sheared = true;
+        }
+        if sheared {
+            world.emit_game_event(GameEvent::Shear.name(), entity.pos.load());
+            world.play_sound(
+                Sound::ItemShearsSnip,
+                SoundCategory::Neutral,
+                &entity.pos.load(),
+            );
+            if !player.is_creative() {
+                player.damage_held_item(1);
+            }
+            return true;
+        }
+    }
+
+    if !entity.is_alive() || !can_be_leashed {
+        return false;
+    }
+    if leashed_to(entity, player_id) {
+        if player.is_creative() {
+            entity.unleash();
+        } else {
+            entity.drop_leash();
+        }
+        world.emit_game_event(GameEvent::EntityInteract.name(), entity.pos.load());
+        world.play_sound(
+            Sound::ItemLeadUntied,
+            SoundCategory::Neutral,
+            &entity.pos.load(),
+        );
+        return true;
+    }
+    let held_by_player = entity
+        .leashed_to
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .as_ref()
+        .is_some_and(|holder| holder.get_player().is_some());
+    if item_stack.item == &pumpkin_data::item::Item::LEAD && !held_by_player {
+        let center = |b: BoundingBox| (b.min + b.max) * 0.5;
+        let distance = center(entity.bounding_box.load())
+            .squared_distance_to_vec(&center(player.get_entity().bounding_box.load()))
+            .sqrt();
+        if distance <= Entity::LEASH_SNAP_DISTANCE {
+            if entity.is_leashed() {
+                entity.drop_leash();
+            }
+            entity.leash_to(player.clone() as Arc<dyn EntityBase>);
+            world.play_sound(
+                Sound::ItemLeadTied,
+                SoundCategory::Neutral,
+                &entity.pos.load(),
+            );
+            item_stack.decrement_unless_creative(player.gamemode.load(), 1);
+            return true;
+        }
+    }
+    false
 }
 
 #[cfg(test)]
