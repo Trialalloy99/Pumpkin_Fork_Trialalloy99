@@ -24,6 +24,7 @@ rayon.workspace = true
 rustls.workspace = true
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "signal"] }
 tracing.workspace = true
+mimalloc = { version = "0.1", default-features = false }
 console-subscriber = { workspace = true, optional = true }
 
 [features]

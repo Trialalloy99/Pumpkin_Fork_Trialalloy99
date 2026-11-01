@@ -48,6 +48,10 @@ static MAIN_THREAD: OnceLock<ThreadId> = OnceLock::new();
 // like `par_iter`. These should be spawned in the the rayon pool and then passed to the tokio
 // runtime with a channel! See `Level::fetch_chunks` as an example!
 #[allow(clippy::too_many_lines)]
+// alloc: mimalloc, the system allocator stalls under parallel chunk generation on Windows
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 #[tokio::main]
 async fn main() {
     let _ = MAIN_THREAD.set(thread::current().id());
