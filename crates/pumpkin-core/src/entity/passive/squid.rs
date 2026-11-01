@@ -20,7 +20,7 @@ use crate::entity::{
     mob::{Mob, MobEntity},
 };
 
-const BABY_DIMENSIONS: EntityDimensions = EntityDimensions::new(0.5, 0.5, 0.37);
+pub(crate) const BABY_DIMENSIONS: EntityDimensions = EntityDimensions::new(0.5, 0.5, 0.37);
 const SQUID_FLEE_SPEED: f64 = 3.0;
 const SQUID_FLEE_MIN_DISTANCE: f64 = 5.0;
 const SQUID_FLEE_MAX_DISTANCE: f64 = 10.0;
@@ -332,6 +332,7 @@ macro_rules! squid_mob_hooks {
             true
         }
         fn mob_is_pushed_by_fluids(&self) -> bool { false }
+        fn baby_dimensions(&self) -> Option<pumpkin_util::math::boundingbox::EntityDimensions> { Some($crate::entity::passive::squid::BABY_DIMENSIONS) }
         fn get_mob_gravity(&self) -> f64 { $crate::entity::passive::squid::DEFAULT_GRAVITY }
         fn check_spawn_obstruction(&self, world: &$crate::world::World) -> bool {
             $crate::entity::passive::ageable_water_creature::AgeableWaterCreature::water_creature_spawn_obstruction(self, world)
@@ -351,6 +352,10 @@ macro_rules! impl_squid {
             }
             fn age_boundary_reached(&self) {
                 self.update_squid_dimensions();
+            }
+            // squid: 5% babies per group (Squid.finalizeSpawn, AgeableMobGroupData(0.05))
+            fn default_baby_spawn_chance(&self) -> f32 {
+                0.05
             }
         }
         impl Squid for $squid {
