@@ -323,44 +323,6 @@ impl ZombieEntityBase {
         {
             target.set_on_fire_for((2 * difficulty as i32) as f32);
         }
-        let world_difficulty = world.level_info.load().difficulty;
-        if target.get_entity().entity_type == &EntityType::VILLAGER
-            && target
-                .get_living_entity()
-                .is_some_and(|living| living.health.load() <= 0.0)
-            && matches!(world_difficulty, Difficulty::Normal | Difficulty::Hard)
-            && (world_difficulty == Difficulty::Hard || rand::random::<bool>())
-            && let Some(villager) = target.get_mob()
-        {
-            let mut villager_nbt = NbtCompound::new();
-            villager.mob_write_nbt(&mut villager_nbt);
-            let silent = entity.is_silent();
-            let block_pos = entity.block_pos.load();
-            conversion::convert_single(
-                villager,
-                &EntityType::ZOMBIE_VILLAGER,
-                true,
-                true,
-                |converted| {
-                    crate::entity::mob::spawn::finalize_spawn(
-                        converted,
-                        &world,
-                        Some(SpawnGroupData::Zombie {
-                            baby: false,
-                            can_spawn_jockey: true,
-                            tried_camel_husk: false,
-                        }),
-                        SpawnReason::Conversion,
-                    );
-                    if let Some(zombie_villager) = converted.get_mob() {
-                        zombie_villager.mob_read_nbt(&villager_nbt);
-                    }
-                    if !silent {
-                        world.sync_world_event(WorldEvent::SoundZombieInfected, block_pos, 0);
-                    }
-                },
-            );
-        }
     }
 
     #[must_use]
@@ -597,6 +559,52 @@ fn drowning_conversion(entity_type: &EntityType) -> Option<(&'static EntityType,
 }
 
 // zombie family: shared base of any zombie wrapper
+// zombie family: killed villager -> zombie villager, no drops (Zombie.killedEntity)
+pub fn infect_villager(killer: &Entity, victim: &dyn EntityBase) -> bool {
+    if victim.get_entity().entity_type != &EntityType::VILLAGER {
+        return true;
+    }
+    let world = killer.world.load_full();
+    let world_difficulty = world.level_info.load().difficulty;
+    if !matches!(world_difficulty, Difficulty::Normal | Difficulty::Hard)
+        || (world_difficulty != Difficulty::Hard && rand::random::<bool>())
+    {
+        return true;
+    }
+    let Some(villager) = victim.get_mob() else {
+        return true;
+    };
+    let mut villager_nbt = NbtCompound::new();
+    villager.mob_write_nbt(&mut villager_nbt);
+    let silent = killer.is_silent();
+    let block_pos = killer.block_pos.load();
+    conversion::convert_single(
+        villager,
+        &EntityType::ZOMBIE_VILLAGER,
+        true,
+        true,
+        |converted| {
+            crate::entity::mob::spawn::finalize_spawn(
+                converted,
+                &world,
+                Some(SpawnGroupData::Zombie {
+                    baby: false,
+                    can_spawn_jockey: true,
+                    tried_camel_husk: false,
+                }),
+                SpawnReason::Conversion,
+            );
+            if let Some(zombie_villager) = converted.get_mob() {
+                zombie_villager.mob_read_nbt(&villager_nbt);
+            }
+            if !silent {
+                world.sync_world_event(WorldEvent::SoundZombieInfected, block_pos, 0);
+            }
+        },
+    )
+    .is_none()
+}
+
 // zombie family: baby hitbox + eye height (Zombie/Husk/ZombieVillager.BABY_DIMENSIONS)
 #[must_use]
 pub fn zombie_baby_dimensions(entity_type: &EntityType) -> EntityDimensions {

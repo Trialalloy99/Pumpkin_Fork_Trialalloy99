@@ -60,6 +60,10 @@ impl DrownedEntity {
 }
 
 impl Mob for DrownedEntity {
+    fn killed_entity(&self, victim: &dyn EntityBase) -> bool {
+        crate::entity::mob::zombie::infect_villager(self.get_entity(), victim)
+    }
+
     // zombie family: spawn rolls, hit effects, reinforcements, baby xp (Zombie)
     fn finalize_spawn(
         &self,

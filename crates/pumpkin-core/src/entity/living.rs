@@ -2249,6 +2249,9 @@ impl LivingEntity {
             self.play_block_fall_sound(caller);
             self.damage(caller, damage, DamageType::FALL);
         }
+        if let Some(mob) = caller.get_mob() {
+            mob.on_cause_fall_damage(fall_distance);
+        }
     }
 
     /// Vanilla `getFallDamageSound`.
@@ -2412,13 +2415,23 @@ impl LivingEntity {
                 ..Default::default()
             };
 
-            let should_drop_loot = dyn_self.should_drop_loot();
+            // killer reacts first and may cancel the drops (Mob.killedEntity, villager infection)
+            let killer_allows_drops = killer
+                .and_then(|killer| world.get_entity_by_id(killer.get_entity().entity_id))
+                .and_then(|killer| {
+                    killer
+                        .get_mob()
+                        .map(|killer_mob| killer_mob.killed_entity(dyn_self.as_ref()))
+                })
+                .unwrap_or(true);
+            let should_drop_loot = dyn_self.should_drop_loot() && killer_allows_drops;
             if should_drop_loot {
                 self.drop_loot(&*dyn_self, &params);
             }
 
             // Award experience
-            if params.killed_by_player.unwrap_or(false)
+            if killer_allows_drops
+                && params.killed_by_player.unwrap_or(false)
                 && world.level_info.load().game_rules.mob_drops
                 && dyn_self.should_drop_experience()
             {
@@ -2432,31 +2445,35 @@ impl LivingEntity {
             if should_drop_loot {
                 self.drop_equipment(looting_level);
             }
-            if let Some(mob) = dyn_self.get_mob() {
+            if killer_allows_drops && let Some(mob) = dyn_self.get_mob() {
                 mob.drop_inventory();
             }
 
             // Broadcast death message if it's a player and the gamerule is enabled
             self.broadcast_death_message(&*dyn_self, damage_type, source, cause);
 
-            // Trigger on_mob_death for active status effects
-            let active_effects_vec: Vec<_> = {
-                let effects = self
-                    .active_effects
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                effects
-                    .values()
-                    .map(|e| (e.effect_type, e.amplifier))
-                    .collect()
-            };
-            for (effect_type, amplifier) in active_effects_vec {
-                if let Some(mob_effect) = crate::entity::effect::get_mob_effect(effect_type) {
-                    mob_effect.on_mob_death(self, amplifier, &damage_type);
-                }
-            }
+            self.trigger_on_death_mob_effects(&damage_type);
 
             self.reset_effects_and_attributes();
+        }
+    }
+
+    // death effects: oozing, weaving, infested... (LivingEntity.triggerOnDeathMobEffects)
+    pub fn trigger_on_death_mob_effects(&self, damage_type: &DamageType) {
+        let active_effects_vec: Vec<_> = {
+            let effects = self
+                .active_effects
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            effects
+                .values()
+                .map(|e| (e.effect_type, e.amplifier))
+                .collect()
+        };
+        for (effect_type, amplifier) in active_effects_vec {
+            if let Some(mob_effect) = crate::entity::effect::get_mob_effect(effect_type) {
+                mob_effect.on_mob_death(self, amplifier, damage_type);
+            }
         }
     }
 

@@ -190,6 +190,8 @@ pub struct Explosion {
     block_interaction: BlockInteraction,
     damage_calculator: Option<Arc<dyn ExplosionDamageCalculator>>,
     preserve_rails: bool,
+    /// Entity that exploded (vanilla `Explosion.source`), credited for the damage.
+    source: Option<Arc<dyn EntityBase>>,
 }
 
 impl Explosion {
@@ -201,7 +203,15 @@ impl Explosion {
             block_interaction,
             damage_calculator: None,
             preserve_rails: false,
+            source: None,
         }
+    }
+
+    // explosion: credit an exploding entity, skip it in the damage pass (Explosion.source)
+    #[must_use]
+    pub fn with_source(mut self, source: Arc<dyn EntityBase>) -> Self {
+        self.source = Some(source);
+        self
     }
 
     #[must_use]
@@ -379,8 +389,14 @@ impl Explosion {
             None => &default_calc,
         };
 
+        let source_id = self
+            .source
+            .as_ref()
+            .map(|source| source.get_entity().entity_id);
         for entity_base in entities {
-            if entity_base.is_immune_to_explosion() {
+            if entity_base.is_immune_to_explosion()
+                || Some(entity_base.get_entity().entity_id) == source_id
+            {
                 continue;
             }
 
@@ -412,7 +428,23 @@ impl Explosion {
             if should_damage {
                 let damage =
                     calc.get_entity_damage_amount(self, entity_base.as_ref(), exposure as f32);
-                entity.damage(entity_base.as_ref(), damage, DamageType::EXPLOSION);
+                if let Some(source) = &self.source {
+                    let damage_type = if source.get_player().is_some() {
+                        DamageType::PLAYER_EXPLOSION
+                    } else {
+                        DamageType::EXPLOSION
+                    };
+                    entity_base.damage_with_context(
+                        entity_base.as_ref(),
+                        damage,
+                        damage_type,
+                        Some(self.pos),
+                        Some(source.as_ref()),
+                        Some(source.as_ref()),
+                    );
+                } else {
+                    entity.damage(entity_base.as_ref(), damage, DamageType::EXPLOSION);
+                }
             }
 
             // Calculate and apply knockback

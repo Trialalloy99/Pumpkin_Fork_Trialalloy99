@@ -153,6 +153,7 @@ pub struct MobEntity {
     pending_riders: std::sync::Mutex<Vec<Arc<dyn EntityBase>>>,
     pending_vehicle: std::sync::Mutex<Option<(Arc<dyn EntityBase>, bool)>>,
     pub spawn_reason: std::sync::atomic::AtomicU8,
+    applied_max_fall_distance: std::sync::atomic::AtomicI32,
     mob_flags: AtomicU8,
 }
 impl MobEntity {
@@ -287,6 +288,7 @@ impl MobEntity {
             spawn_reason: std::sync::atomic::AtomicU8::new(
                 crate::entity::mob::spawn::SpawnReason::Command as u8,
             ),
+            applied_max_fall_distance: std::sync::atomic::AtomicI32::new(3),
             mob_flags: AtomicU8::new(0),
         }
     }
@@ -1499,6 +1501,19 @@ pub trait Mob: EntityBase + Send + Sync {
         true
     }
 
+    /// Vanilla `Mob.getMaxFallDistance`: 3, or more with a target and spare health.
+    fn max_fall_distance(&self) -> i32 {
+        let mob_entity = self.get_mob_entity();
+        if mob_entity.get_target().is_none() {
+            return 3;
+        }
+        let living = &mob_entity.living_entity;
+        let difficulty = living.entity.world.load().level_info.load().difficulty as i32;
+        let sacrifice =
+            (living.health.load() - living.get_max_health() * 0.33) as i32 - (3 - difficulty) * 4;
+        (sacrifice.max(0) as f32 + 3.0).floor() as i32
+    }
+
     /// Bow attack interval (hard, other difficulties), vanilla `getHardAttackInterval`/`getAttackInterval`.
     fn bow_attack_intervals(&self) -> (i32, i32) {
         (20, 40)
@@ -1599,6 +1614,14 @@ pub trait Mob: EntityBase + Send + Sync {
     }
 
     fn on_attack(&self, _target: &dyn EntityBase) {}
+
+    /// End of vanilla `causeFallDamage` (creeper fuse).
+    fn on_cause_fall_damage(&self, _fall_distance: f32) {}
+
+    /// Vanilla `killedEntity`: this mob killed `victim`; `false` cancels the victim's drops.
+    fn killed_entity(&self, _victim: &dyn EntityBase) -> bool {
+        true
+    }
 
     /// Start of vanilla `doHurtTarget`, run on every melee attempt even when it misses or is blocked.
     fn pre_attack(&self, _target: &dyn EntityBase) {}
@@ -2268,6 +2291,15 @@ impl<T: Mob + Send + 'static> EntityBase for T {
         mob_entity.living_entity.entity.tick_leash();
         sun_burn::tick(self);
         looting::tick_looting(self);
+        // path max fall distance follows target + health (Mob.getMaxFallDistance)
+        let max_fall = self.max_fall_distance();
+        if mob_entity.applied_max_fall_distance.swap(max_fall, Relaxed) != max_fall {
+            mob_entity
+                .navigator
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .set_max_fall_distance(max_fall as f32);
+        }
 
         if mob_entity.breeding_cooldown.load(Relaxed) > 0 {
             mob_entity.breeding_cooldown.fetch_sub(1, Relaxed);

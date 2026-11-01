@@ -420,6 +420,8 @@ pub trait PathNavigationTrait: Send + Sync {
     fn recompute_path(&mut self, entity: &LivingEntity);
     fn should_recompute_path(&self, entity: &LivingEntity, position: BlockPos) -> bool;
     fn set_avoid_sun(&mut self, avoid_sun: bool);
+    /// Vanilla `Mob.getMaxFallDistance`, refreshed by the mob tick.
+    fn set_max_fall_distance(&mut self, max_fall_distance: f32);
     fn set_can_walk_over_fences(&mut self, can_walk: bool);
     fn set_can_open_doors(&mut self, can_open: bool);
     fn set_can_pass_doors(&mut self, can_pass: bool);
@@ -469,6 +471,7 @@ pub struct PathNavigation {
     pub can_open_doors: bool,
     pub can_pass_doors: bool,
     pub avoid_sun: bool,
+    pub max_fall_distance: f32,
     pub can_path_to_targets_below_surface: bool,
     path_finder: Option<PathFinder>,
     update_pathfinder_max_visited_nodes: bool,
@@ -519,6 +522,7 @@ impl PathNavigation {
             can_open_doors: false,
             can_pass_doors: true,
             avoid_sun: false,
+            max_fall_distance: 3.0,
             can_path_to_targets_below_surface: false,
             path_finder: None,
             update_pathfinder_max_visited_nodes: false,
@@ -618,6 +622,7 @@ impl PathNavigation {
         let mut mob_data = MobData::from_entity(entity, &world);
         let context = PathfindingContext::new(BlockPos::floored_v(mob_data.position).0, world);
         mob_data.can_swim = self.can_float;
+        mob_data.max_fall_distance = self.max_fall_distance;
 
         mob_data.set_pathfinding_malus(PathType::DangerFire, 16.0);
         mob_data.set_pathfinding_malus(PathType::DamageFire, -1.0);
@@ -1258,6 +1263,10 @@ impl PathNavigationTrait for GroundPathNavigation {
         self.inner.avoid_sun = avoid_sun;
     }
 
+    fn set_max_fall_distance(&mut self, max_fall_distance: f32) {
+        self.inner.max_fall_distance = max_fall_distance;
+    }
+
     fn set_can_walk_over_fences(&mut self, can_walk: bool) {
         self.inner.can_walk_over_fences = can_walk;
     }
@@ -1521,6 +1530,10 @@ impl PathNavigationTrait for FlyingPathNavigation {
 
     fn set_avoid_sun(&mut self, avoid_sun: bool) {
         self.inner.avoid_sun = avoid_sun;
+    }
+
+    fn set_max_fall_distance(&mut self, max_fall_distance: f32) {
+        self.inner.max_fall_distance = max_fall_distance;
     }
 
     fn set_can_walk_over_fences(&mut self, can_walk: bool) {
@@ -1808,6 +1821,10 @@ impl PathNavigationTrait for WaterBoundPathNavigation {
         self.inner.avoid_sun = avoid_sun;
     }
 
+    fn set_max_fall_distance(&mut self, max_fall_distance: f32) {
+        self.inner.max_fall_distance = max_fall_distance;
+    }
+
     fn set_can_walk_over_fences(&mut self, can_walk: bool) {
         self.inner.can_walk_over_fences = can_walk;
     }
@@ -2046,6 +2063,10 @@ impl PathNavigationTrait for WallClimberNavigation {
 
     fn set_avoid_sun(&mut self, avoid_sun: bool) {
         self.inner.set_avoid_sun(avoid_sun);
+    }
+
+    fn set_max_fall_distance(&mut self, max_fall_distance: f32) {
+        self.inner.set_max_fall_distance(max_fall_distance);
     }
 
     fn set_can_walk_over_fences(&mut self, can_walk: bool) {
@@ -2303,6 +2324,10 @@ impl PathNavigationTrait for AmphibiousPathNavigation {
 
     fn set_avoid_sun(&mut self, avoid_sun: bool) {
         self.inner.avoid_sun = avoid_sun;
+    }
+
+    fn set_max_fall_distance(&mut self, max_fall_distance: f32) {
+        self.inner.max_fall_distance = max_fall_distance;
     }
 
     fn set_can_walk_over_fences(&mut self, can_walk: bool) {

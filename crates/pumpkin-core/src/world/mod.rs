@@ -3969,6 +3969,19 @@ impl World {
         self.run_explosion(&explosion, position, power);
     }
 
+    // explosion caused by an entity, e.g. a creeper (Level.explode(source, ...))
+    pub fn explode_from_entity(
+        self: &Arc<Self>,
+        source: Arc<dyn EntityBase>,
+        position: Vector3<f64>,
+        power: f32,
+        interaction: ExplosionInteraction,
+    ) {
+        let block_interaction = self.get_block_interaction(interaction);
+        let explosion = Explosion::new(power, position, block_interaction).with_source(source);
+        self.run_explosion(&explosion, position, power);
+    }
+
     pub fn explode_tnt_minecart(self: &Arc<Self>, position: Vector3<f64>, power: f32) {
         let block_interaction = self.get_block_interaction(ExplosionInteraction::Tnt);
         let explosion = Explosion::new(power, position, block_interaction).preserving_rails();

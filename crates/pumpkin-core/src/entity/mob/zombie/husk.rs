@@ -69,6 +69,10 @@ impl HuskEntity {
 }
 
 impl Mob for HuskEntity {
+    fn killed_entity(&self, victim: &dyn EntityBase) -> bool {
+        crate::entity::mob::zombie::infect_villager(self.get_entity(), victim)
+    }
+
     // zombie family: no glow ink sacs (Zombie.wantsToPickUp)
     fn mob_wants_to_pick_up(&self, stack: &pumpkin_data::item_stack::ItemStack) -> bool {
         stack.item != &pumpkin_data::item::Item::GLOW_INK_SAC
