@@ -2534,6 +2534,21 @@ impl World {
                         collisions.push(shape);
                     }
                 }
+            } else if block == &Block::MOVING_PISTON {
+                // piston: shape comes from the moving block entity (MovingPistonBlock.getCollisionShape)
+                if let Some(entity) = self.get_block_entity(&pos)
+                    && let Some(piston) = entity
+                        .as_any()
+                        .downcast_ref::<crate::block::entities::piston::PistonBlockEntity>(
+                    )
+                {
+                    for shape in piston.collision_boxes() {
+                        if shape.intersects(&bounding_box) {
+                            collided = true;
+                            collisions.push(shape);
+                        }
+                    }
+                }
             } else {
                 for shape in state.get_block_collision_shapes_at(&pos) {
                     let shape = shape.at_pos(pos);

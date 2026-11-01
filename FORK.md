@@ -77,6 +77,7 @@ Unser Fortschritt steht auf **https://claude.ai/artifact/KAHK4pXmbbEhd9nXiBuobN*
 | Blöcke 2 (Gemini) | Farmland, Frogspawn, Huge Mushroom, Infested, Jukebox, Lodestone, Potent Sulfur, Fire, Sculk Catalyst, Big Dripleaf | in `playable` gemergt; Sculk Catalyst offen (SculkSpreader fehlt) |
 | 8 (Gemini) | Horse, Donkey, Mule, Skeleton Horse, Zombie Horse, Llama, Trader Llama, Goat, Armadillo, Strider (AbstractHorse-Basis) | in `playable` gemergt; Test im Spiel steht aus |
 | 9 (Gemini) | Camel, Camel Husk, Cod, Salmon, Tropical Fish, Pufferfish, Dolphin, Panda, Nautilus, Zombie Nautilus | in `playable` gemergt; Panda und Delfin-Schatzsuche von Claude nachportiert; Test im Spiel steht aus |
+| Redstone (Abschluss) | Druckplatten, Tageslichtsensor, Notenblock und Kolben gegen Vanilla geprüft; Kolben: bewegte Blöcke haben Kollision, Entities werden kollisionsbewusst geschoben, Pushreaction-Ausnahmen, Wasser/Zerstörung beim Landen | in `playable`; Test im Spiel steht aus |
 | Performance | `/recording`, Himmelslicht, Jigsaw-Cache, Mth.floor, Gen-Threads, mimalloc, FxHash-Strukturcache | in `playable`; siehe unten |
 
 Aus dem Tracker entfernt, weil Vanilla sie auf einem dedizierten Server nicht hat: `/publish` und `/unpublish` (nur Einzelspieler) sowie `/jfr` (Java Flight Recorder, braucht eine JVM).

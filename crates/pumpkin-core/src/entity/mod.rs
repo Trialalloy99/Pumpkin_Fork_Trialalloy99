@@ -1162,6 +1162,9 @@ pub struct Entity {
     pub block_pos: AtomicCell<BlockPos>,
     /// The block supporting the entity
     pub supporting_block_pos: AtomicCell<Option<BlockPos>>,
+    // entity: per-tick piston movement already applied (Entity.pistonDeltas)
+    pub piston_deltas: AtomicCell<[f64; 3]>,
+    pub piston_deltas_game_time: std::sync::atomic::AtomicI64,
     /// The chunk coordinates of the entity's current position
     pub chunk_pos: AtomicCell<Vector2<i32>>,
     /// Indicates whether the entity is sneaking
@@ -1456,6 +1459,8 @@ impl Entity {
             movement: AtomicCell::new(Vector3::default()),
             block_pos: AtomicCell::new(BlockPos(Vector3::new(floor_x, floor_y, floor_z))),
             supporting_block_pos: AtomicCell::new(None),
+            piston_deltas: AtomicCell::new([0.0; 3]),
+            piston_deltas_game_time: std::sync::atomic::AtomicI64::new(-1),
             chunk_pos: AtomicCell::new(Vector2::new(
                 get_section_cord(floor_x),
                 get_section_cord(floor_z),
@@ -2578,6 +2583,58 @@ impl Entity {
 
     pub fn move_pos(&self, delta: Vector3<f64>) {
         self.set_pos(self.pos.load() + delta);
+    }
+
+    // entity: piston mover, collides with blocks (Entity.move MoverType.PISTON)
+    pub(crate) fn move_by_piston(&self, caller: &dyn EntityBase, motion: Vector3<f64>) {
+        let motion = self.limit_piston_movement(motion);
+        if motion.length_squared() == 0.0 {
+            return;
+        }
+        if self.no_physics.load(Ordering::Relaxed) {
+            self.move_pos(motion);
+            return;
+        }
+        let final_move = self.adjust_movement_for_collisions(motion, caller);
+        self.move_pos(final_move);
+    }
+
+    // entity: at most 0.51 per axis and tick (Entity.limitPistonMovement)
+    fn limit_piston_movement(&self, motion: Vector3<f64>) -> Vector3<f64> {
+        if motion.length_squared() <= 1.0E-7 {
+            return motion;
+        }
+        let game_time = self.world.load().get_world_age();
+        let stale = self
+            .piston_deltas_game_time
+            .swap(game_time, Ordering::Relaxed)
+            != game_time;
+        let mut deltas = if stale {
+            [0.0; 3]
+        } else {
+            self.piston_deltas.load()
+        };
+        let restrict = |deltas: &mut [f64; 3], index: usize, amount: f64| {
+            let clamped = (amount + deltas[index]).clamp(-0.51, 0.51);
+            let applied = clamped - deltas[index];
+            deltas[index] = clamped;
+            if applied.abs() <= f64::from(1.0E-5f32) {
+                0.0
+            } else {
+                applied
+            }
+        };
+        let limited = if motion.x != 0.0 {
+            Vector3::new(restrict(&mut deltas, 0, motion.x), 0.0, 0.0)
+        } else if motion.y != 0.0 {
+            Vector3::new(0.0, restrict(&mut deltas, 1, motion.y), 0.0)
+        } else if motion.z != 0.0 {
+            Vector3::new(0.0, 0.0, restrict(&mut deltas, 2, motion.z))
+        } else {
+            Vector3::default()
+        };
+        self.piston_deltas.store(deltas);
+        limited
     }
 
     // Move by a delta, adjust for collisions, and send

@@ -2,7 +2,9 @@ use pumpkin_data::{Block, BlockState, FacingExt};
 use pumpkin_macros::pumpkin_block;
 use pumpkin_world::world::BlockFlags;
 
-use crate::block::{BlockBehaviour, BrokenArgs, PathComputationType};
+use crate::block::{
+    BlockActionResult, BlockBehaviour, BrokenArgs, NormalUseArgs, PathComputationType,
+};
 
 use super::piston::PistonProps;
 
@@ -27,6 +29,19 @@ impl BlockBehaviour for PistonExtensionBlock {
                 }
             }
         }
+    }
+
+    // moving piston: orphan block without entity is removed on use (MovingPistonBlock.useWithoutItem)
+    fn normal_use(&self, args: NormalUseArgs<'_>) -> BlockActionResult {
+        if args.world.get_block_entity(args.position).is_none() {
+            args.world.set_block_state(
+                args.position,
+                Block::AIR.default_state.id,
+                BlockFlags::NOTIFY_ALL,
+            );
+            return BlockActionResult::Consume;
+        }
+        BlockActionResult::Pass
     }
 
     fn is_pathfindable(&self, _state: &BlockState, _computation_type: PathComputationType) -> bool {
