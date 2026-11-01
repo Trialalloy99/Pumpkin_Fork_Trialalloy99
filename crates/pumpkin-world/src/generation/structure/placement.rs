@@ -51,7 +51,9 @@ pub struct GlobalStructureCache {
     /// A jigsaw structure's placement is fully determined by its start chunk and the
     /// world seed, so it is computed once here instead of being recomputed for every
     /// surrounding chunk whose structure references overlap it.
-    structure_starts: OnceLock<DashMap<(StructureKeys, i32, i32), CachedStructureStart>>,
+    structure_starts: OnceLock<
+        DashMap<(StructureKeys, i32, i32), CachedStructureStart, rustc_hash::FxBuildHasher>,
+    >,
 }
 
 struct StrongholdJob {
@@ -193,7 +195,9 @@ impl GlobalStructureCache {
         chunk_z: i32,
         compute: impl FnOnce() -> Option<StructurePosition>,
     ) -> Option<StructurePosition> {
-        let cache = self.structure_starts.get_or_init(DashMap::new);
+        let cache = self
+            .structure_starts
+            .get_or_init(|| DashMap::with_hasher(rustc_hash::FxBuildHasher));
         let cache_key = (key, chunk_x, chunk_z);
         let start = cache.get(&cache_key).map_or_else(
             || cache.entry(cache_key).or_default().value().clone(),
