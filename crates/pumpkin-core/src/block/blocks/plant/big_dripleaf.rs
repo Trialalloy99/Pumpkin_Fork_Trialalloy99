@@ -19,12 +19,12 @@ use pumpkin_data::block_properties::{
     BigDripleafLikeProperties, HorizontalFacing, Tilt, WaterLikeProperties,
 };
 use pumpkin_data::fluid::Fluid;
+use pumpkin_data::game_event::GameEvent;
 use pumpkin_data::sound::{Sound, SoundCategory};
 use pumpkin_data::tag::Taggable;
 use pumpkin_data::{Block, BlockDirection, tag};
 use pumpkin_macros::pumpkin_block;
 use pumpkin_util::math::position::BlockPos;
-use pumpkin_util::math::vector3::Vector3;
 use pumpkin_world::tick::TickPriority;
 use pumpkin_world::world::{BlockAccessor, BlockFlags};
 use rand::RngExt;
@@ -268,19 +268,29 @@ fn reset_tilt(state_id: BlockStateId, world: &Arc<World>, pos: &BlockPos) {
 
 fn set_tilt(state_id: BlockStateId, world: &Arc<World>, pos: &BlockPos, new_tilt: Tilt) {
     let mut props = BigDripleafLikeProperties::from_state_id(state_id);
+    let previous_tilt = props.tilt;
     props.tilt = new_tilt;
     world.set_block_state(
         pos,
         props.to_state_id(&Block::BIG_DRIPLEAF),
         BlockFlags::NOTIFY_ALL,
     );
+    // big_dripleaf: emit block change game event if causes vibration (BigDripleafBlock.setTilt)
+    let causes_vibration = matches!(new_tilt, Tilt::None | Tilt::Partial | Tilt::Full);
+    if causes_vibration && new_tilt != previous_tilt {
+        world.emit_game_event(GameEvent::BlockChange.name(), pos.to_centered_f64());
+    }
 }
 
 fn play_tilt_sound(world: &Arc<World>, pos: &BlockPos, tilt_sound: Sound) {
     let pitch = rand::rng().random_range(0.8f32..1.2f32);
-    let v = pos.as_vector3();
-    let position = Vector3::new(v.x as f64, v.y as f64, v.z as f64);
-    world.play_sound_fine(tilt_sound, SoundCategory::Blocks, &position, 1f32, pitch);
+    world.play_sound_fine(
+        tilt_sound,
+        SoundCategory::Blocks,
+        &pos.to_centered_f64(),
+        1f32,
+        pitch,
+    );
 }
 fn can_entity_tilt<T: EntityBase + ?Sized>(pos: &BlockPos, entity: &T) -> bool {
     entity.get_entity().on_ground.load(Ordering::Relaxed)

@@ -36,7 +36,7 @@ impl ItemBehaviour for CompassItem {
             world.play_sound_fine(
                 Sound::ItemLodestoneCompassLock,
                 SoundCategory::Players,
-                &location.to_f64(),
+                &location.to_centered_f64(),
                 1.0,
                 1.0,
             );

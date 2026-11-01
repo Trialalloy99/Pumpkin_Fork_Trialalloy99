@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use pumpkin_data::{
     Block, BlockId, BlockState, BlockStateId, Enchantment, Rotation,
     block_properties::{Axis, PaleOakWoodLikeProperties},
@@ -9,8 +7,9 @@ use pumpkin_util::{GameMode, math::vector3::Vector3};
 
 use crate::{
     block::{BlockBehaviour, BlockMetadata, BrokenArgs, OnPlaceArgs},
-    entity::Entity,
+    entity::r#type::from_type,
 };
+use uuid::Uuid;
 
 pub struct InfestedBlock;
 
@@ -82,8 +81,8 @@ impl BlockBehaviour for InfestedBlock {
             f64::from(args.position.0.y),
             f64::from(args.position.0.z) + 0.5,
         );
-        let entity = Entity::new(args.world.clone(), pos, &EntityType::SILVERFISH);
-
-        args.world.spawn_entity(Arc::new(entity));
+        // infested: spawn silverfish mob on break without silk touch (InfestedBlock.spawnInfestation)
+        let silverfish = from_type(&EntityType::SILVERFISH, pos, args.world, Uuid::new_v4());
+        args.world.spawn_entity(silverfish);
     }
 }

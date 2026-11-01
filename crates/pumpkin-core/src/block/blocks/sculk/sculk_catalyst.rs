@@ -1,4 +1,7 @@
-use crate::block::{BlockBehaviour, BlockMetadata, OnPlaceArgs, OnScheduledTickArgs};
+use std::sync::Arc;
+
+use crate::block::entities::sculk_catalyst::SculkCatalystBlockEntity;
+use crate::block::{BlockBehaviour, BlockMetadata, OnPlaceArgs, OnScheduledTickArgs, PlacedArgs};
 use pumpkin_data::{BlockId, BlockStateId, block_properties::SculkCatalystLikeProperties};
 use pumpkin_world::world::BlockFlags;
 
@@ -15,6 +18,12 @@ impl BlockBehaviour for SculkCatalystBlock {
         let mut props = SculkCatalystLikeProperties::default(args.block);
         props.bloom = false;
         props.to_state_id(args.block)
+    }
+
+    // sculk_catalyst: register block entity on placed (SculkCatalystBlock.newBlockEntity)
+    fn placed(&self, args: PlacedArgs<'_>) {
+        let block_entity = SculkCatalystBlockEntity::new(*args.position);
+        args.world.add_block_entity(Arc::new(block_entity));
     }
 
     fn on_scheduled_tick(&self, args: OnScheduledTickArgs<'_>) {
