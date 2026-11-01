@@ -4376,6 +4376,15 @@ impl Entity {
         const AXIS_SPECIFIC_ELASTICITY: Vector3<f64> = Vector3::new(0.8, 0.2, 0.8);
         const TORSIONAL_ELASTICITY: f64 = 10.0;
         const STIFFNESS: f64 = 0.11;
+        // leash: four corner ropes between quad-capable boat and happy ghast (Leashable.SHARED_QUAD_ATTACHMENT_POINTS)
+        const SINGLE_ENTITY: [Vector3<f64>; 1] = [Vector3::new(0.0, 0.5, 0.5)];
+        const SINGLE_HOLDER: [Vector3<f64>; 1] = [Vector3::new(0.0, 0.5, 0.0)];
+        const QUAD: [Vector3<f64>; 4] = [
+            Vector3::new(-0.5, 0.5, 0.5),
+            Vector3::new(-0.5, 0.5, -0.5),
+            Vector3::new(0.5, 0.5, -0.5),
+            Vector3::new(0.5, 0.5, 0.5),
+        ];
         let holder_entity = holder.get_entity();
         let rotate = |v: Vector3<f64>, yaw_degrees: f32| {
             let angle = -yaw_degrees.to_radians();
@@ -4392,32 +4401,62 @@ impl Entity {
             f64::from(holder_entity.height()),
             f64::from(holder_entity.width()),
         );
-        let lever = rotate(
-            Vector3::new(0.0, 0.5 * own_dims.y, 0.5 * own_dims.z),
-            self.yaw.load(),
-        );
-        let attach = self.pos.load() + lever;
-        let pivot = holder_entity.pos.load()
-            + rotate(
-                Vector3::new(0.0, 0.5 * holder_dims.y, 0.0),
-                holder_entity.yaw.load(),
+        let quad = holder_entity.entity_type == &EntityType::HAPPY_GHAST
+            && Self::supports_quad_leash(self.entity_type);
+        let (entity_points, holder_points): (&[Vector3<f64>], &[Vector3<f64>]) = if quad {
+            (&QUAD, &QUAD)
+        } else {
+            (&SINGLE_ENTITY, &SINGLE_HOLDER)
+        };
+        let own_movement = self.velocity.load();
+        let mut force = Vector3::new(0.0, 0.0, 0.0);
+        let mut torque = 0.0;
+        let mut any = false;
+        for (entity_point, holder_point) in entity_points.iter().zip(holder_points) {
+            let lever = rotate(
+                Vector3::new(
+                    entity_point.x * own_dims.x,
+                    entity_point.y * own_dims.y,
+                    entity_point.z * own_dims.z,
+                ),
+                self.yaw.load(),
             );
-
-        let distance = attach.squared_distance_to_vec(&pivot).sqrt();
-        if distance < Self::LEASH_ELASTIC_DISTANCE {
+            let attach = self.pos.load() + lever;
+            let pivot = holder_entity.pos.load()
+                + rotate(
+                    Vector3::new(
+                        holder_point.x * holder_dims.x,
+                        holder_point.y * holder_dims.y,
+                        holder_point.z * holder_dims.z,
+                    ),
+                    holder_entity.yaw.load(),
+                );
+            let distance = attach.squared_distance_to_vec(&pivot).sqrt();
+            if distance < Self::LEASH_ELASTIC_DISTANCE {
+                continue;
+            }
+            let mut displacement =
+                (pivot - attach).normalize() * (distance - Self::LEASH_ELASTIC_DISTANCE);
+            let point_torque = lever.z * displacement.x - lever.x * displacement.z;
+            if own_movement.x * displacement.x
+                + own_movement.y * displacement.y
+                + own_movement.z * displacement.z
+                >= 0.0
+            {
+                displacement = displacement * f64::from(0.3f32);
+            }
+            force += displacement;
+            torque += point_torque;
+            any = true;
+        }
+        if !any {
             return;
         }
-        let scale = distance - Self::LEASH_ELASTIC_DISTANCE;
-        let mut displacement = (pivot - attach).normalize() * scale;
-        let torque = lever.z * displacement.x - lever.x * displacement.z;
-        let own_movement = self.velocity.load();
-        if own_movement.x * displacement.x
-            + own_movement.y * displacement.y
-            + own_movement.z * displacement.z
-            >= 0.0
-        {
-            displacement = displacement * f64::from(0.3f32);
+        if quad {
+            force = force * 0.25;
+            torque *= 0.25;
         }
+        let displacement = force;
 
         self.leash_angular_momentum
             .store(self.leash_angular_momentum.load() + TORSIONAL_ELASTICITY * torque);
@@ -4429,6 +4468,13 @@ impl Entity {
         ) + relative * STIFFNESS;
         self.velocity.store(own_movement + push);
         self.velocity_dirty.store(true, Relaxed);
+    }
+
+    // leash: boats, rafts and happy ghasts take four ropes (supportQuadLeash)
+    fn supports_quad_leash(entity_type: &EntityType) -> bool {
+        entity_type == &EntityType::HAPPY_GHAST
+            || entity_type.resource_name.ends_with("_boat")
+            || entity_type.resource_name.ends_with("_raft")
     }
 
     // leash: spin decay from ground or fluid (Leashable.angularFriction)

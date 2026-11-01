@@ -5588,7 +5588,10 @@ impl World {
         );
     }
 
-    #[expect(clippy::too_many_lines, reason = "mirrors ServerPlayerGameMode.destroyBlock")]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "mirrors ServerPlayerGameMode.destroyBlock"
+    )]
     pub fn break_block(
         self: &Arc<Self>,
         position: &BlockPos,
