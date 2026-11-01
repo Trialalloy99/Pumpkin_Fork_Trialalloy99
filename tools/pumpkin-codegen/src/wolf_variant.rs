@@ -12,6 +12,27 @@ struct WolfVariantJson {
     assets: WolfAssetsJson,
     #[serde(default)]
     baby_assets: Option<WolfAssetsJson>,
+    #[serde(default)]
+    spawn_conditions: Vec<SpawnConditionJson>,
+}
+
+#[derive(Deserialize)]
+struct SpawnConditionJson {
+    #[serde(default)]
+    condition: Option<BiomeConditionJson>,
+    priority: i32,
+}
+
+#[derive(Deserialize)]
+struct BiomeConditionJson {
+    biomes: BiomesJson,
+}
+
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum BiomesJson {
+    One(String),
+    Many(Vec<String>),
 }
 
 #[derive(Deserialize)]
@@ -84,6 +105,48 @@ pub fn build() -> TokenStream {
         all_variants.push(quote! { Self::#variant_ident });
     }
 
+    // wolf variant: biome spawn conditions, highest priority first (VariantUtils.selectVariantToSpawn)
+    let mut conditions: Vec<(i32, String, Option<BiomesJson>)> = Vec::new();
+    for (name, json) in variants {
+        for spawn in json.spawn_conditions {
+            conditions.push((
+                spawn.priority,
+                name.clone(),
+                spawn.condition.map(|condition| condition.biomes),
+            ));
+        }
+    }
+    conditions.sort_by(|a, b| b.0.cmp(&a.0));
+    let mut selection_arms = Vec::new();
+    for (_, name, biomes) in &conditions {
+        let variant_ident = format_ident!("{}", name.to_pascal_case());
+        let biomes = match biomes {
+            None => {
+                selection_arms.push(quote! { return Self::#variant_ident; });
+                break;
+            }
+            Some(BiomesJson::One(biome)) => vec![biome.clone()],
+            Some(BiomesJson::Many(biomes)) => biomes.clone(),
+        };
+        let checks = biomes.iter().map(|biome| {
+            if let Some(tag) = biome.strip_prefix('#') {
+                let tag_ident = format_ident!("{}", tag.replace([':', '/'], "_").to_uppercase());
+                quote! { crate::tag::WorldgenBiome::#tag_ident.0.contains(&bare) }
+            } else {
+                let bare = biome
+                    .strip_prefix("minecraft:")
+                    .unwrap_or(biome)
+                    .to_string();
+                quote! { bare == #bare }
+            }
+        });
+        selection_arms.push(quote! {
+            if #(#checks)||* {
+                return Self::#variant_ident;
+            }
+        });
+    }
+
     quote! {
         /* This file is generated. Do not edit manually. */
 
@@ -94,6 +157,13 @@ pub fn build() -> TokenStream {
         }
 
         impl WolfVariant {
+            #[doc = "Selects the spawn variant for a biome from the vanilla spawn conditions."]
+            #[must_use]
+            pub fn select_for_biome(biome_name: &str) -> Self {
+                let bare = biome_name.strip_prefix("minecraft:").unwrap_or(biome_name);
+                #(#selection_arms)*
+            }
+
             #[doc = "Returns the wolf variant from a resource name (bare or namespaced)."]
             #[must_use]
             pub fn from_name(name: &str) -> Option<Self> {

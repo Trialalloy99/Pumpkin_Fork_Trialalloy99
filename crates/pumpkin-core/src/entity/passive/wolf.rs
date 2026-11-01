@@ -1,22 +1,26 @@
 use std::sync::{
     Arc, Weak,
-    atomic::{AtomicU8, Ordering},
+    atomic::{AtomicBool, AtomicI32, AtomicU8, Ordering},
 };
 
 use pumpkin_data::BlockState;
+use pumpkin_data::attributes::Attributes;
 use pumpkin_data::damage::DamageType;
-use pumpkin_data::entity::EntityType;
+use pumpkin_data::entity::{EntityStatus, EntityType};
+use pumpkin_data::game_event::GameEvent;
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::tag::{self, Taggable};
 use pumpkin_data::wolf_sound_variant::WolfSoundVariant;
 use pumpkin_data::wolf_variant::WolfVariant;
 use pumpkin_nbt::compound::NbtCompound;
+use pumpkin_protocol::bedrock::server::actor_event::ActorEventID;
 use pumpkin_protocol::codec::var_int::VarInt;
 use pumpkin_util::math::position::BlockPos;
 use rand::RngExt;
 
 use crate::entity::custom_sound::CustomSound;
+use crate::entity::mob::spawn::SpawnGroupData;
 use crate::entity::{
     Entity, EntityBase,
     ageable::AgeableMob,
@@ -47,6 +51,8 @@ use crate::entity::{
     player::Player,
 };
 use crate::plugin::api::events::entity::entity_target::TargetReason;
+use crate::world::World;
+use crate::world::game_event::GameEventContext;
 
 const WOLF_PREY: TargetMatch =
     TargetMatch::AnyOf(&[&EntityType::SHEEP, &EntityType::RABBIT, &EntityType::FOX]);
@@ -62,10 +68,17 @@ const WOLF_HUNTS: &[Hunt] = &[
     Hunt::new(7, TargetMatch::SKELETON_LIKE, false),
 ];
 
+const SOUND_VOLUME: f32 = 0.4;
+const SHAKE_TICKS: i32 = 40;
+const TAME_MAX_HEALTH: f64 = 40.0;
+
 pub struct WolfEntity {
     pub mob_entity: MobEntity,
     pub variant: AtomicU8,
     pub sound_variant: AtomicU8,
+    is_wet: AtomicBool,
+    is_shaking: AtomicBool,
+    shake_ticks: AtomicI32,
     pub collar_color: AtomicU8,
     pub tamable_data: TamableData,
     pub ageable_data: crate::entity::ageable::AgeableData,
@@ -79,6 +92,9 @@ impl WolfEntity {
             mob_entity,
             variant: AtomicU8::new(WolfVariant::Pale.id()),
             sound_variant: AtomicU8::new(WolfSoundVariant::Classic as u8),
+            is_wet: AtomicBool::new(false),
+            is_shaking: AtomicBool::new(false),
+            shake_ticks: AtomicI32::new(0),
             collar_color: AtomicU8::new(14), // Default to red
             tamable_data: TamableData::default(),
             ageable_data: crate::entity::ageable::AgeableData::default(),
@@ -188,6 +204,103 @@ impl NeutralMob for WolfEntity {
 }
 
 impl Mob for WolfEntity {
+    // wolf: pack variant by biome, random sound set (Wolf.finalizeSpawn)
+    fn finalize_spawn(
+        &self,
+        world: &Arc<World>,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        let variant = if let Some(SpawnGroupData::WolfPack(variant)) = group_data {
+            variant
+        } else {
+            let biome = world.get_biome(&self.get_entity().block_pos.load());
+            WolfVariant::select_for_biome(biome.registry_id)
+        };
+        self.set_variant(variant);
+        let sound_variants = WolfSoundVariant::all();
+        self.set_sound_variant(
+            sound_variants[self.get_random().random_range(0..sound_variants.len())],
+        );
+        self.finalize_spawn_super(Some(SpawnGroupData::WolfPack(variant)))
+    }
+
+    // wolf: growl when angry, else whine/pant/ambient (Wolf.getAmbientSound)
+    fn get_ambient_sound(&self) -> Option<pumpkin_data::sound::Sound> {
+        let sounds = WolfSoundVariant::from_id(self.sound_variant.load(Ordering::Relaxed))
+            .unwrap_or_default();
+        let baby = self.is_baby();
+        Some(if self.is_angry() {
+            sounds.growl_sound(baby)
+        } else if self.get_random().random_range(0..3) == 0 {
+            if self.is_tame() && self.mob_entity.living_entity.health.load() < 20.0 {
+                sounds.whine_sound(baby)
+            } else {
+                sounds.pant_sound(baby)
+            }
+        } else {
+            sounds.ambient_sound(baby)
+        })
+    }
+
+    // wolf: start shaking off water on ground (Wolf.aiStep)
+    fn mob_ai_step(&self) {
+        let entity = self.get_entity();
+        if self.is_wet.load(Ordering::Relaxed)
+            && !self.is_shaking.load(Ordering::Relaxed)
+            && entity.on_ground.load(Ordering::Relaxed)
+            && self.is_navigator_idle()
+        {
+            self.is_shaking.store(true, Ordering::Relaxed);
+            self.shake_ticks.store(0, Ordering::Relaxed);
+            entity.world.load().send_entity_status(
+                entity,
+                EntityStatus::ShakeWetness,
+                ActorEventID::None,
+            );
+        }
+    }
+
+    // wolf: wetness + shake timer (Wolf.tick)
+    fn post_tick(&self) {
+        let entity = self.get_entity();
+        if !entity.is_alive() {
+            return;
+        }
+        if entity.is_in_water_or_rain() {
+            self.is_wet.store(true, Ordering::Relaxed);
+            if self.is_shaking.swap(false, Ordering::Relaxed) {
+                self.shake_ticks.store(0, Ordering::Relaxed);
+                entity.world.load().send_entity_status(
+                    entity,
+                    EntityStatus::CancelShakeWetness,
+                    ActorEventID::None,
+                );
+            }
+        } else if self.is_shaking.load(Ordering::Relaxed) {
+            let ticks = self.shake_ticks.fetch_add(1, Ordering::Relaxed);
+            if ticks == 0 {
+                let pitch = (rand::random::<f32>() - rand::random::<f32>()) * 0.2 + 1.0;
+                self.play_entity_sound(
+                    pumpkin_data::sound::Sound::EntityWolfShake,
+                    SOUND_VOLUME,
+                    pitch,
+                );
+                entity.world.load().emit_game_event_with_context(
+                    GameEvent::EntityAction.name(),
+                    entity.pos.load(),
+                    &GameEventContext {
+                        source_entity: Some(self),
+                    },
+                );
+            }
+            if ticks >= SHAKE_TICKS {
+                self.is_wet.store(false, Ordering::Relaxed);
+                self.is_shaking.store(false, Ordering::Relaxed);
+                self.shake_ticks.store(0, Ordering::Relaxed);
+            }
+        }
+    }
+
     fn on_damage(&self, _damage_type: DamageType, _source: Option<&dyn EntityBase>) {
         self.order_to_sit(false);
     }
@@ -424,6 +537,10 @@ impl Mob for WolfEntity {
             let mut rng = rand::rng();
             if rng.random_range(0..3) == 0 && self.approve_taming(player) {
                 TamableAnimal::tame(self, player.gameprofile.id);
+                // wolf: tamed health 40 (Wolf.applyTamingSideEffects)
+                let living = &self.mob_entity.living_entity;
+                living.set_attribute_base(&Attributes::MAX_HEALTH, TAME_MAX_HEALTH);
+                living.set_health(TAME_MAX_HEALTH as f32);
                 self.stop_and_forget_target();
                 self.set_ordered_to_sit(true);
                 self.spawn_taming_particles(true);
@@ -438,6 +555,10 @@ impl Mob for WolfEntity {
 }
 
 impl CustomSound for WolfEntity {
+    fn sound_volume(&self) -> f32 {
+        SOUND_VOLUME
+    }
+
     fn death_sound(&self) -> Option<pumpkin_data::sound::Sound> {
         let is_baby = self.is_baby();
         let sound_variant = WolfSoundVariant::from_id(self.sound_variant.load(Ordering::Relaxed))

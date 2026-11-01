@@ -13,6 +13,45 @@ pub enum WolfVariant {
     Woods,
 }
 impl WolfVariant {
+    #[doc = "Selects the spawn variant for a biome from the vanilla spawn conditions."]
+    #[must_use]
+    pub fn select_for_biome(biome_name: &str) -> Self {
+        let bare = biome_name.strip_prefix("minecraft:").unwrap_or(biome_name);
+        if bare == "snowy_taiga" {
+            return Self::Ashen;
+        }
+        if bare == "old_growth_pine_taiga" {
+            return Self::Black;
+        }
+        if bare == "old_growth_spruce_taiga" {
+            return Self::Chestnut;
+        }
+        if crate::tag::WorldgenBiome::MINECRAFT_IS_JUNGLE
+            .0
+            .contains(&bare)
+        {
+            return Self::Rusty;
+        }
+        if bare == "grove" {
+            return Self::Snowy;
+        }
+        if crate::tag::WorldgenBiome::MINECRAFT_IS_SAVANNA
+            .0
+            .contains(&bare)
+        {
+            return Self::Spotted;
+        }
+        if crate::tag::WorldgenBiome::MINECRAFT_IS_BADLANDS
+            .0
+            .contains(&bare)
+        {
+            return Self::Striped;
+        }
+        if bare == "forest" {
+            return Self::Woods;
+        }
+        return Self::Pale;
+    }
     #[doc = "Returns the wolf variant from a resource name (bare or namespaced)."]
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {

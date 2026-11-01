@@ -37,6 +37,8 @@ pub enum SpawnGroupData {
     Zombie {
         baby: bool,
     },
+    /// Vanilla `WolfPackData`: the variant every wolf of the pack shares.
+    WolfPack(pumpkin_data::wolf_variant::WolfVariant),
 }
 
 impl MobEntity {
