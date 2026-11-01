@@ -393,7 +393,14 @@ pub fn build() -> TokenStream {
             })
             .collect();
 
-        let creature_spawn_probability = &biome.creature_spawn_probability.unwrap_or(0.1);
+        // worldgen creatures: 26.3 reads the probability from the attribute (EnvironmentAttributes.CREATURE_WORLD_GEN_SPAWN_PROBABILITY)
+        let creature_spawn_probability = &biome
+            .attributes
+            .get("minecraft:gameplay/creature_world_gen_spawn_probability")
+            .and_then(Value::as_f64)
+            .map(|p| p as f32)
+            .or(biome.creature_spawn_probability)
+            .unwrap_or(0.1);
 
         let temperature_modifier = biome
             .temperature_modifier
