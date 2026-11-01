@@ -56,9 +56,16 @@ Unser Fortschritt steht auf **https://claude.ai/artifact/KAHK4pXmbbEhd9nXiBuobN*
 |---|---|---|
 | 1 | Vex (plus die Vex-Beschwörung beim Evoker) | fertig auf `feat/vex-ai` und `playable`; Test im Spiel steht aus |
 | Commands | `/locate` (alle POI-Typen, POIs aus geladenen Chunks), `/perf` | fertig auf `batch-commands` |
-| 2 | Guardian, Elder Guardian, Illusioner, Vindicator, Ravager, Endermite | als Nächstes |
+| 2 | Guardian, Elder Guardian, Illusioner, Vindicator, Ravager, Endermite | fertig auf `batch-2`; Test im Spiel steht aus |
 
 Aus dem Tracker entfernt, weil Vanilla sie auf einem dedizierten Server nicht hat: `/publish` und `/unpublish` (nur Einzelspieler) sowie `/jfr` (Java Flight Recorder, braucht eine JVM).
+
+Offene Lücken aus Batch 2, als Aufgaben für später:
+- `LookAtEntityGoal` kann nur einen einzigen Typ. Die Vanilla-Ziele `LookAtPlayerGoal(Mob.class, 8)` fehlen deshalb bei Vex, Vindicator, Illusioner und Ravager. Beim Guardian fehlt das Hinschauen zum Elder Guardian.
+- `TrackTargetGoal::can_navigate_to_entity` ist ein TODO und gibt `false` zurück. Ziele mit „mustReach“ (Johnny beim Vindicator) prüfen die Erreichbarkeit deshalb nicht.
+- Ravager: Betäubung, wenn der Angriff auf ein Schild trifft (`blockedByItem`), fehlt, weil Pumpkin keinen Hook dafür hat. `attackTick` wird nur bei einem Treffer gesetzt, Vanilla setzt es bei jedem Versuch.
+- Guardian: Wasser-Malus 0 für das Pathfinding ist nicht gesetzt. Für die Blickglättung beim Schwimmen gibt es eine Annäherung, weil `LookControlTrait` sein Ziel nicht herausgibt.
+- Der Evoker hat noch ein eigenes Zaubersystem. Er sollte auf `mob/spellcaster.rs` umgestellt werden, das der Illusioner schon nutzt.
 
 Beim Vex fehlt noch: Vanilla hat ein zweites Umschau-Ziel (`LookAtPlayerGoal` mit `Mob`, Reichweite 8), das bei uns fehlt. `LookAtEntityGoal` kann nur einen einzigen Entity-Typ als Ziel.
 
@@ -84,3 +91,25 @@ Upstream arbeiten andere bereits an: Silverfish (#3886), Phantom (#3715), Spider
   - **Blockeffekte trotz `no_physics`:** `Mob::mob_is_affected_by_blocks` überschreiben.
 - **`has_audited_tick` bleibt `false`,** solange niemand den ganzen Mob für die Entity-Islands geprüft hat. Neue Ziele geben in `tick_reach` `None` zurück. Das ist sicher, nur langsamer.
 - **Upstream nachziehen:** `git remote add upstream https://github.com/Pumpkin-MC/Pumpkin` (falls noch nicht vorhanden), dann regelmäßig `git fetch upstream master` und in `master` mergen, danach `playable` aktualisieren. Je länger man wartet, desto mehr Konflikte gibt es.
+
+## Speedtest (Commands-Batch, 2026-11-01)
+
+Gemessen im Container mit 4 Kernen, Seed 12345, Sichtweite 10, ohne Spieler. Pumpkin als Release-Build mit Thin-LTO. Vanilla 26.3 und Paper 26.3 (Build 235) liefen mit Java 25 und `-Xms2G -Xmx4G`. `/locate` schreibt bei allen drei dieselbe Log-Zeile „Locating element … took … ms“.
+
+| Messung | Pumpkin | Vanilla | Paper |
+|---|---|---|---|
+| Start bis bereit | 0,2 s* | 12,2 s | 15,0 s |
+| RAM nach dem Start | 81 MB | 1,69 GB** | 2,11 GB** |
+| `/locate structure village_plains` (erste Suche) | 801 ms | 287 ms | 246 ms |
+| `/locate structure #village` (zweite Suche) | 1994 ms | 3 ms | 4 ms |
+| `/locate structure stronghold` | 0 ms | 12 ms | 12 ms |
+| `/locate biome cherry_grove` | 19 ms | 48 ms | 42 ms |
+| `/locate biome mushroom_fields` | 484 ms | 792 ms | 763 ms |
+
+\* Pumpkin generiert beim Start keinen Spawn-Bereich vor, Vanilla und Paper schon.
+\** Bei Java ist der RAM-Wert stark durch `-Xms2G` bestimmt.
+
+Was dabei aufgefallen ist (eigene Aufgaben, nicht in dieser Batch behoben):
+- Strukturen: Vanilla merkt sich bereits gefundene Struktur-Starts (zweite Suche 3 ms), Pumpkin rechnet jedes Mal neu.
+- `/locate structure mansion` findet in Pumpkin eine andere Position (12032, 5280) als Vanilla (4656, 7056). Bei Woodland Mansions stimmt also etwas an der Platzierung oder der Biom-Prüfung nicht.
+- Die Abstände weichen um ein paar Blöcke ab (841 statt 835), weil die Konsole in Pumpkin von einer anderen Position aus sucht als vom Welt-Spawn wie in Vanilla.
