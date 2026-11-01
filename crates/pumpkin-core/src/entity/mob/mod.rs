@@ -1471,6 +1471,19 @@ pub trait Mob: EntityBase + Send + Sync {
 
     fn mob_ai_step(&self) {}
 
+    // mob: own jump control, true = handled (Rabbit.RabbitJumpControl.tick)
+    fn jump_control_tick(&self, _jump: bool) -> bool {
+        false
+    }
+
+    // mob: getJumpPower multiplier (LivingEntity.getJumpPower(float))
+    fn jump_power_multiplier(&self) -> f64 {
+        1.0
+    }
+
+    // mob: after jumpFromGround (Rabbit.jumpFromGround)
+    fn on_jump_from_ground(&self) {}
+
     fn travel_in_water(&self, caller: &dyn EntityBase, gravity: f64, falling: bool) {
         self.get_mob_entity()
             .living_entity

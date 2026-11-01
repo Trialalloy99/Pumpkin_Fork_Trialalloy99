@@ -1633,7 +1633,13 @@ impl LivingEntity {
             } else if (on_ground || in_water && fluid_height <= swim_height)
                 && self.jumping_cooldown.load(SeqCst) == 0
             {
-                self.jump();
+                // living: mob jump power + post-jump hook (LivingEntity.jumpFromGround)
+                if let Some(mob) = caller.get_mob() {
+                    self.jump_with_power(mob.jump_power_multiplier());
+                    mob.on_jump_from_ground();
+                } else {
+                    self.jump();
+                }
 
                 self.jumping_cooldown.store(10, SeqCst);
             }
@@ -2107,7 +2113,11 @@ impl LivingEntity {
     }
 
     pub(crate) fn jump(&self) {
-        let jump = self.get_jump_velocity(1.0);
+        self.jump_with_power(1.0);
+    }
+
+    pub(crate) fn jump_with_power(&self, multiplier: f64) {
+        let jump = self.get_jump_velocity(multiplier);
 
         if jump <= 1.0e-5 {
             return;

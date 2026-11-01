@@ -14,7 +14,17 @@ impl JumpControl {
         self.jump = true;
     }
 
+    // jump: pending jump request (RabbitJumpControl.wantJump)
+    #[must_use]
+    pub const fn wants_jump(&self) -> bool {
+        self.jump
+    }
+
     pub fn tick(&mut self, mob: &dyn Mob) {
+        if mob.jump_control_tick(self.jump) {
+            self.jump = false;
+            return;
+        }
         mob.get_mob_entity()
             .living_entity
             .jumping

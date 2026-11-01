@@ -41,6 +41,8 @@ pub enum SpawnGroupData {
     },
     /// Vanilla `WolfPackData`: the variant every wolf of the pack shares.
     WolfPack(pumpkin_data::wolf_variant::WolfVariant),
+    /// Vanilla `RabbitGroupData`: shared variant, babies after the first (chance 1.0).
+    Rabbit { variant: i32, group_size: u32 },
 }
 
 impl MobEntity {
