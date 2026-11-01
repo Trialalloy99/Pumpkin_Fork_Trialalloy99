@@ -4646,10 +4646,17 @@ impl Entity {
             .vehicle
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(vehicle);
-        self.passengers
+        let mut passengers = self
+            .passengers
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .push(passenger);
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        // passengers: player takes the front seat unless one already has it (Entity.addPassenger)
+        let is_player = |e: &Arc<dyn EntityBase>| e.get_entity().entity_type == &EntityType::PLAYER;
+        if is_player(&passenger) && !passengers.first().is_some_and(is_player) {
+            passengers.insert(0, passenger);
+        } else {
+            passengers.push(passenger);
+        }
     }
 
     fn write_passengers(&self, nbt: &mut NbtCompound) {
