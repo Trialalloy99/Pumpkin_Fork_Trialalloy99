@@ -468,6 +468,8 @@ pub struct Player {
     pub mining: AtomicBool,
     pub start_mining_time: AtomicI32,
     pub tick_counter: AtomicI32,
+    // elytra: glide tick counter (LivingEntity.fallFlyTicks)
+    pub fall_fly_ticks: AtomicI32,
     pub mining_pos: Mutex<BlockPos>,
     pub last_input: AtomicI8,
     /// A counter for teleport IDs used to track pending teleports.
@@ -644,7 +646,10 @@ impl Player {
         let pos = entity.pos.load();
         let fall_distance = self.living_entity.fall_distance.load();
         let victim_entity = victim.get_entity();
-        let sound = if !victim_entity.on_ground.load(std::sync::atomic::Ordering::Relaxed) {
+        let sound = if !victim_entity
+            .on_ground
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
             Sound::ItemMaceSmashAir
         } else if fall_distance > MACE_SMASH_ATTACK_HEAVY_THRESHOLD {
             Sound::ItemMaceSmashGroundHeavy
@@ -666,7 +671,11 @@ impl Player {
             bb.min.sub_raw(radius, radius, radius),
             bb.max.add_raw(radius, radius, radius),
         );
-        let heavy = if fall_distance > MACE_SMASH_ATTACK_HEAVY_THRESHOLD { 2.0 } else { 1.0 };
+        let heavy = if fall_distance > MACE_SMASH_ATTACK_HEAVY_THRESHOLD {
+            2.0
+        } else {
+            1.0
+        };
         for nearby in world.get_entities_at_box(&area) {
             let Some(living) = nearby.get_living_entity() else {
                 continue;
@@ -733,12 +742,14 @@ impl Player {
             3 => 2.2,
             _ => 0.35f32.mul_add((level - 1) as f32, 1.5),
         };
-        let calculator = Arc::new(crate::world::explosion::SimpleExplosionDamageCalculator::new(
-            false,
-            true,
-            Some(knockback),
-            Some(&pumpkin_data::tag::Block::MINECRAFT_BLOCKS_WIND_CHARGE_EXPLOSIONS),
-        ));
+        let calculator = Arc::new(
+            crate::world::explosion::SimpleExplosionDamageCalculator::new(
+                false,
+                true,
+                Some(knockback),
+                Some(&pumpkin_data::tag::Block::MINECRAFT_BLOCKS_WIND_CHARGE_EXPLOSIONS),
+            ),
+        );
         world.explode_with_effects(
             self.living_entity.entity.pos.load(),
             3.5,
@@ -904,6 +915,7 @@ impl Player {
             raid_omen_position: AtomicCell::new(None),
             entered_lava_pos: AtomicCell::new(None),
             tick_counter: AtomicI32::new(0),
+            fall_fly_ticks: AtomicI32::new(0),
             start_mining_time: AtomicI32::new(0),
             last_input: AtomicI8::new(0),
             carried_item: Mutex::new(None),
@@ -2418,29 +2430,98 @@ impl Player {
         self.living_entity.set_sprinting(is_sprinting);
     }
 
+    // elytra: start only when gliding is possible and not in liquid (Player.tryToStartFallFlying)
     pub fn try_start_fall_flying(&self, server: &Arc<Server>) {
         let entity = self.get_entity();
-        let has_glider = self
-            .living_entity
+        if entity.is_fall_flying()
+            || !self.can_glide()
+            || entity.touching_water.load(Ordering::Relaxed)
+            || entity.touching_lava.load(Ordering::Relaxed)
+        {
+            return;
+        }
+        let mut event = EntityToggleGlideEvent::new(entity.entity_id, true);
+        server.plugin_manager.fire_blocking(server, &mut event);
+        if !event.cancelled && event.is_gliding {
+            entity.set_fall_flying(true);
+            self.living_entity.fall_distance.store(0.0);
+            self.update_player_pose();
+        }
+    }
+
+    // elytra: glider in its own equippable slot, not about to break (LivingEntity.canGlideUsing)
+    fn can_glide_using(stack: &ItemStack, slot: &EquipmentSlot) -> bool {
+        stack.get_data_component::<GliderImpl>().is_some()
+            && stack
+                .get_data_component::<EquippableImpl>()
+                .is_some_and(|equippable| equippable.slot == slot)
+            && !stack.next_damage_will_break()
+    }
+
+    // elytra: glide conditions (LivingEntity.canGlide)
+    fn can_glide(&self) -> bool {
+        let entity = self.get_entity();
+        if entity.on_ground.load(Ordering::Relaxed)
+            || self.is_passenger()
+            || self.living_entity.has_effect(&StatusEffect::LEVITATION)
+        {
+            return false;
+        }
+        self.living_entity
             .entity_equipment
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .equipment
-            .values()
-            .any(|stack| {
-                stack.get_data_component::<GliderImpl>().is_some()
-                    && !stack.next_damage_will_break()
-            });
-        let fall_flying = entity.check_fall_flying() && has_glider;
-        if fall_flying && !entity.is_fall_flying() {
-            let mut event = EntityToggleGlideEvent::new(entity.entity_id, true);
-            server.plugin_manager.fire_blocking(server, &mut event);
-            if !event.cancelled && event.is_gliding {
-                entity.set_fall_flying(true);
-                self.living_entity.fall_distance.store(0.0);
+            .iter()
+            .any(|(slot, stack)| Self::can_glide_using(stack, slot))
+    }
+
+    // elytra: stop when unable, durability every 20 ticks, glide event every 10 (LivingEntity.updateFallFlying)
+    fn update_fall_flying(&self) {
+        let entity = self.get_entity();
+        if !entity.is_fall_flying() {
+            self.fall_fly_ticks.store(0, Ordering::Relaxed);
+            return;
+        }
+        let ticks = self.fall_fly_ticks.fetch_add(1, Ordering::Relaxed) + 1;
+        if !self.can_glide() {
+            let mut event = EntityToggleGlideEvent::new(entity.entity_id, false);
+            if let Some(server) = entity.world.load().server.upgrade() {
+                server.plugin_manager.fire_blocking(&server, &mut event);
+            }
+            if !event.cancelled && !event.is_gliding {
+                entity.set_fall_flying(false);
                 self.update_player_pose();
             }
+            return;
         }
+        if ticks % 10 != 0 {
+            return;
+        }
+        if (ticks / 10) % 2 == 0 {
+            let slot = {
+                let equipment = self
+                    .living_entity
+                    .entity_equipment
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                let gliders = equipment
+                    .equipment
+                    .iter()
+                    .filter(|(slot, stack)| Self::can_glide_using(stack, slot));
+                let count = gliders.clone().count();
+                (count > 0)
+                    .then(|| rand::random_range(0..count))
+                    .and_then(|pick| gliders.clone().nth(pick).map(|(slot, _)| slot.clone()))
+            };
+            if let Some(slot) = slot {
+                self.damage_item_in_slot(&slot, 1);
+            }
+        }
+        entity
+            .world
+            .load()
+            .emit_game_event("elytra_glide", entity.pos.load());
     }
 
     pub fn stop_fall_flying(&self, server: &Arc<Server>) {
@@ -3215,6 +3296,7 @@ impl Player {
         self.last_attacked_ticks.fetch_add(1, Ordering::Relaxed);
 
         self.living_entity.tick(self, server);
+        self.update_fall_flying();
 
         self.breath_manager.tick(self);
 
