@@ -7,6 +7,8 @@ use pumpkin_data::item_stack::ItemStack;
 
 use crate::entity::EntityBase;
 use crate::entity::mob::Mob;
+use crate::entity::mob::spawn::SpawnReason;
+use crate::entity::mob::zombie::zombie_base_of;
 use crate::entity::r#type::from_type;
 
 const ALL_SLOTS: [EquipmentSlot; 8] = [
@@ -35,6 +37,18 @@ pub fn convert_single(
     let world = entity.world.load_full();
     let converted = from_type(to_type, entity.pos.load(), &world, uuid::Uuid::new_v4());
     let to_entity = converted.get_entity();
+    let root_passenger = entity
+        .passengers
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .first()
+        .cloned();
+    let vehicle = entity.get_vehicle();
+    let leash_holder = entity
+        .leashed_to
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .take();
     to_entity.set_rotation(entity.yaw.load(), entity.pitch.load());
     to_entity.head_yaw.store(entity.head_yaw.load());
     to_entity.body_yaw.store(entity.body_yaw.load());
@@ -47,6 +61,9 @@ pub fn convert_single(
     let from_living = &from_mob.living_entity;
     if let Some(to_mob) = converted.get_mob() {
         let to_mob_entity = to_mob.get_mob_entity();
+        to_mob_entity
+            .spawn_reason
+            .store(SpawnReason::Conversion as u8, Ordering::Relaxed);
         let to_living = &to_mob_entity.living_entity;
         if keep_equipment {
             let mut from_equipment = from_living
@@ -64,6 +81,17 @@ pub fn convert_single(
         to_living
             .fall_distance
             .store(from_living.fall_distance.load());
+        to_living.last_hurt_by_player_memory_time.store(
+            from_living
+                .last_hurt_by_player_memory_time
+                .load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
+        to_living.set_absorption(from_living.get_absorption());
+        to_living.hurt_cooldown.store(
+            from_living.hurt_cooldown.load(Ordering::Relaxed),
+            Ordering::Relaxed,
+        );
         for effect in from_living
             .active_effects
             .lock()
@@ -103,14 +131,51 @@ pub fn convert_single(
         Ordering::Relaxed,
     );
     to_entity.set_has_no_gravity(entity.has_no_gravity());
+    to_entity.portal_cooldown.store(
+        entity.portal_cooldown.load(Ordering::Relaxed),
+        Ordering::Relaxed,
+    );
     to_entity.set_silent(entity.is_silent());
+    to_entity
+        .scoreboard_tags
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .extend(
+            entity
+                .scoreboard_tags
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .cloned(),
+        );
     let from_base: &dyn EntityBase = from;
+    if let (Some(from_zombie), Some(to_zombie)) = (
+        zombie_base_of(from_base),
+        zombie_base_of(converted.as_ref()),
+    ) && from_zombie.can_break_doors()
+    {
+        to_zombie.set_can_break_doors(true, to_zombie);
+    }
     if let Some(team) = from_base.get_team_name() {
         to_entity.join_team(&team);
     }
 
     after(&converted);
     world.spawn_entity(converted.clone());
+    // conversion: hand over rider, vehicle and leash (ConversionType.SINGLE)
+    if let Some(passenger) = root_passenger {
+        entity.remove_passenger(passenger.get_entity().entity_id);
+        to_entity.add_passenger(converted.clone(), passenger);
+    }
+    if let Some(vehicle) = vehicle {
+        vehicle.get_entity().remove_passenger(entity.entity_id);
+        vehicle
+            .get_entity()
+            .add_passenger(vehicle.clone(), converted.clone());
+    }
+    if let Some(holder) = leash_holder {
+        to_entity.attach_leash(holder);
+    }
     entity.remove();
     Some(converted)
 }

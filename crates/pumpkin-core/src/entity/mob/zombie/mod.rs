@@ -247,13 +247,9 @@ impl ZombieEntityBase {
     }
 
     fn convert_drowned(&self, mob: &dyn Mob, target_type: &'static EntityType, sound: WorldEvent) {
-        let can_break_doors = self.can_break_doors();
         let world = self.mob_entity.living_entity.entity.world.load_full();
         conversion::convert_single(mob, target_type, true, true, |converted| {
             if let Some(base) = zombie_base_of(converted.as_ref()) {
-                if can_break_doors {
-                    base.set_can_break_doors(true, base);
-                }
                 let difficulty = RegionalDifficulty::at(&world, converted.get_entity().pos.load());
                 base.handle_attributes(difficulty.special_multiplier, true);
             }
