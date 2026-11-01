@@ -107,8 +107,25 @@ impl PressurePlate for PressurePlateBlock {
         props.to_state_id(block)
     }
 
+    // plate: click sounds per block set type (BlockSetType.pressurePlateClickOn)
     fn click_sounds(&self, block: &Block) -> (Sound, Sound) {
-        if block.has_tag(&tag::Block::MINECRAFT_WOODEN_PRESSURE_PLATES) {
+        if block == &Block::CHERRY_PRESSURE_PLATE {
+            (
+                Sound::BlockCherryWoodPressurePlateClickOn,
+                Sound::BlockCherryWoodPressurePlateClickOff,
+            )
+        } else if block == &Block::BAMBOO_PRESSURE_PLATE {
+            (
+                Sound::BlockBambooWoodPressurePlateClickOn,
+                Sound::BlockBambooWoodPressurePlateClickOff,
+            )
+        } else if block == &Block::CRIMSON_PRESSURE_PLATE || block == &Block::WARPED_PRESSURE_PLATE
+        {
+            (
+                Sound::BlockNetherWoodPressurePlateClickOn,
+                Sound::BlockNetherWoodPressurePlateClickOff,
+            )
+        } else if block.has_tag(&tag::Block::MINECRAFT_WOODEN_PRESSURE_PLATES) {
             (
                 Sound::BlockWoodenPressurePlateClickOn,
                 Sound::BlockWoodenPressurePlateClickOff,
