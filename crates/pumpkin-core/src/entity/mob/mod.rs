@@ -1365,6 +1365,11 @@ pub trait Mob: EntityBase + Send + Sync {
     /// See [`EntityBase::on_flap`].
     fn mob_on_flap(&self) {}
 
+    /// See [`EntityBase::is_affected_by_blocks`].
+    fn mob_is_affected_by_blocks(&self) -> bool {
+        self.get_entity().is_affected_by_blocks()
+    }
+
     /// See [`EntityBase::play_step_sound`].
     fn mob_play_step_sound(&self, _pos: &BlockPos, state: &BlockState) {
         self.play_block_step_sound(state);
@@ -2045,6 +2050,10 @@ impl<T: Mob + Send + 'static> EntityBase for T {
 
     fn on_flap(&self) {
         self.mob_on_flap();
+    }
+
+    fn is_affected_by_blocks(&self) -> bool {
+        self.mob_is_affected_by_blocks()
     }
 
     fn get_swim_sound(&self) -> Option<Sound> {

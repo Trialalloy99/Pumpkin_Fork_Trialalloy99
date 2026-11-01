@@ -662,6 +662,11 @@ pub trait EntityBase: Send + Sync + std::any::Any {
     /// Vanilla `onFlap`.
     fn on_flap(&self) {}
 
+    /// Vanilla `isAffectedByBlocks`: whether the blocks the entity is inside act on it.
+    fn is_affected_by_blocks(&self) -> bool {
+        self.get_entity().is_affected_by_blocks()
+    }
+
     /// Vanilla `isOnRails`: rail-riding entities step even when not on the ground.
     fn is_on_rails(&self) -> bool {
         false
@@ -2233,7 +2238,7 @@ impl Entity {
     }
 
     pub fn tick_block_collisions(&self, caller: &dyn EntityBase) -> bool {
-        if !self.is_affected_by_blocks() {
+        if !caller.is_affected_by_blocks() {
             return false;
         }
 
@@ -2264,7 +2269,8 @@ impl Entity {
                 continue;
             }
 
-            let check_suffocation = !suffocating && state.is_suffocating();
+            let check_suffocation =
+                !suffocating && !self.no_physics.load(Relaxed) && state.is_suffocating();
 
             World::check_collision(
                 &bounding_box,
