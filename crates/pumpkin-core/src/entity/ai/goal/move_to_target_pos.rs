@@ -25,6 +25,7 @@ pub struct MoveToTargetPosGoal<M: MoveToTargetPos> {
     pub range: i32,
     pub max_y_difference: i32,
     pub lowest_y: i32,
+    pub reset_path_interval: i32,
 }
 
 impl<M: MoveToTargetPos> MoveToTargetPosGoal<M> {
@@ -47,6 +48,7 @@ impl<M: MoveToTargetPos> MoveToTargetPosGoal<M> {
             range,
             max_y_difference,
             lowest_y: 0,
+            reset_path_interval: 40,
         }
     }
 
@@ -112,7 +114,7 @@ impl<M: MoveToTargetPos> MoveToTargetPosGoal<M> {
 
     #[must_use]
     pub const fn should_reset_path(&self) -> bool {
-        self.trying_time % 40 == 0
+        self.trying_time % self.reset_path_interval == 0
     }
 
     #[must_use]

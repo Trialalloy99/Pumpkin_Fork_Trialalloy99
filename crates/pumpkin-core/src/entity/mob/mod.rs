@@ -1298,6 +1298,11 @@ pub trait Mob: EntityBase + Send + Sync {
         75.0
     }
 
+    // turtle: replaces BreedGoal.breed, true when handled (TurtleBreedGoal.breed)
+    fn custom_breed(&self, _mate: &dyn EntityBase) -> bool {
+        false
+    }
+
     // cat: Animal.canMate partner check (Cat.canMate)
     fn can_mate(&self, _partner: &dyn EntityBase) -> bool {
         true

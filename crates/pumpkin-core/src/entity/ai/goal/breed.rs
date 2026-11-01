@@ -55,7 +55,47 @@ impl BreedGoal {
         })
     }
 
+    // breed: love cause stat and advancement, breeder callbacks (Animal.finalizeSpawnChildFromBreeding)
+    pub(crate) fn award_breeding(
+        mob: &dyn Mob,
+        mate: &dyn EntityBase,
+        baby: Option<&Arc<dyn EntityBase>>,
+    ) {
+        let mob_entity = mob.get_mob_entity();
+        let entity = mob.get_entity();
+        let world = entity.world.load();
+        // Both parents' online breeders, vanilla's love causes.
+        let online = |uuid: &Uuid| world.get_player_by_uuid(*uuid).is_some();
+        let first = mob_entity.breeder.load().filter(online);
+        let second = mate
+            .get_mob()
+            .and_then(|mate| mate.get_mob_entity().breeder.load())
+            .filter(|uuid| online(uuid) && first != Some(*uuid));
+        if let Some(baby_mob) = baby.and_then(|baby| baby.get_mob()) {
+            for breeder in first.into_iter().chain(second) {
+                baby_mob.on_bred_by(breeder);
+            }
+        }
+
+        // Vanilla `getLoveCause`: this parent's breeder, else the mate's.
+        let love_cause = first.or(second);
+        if let Some(player) = love_cause.and_then(|uuid| world.get_player_by_uuid(uuid)) {
+            player.increment_stat(
+                pumpkin_data::statistic::StatisticCategory::Custom,
+                pumpkin_data::statistic::CustomStatistic::AnimalsBred as i32,
+                1,
+            );
+            player.trigger_advancement(AdvancementTrigger::BredAnimal {
+                parent_type: format!("minecraft:{}", entity.entity_type.resource_name),
+            });
+        }
+    }
+
     fn breed(mob: &dyn Mob, mate: &dyn EntityBase) {
+        // turtle: egg instead of a baby (TurtleBreedGoal.breed)
+        if mob.custom_breed(mate) {
+            return;
+        }
         let mob_entity = mob.get_mob_entity();
         let entity = mob.get_entity();
         let world = entity.world.load();
@@ -82,31 +122,7 @@ impl BreedGoal {
             return;
         };
 
-        // Both parents' online breeders, vanilla's love causes.
-        let online = |uuid: &Uuid| world.get_player_by_uuid(*uuid).is_some();
-        let first = mob_entity.breeder.load().filter(online);
-        let second = mate
-            .get_mob()
-            .and_then(|mate| mate.get_mob_entity().breeder.load())
-            .filter(|uuid| online(uuid) && first != Some(*uuid));
-        if let Some(baby_mob) = baby.get_mob() {
-            for breeder in first.into_iter().chain(second) {
-                baby_mob.on_bred_by(breeder);
-            }
-        }
-
-        // Vanilla `getLoveCause`: this parent's breeder, else the mate's.
-        let love_cause = first.or(second);
-        if let Some(player) = love_cause.and_then(|uuid| world.get_player_by_uuid(uuid)) {
-            player.increment_stat(
-                pumpkin_data::statistic::StatisticCategory::Custom,
-                pumpkin_data::statistic::CustomStatistic::AnimalsBred as i32,
-                1,
-            );
-            player.trigger_advancement(AdvancementTrigger::BredAnimal {
-                parent_type: format!("minecraft:{}", entity.entity_type.resource_name),
-            });
-        }
+        Self::award_breeding(mob, mate, Some(&baby));
 
         mob_entity.reset_love_ticks();
         mob_entity
