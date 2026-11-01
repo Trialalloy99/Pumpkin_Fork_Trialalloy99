@@ -3,6 +3,7 @@ use crate::entity::ai::pathfinder::NavigatorGoal;
 use crate::entity::ai::util::default_random_pos;
 use crate::entity::mob::Mob;
 use pumpkin_util::math::vector3::Vector3;
+use rand::RngExt;
 
 pub struct RunAroundLikeCrazyGoal {
     goal_control: Controls,
@@ -56,6 +57,35 @@ impl Goal for RunAroundLikeCrazyGoal {
             Vector3::new(self.pos_x, self.pos_y, self.pos_z),
             self.speed_modifier,
         ));
+    }
+
+    // run around like crazy: check taming chance or buck rider off (RunAroundLikeCrazyGoal.tick)
+    fn tick(&mut self, mob: &dyn Mob) {
+        if mob.is_tamed() {
+            return;
+        }
+        let mut rng = rand::rng();
+        if rng.random_range(0..50) == 0 {
+            let entity = mob.get_entity();
+            let passengers = entity
+                .passengers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            let Some(first) = passengers.first() else {
+                return;
+            };
+            if let Some(player) = first.get_player() {
+                let temper = mob.get_temper();
+                let max_temper = mob.max_temper();
+                if max_temper > 0 && rng.random_range(0..max_temper) < temper {
+                    mob.tame_with_name(player);
+                    return;
+                }
+                mob.modify_temper(5);
+            }
+            mob.make_mad();
+        }
     }
 
     fn controls(&self) -> Controls {

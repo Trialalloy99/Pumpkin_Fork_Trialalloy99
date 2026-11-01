@@ -5,11 +5,15 @@ use std::sync::{
 
 use crossbeam::atomic::AtomicCell;
 use pumpkin_data::BlockState;
+use pumpkin_data::attributes::Attributes;
+use pumpkin_data::data_component_impl::EquipmentSlot;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::sound::{Sound, SoundCategory};
 use pumpkin_data::tag::{self, Taggable};
+use pumpkin_inventory::mount_screen_handler::MountScreenHandler;
+use pumpkin_inventory::{Inventory, inventory::SimpleInventory};
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::math::position::BlockPos;
 use uuid::Uuid;
@@ -19,26 +23,28 @@ use crate::entity::{
     ageable::{AgeableData, AgeableMob},
     ai::goal::{
         escape_danger::EscapeDangerGoal, follow_parent::FollowParentGoal,
-        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal, swim::SwimGoal,
-        tempt::TemptGoal, wander_around::WanderAroundGoal,
+        look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal,
+        run_around_like_crazy::RunAroundLikeCrazyGoal, swim::SwimGoal, tempt::TemptGoal,
+        wander_around::WanderAroundGoal,
     },
-    mob::{Mob, MobEntity},
-    passive::animal::Animal,
+    custom_sound::CustomSound,
+    mob::{Mob, MobEntity, spawn::SpawnGroupData},
+    passive::{
+        abstract_horse::{
+            FLAG_STANDING, FLAG_TAME, controlling_passenger_horse, feed_horse, generate_max_health,
+            play_horse_step_sound, tame_horse, throw_rider_off, tick_ridden_horse,
+        },
+        animal::Animal,
+    },
     player::Player,
 };
+use crate::world::World;
 
 const TEMPT_ITEMS: &[&Item] = &[
     &Item::GOLDEN_APPLE,
     &Item::ENCHANTED_GOLDEN_APPLE,
     &Item::GOLDEN_CARROT,
 ];
-
-pub const FLAG_TAME: u8 = 2;
-pub const FLAG_SADDLE: u8 = 4;
-pub const FLAG_BRED: u8 = 8;
-pub const FLAG_EATING: u8 = 16;
-pub const FLAG_STANDING: u8 = 32;
-pub const FLAG_OPEN_MOUTH: u8 = 64;
 
 pub struct MuleEntity {
     pub mob_entity: MobEntity,
@@ -47,11 +53,26 @@ pub struct MuleEntity {
     pub has_chest: AtomicBool,
     pub temper: AtomicI32,
     pub owner: AtomicCell<Option<Uuid>>,
+    pub saddle_inventory: Arc<SimpleInventory>,
+    pub armor_inventory: Arc<SimpleInventory>,
+    pub chest_inventory: Arc<SimpleInventory>,
 }
 
 impl MuleEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
         let mob_entity = MobEntity::new(entity);
+        let mut rng = rand::rng();
+        let max_health = generate_max_health(&mut rng);
+
+        mob_entity.living_entity.set_max_health(max_health);
+        mob_entity.living_entity.health.store(max_health);
+        mob_entity
+            .living_entity
+            .set_attribute_base(&Attributes::MOVEMENT_SPEED, 0.175);
+        mob_entity
+            .living_entity
+            .set_attribute_base(&Attributes::JUMP_STRENGTH, 0.5);
+
         let mule = Self {
             mob_entity,
             ageable_data: AgeableData::default(),
@@ -59,7 +80,11 @@ impl MuleEntity {
             has_chest: AtomicBool::new(false),
             temper: AtomicI32::new(0),
             owner: AtomicCell::new(None),
+            saddle_inventory: Arc::new(SimpleInventory::new(1)),
+            armor_inventory: Arc::new(SimpleInventory::new(1)),
+            chest_inventory: Arc::new(SimpleInventory::new(15)),
         };
+
         let mob_arc = Arc::new(mule);
         let mob_weak: Weak<dyn Mob> = {
             let mob_arc: Arc<dyn Mob> = mob_arc.clone();
@@ -68,9 +93,10 @@ impl MuleEntity {
 
         {
             let goal_selector = &mob_arc.mob_entity.goals_selector;
-
+            // mule: vanilla goal priorities (mules cannot breed) (Mule.java)
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
             goal_selector.add_goal(1, EscapeDangerGoal::new(1.2));
+            goal_selector.add_goal(1, Box::new(RunAroundLikeCrazyGoal::new(1.2)));
             goal_selector.add_goal(3, Box::new(TemptGoal::new(1.25, TEMPT_ITEMS, false)));
             goal_selector.add_goal(4, Box::new(FollowParentGoal::new(1.0)));
             goal_selector.add_goal(6, Box::new(WanderAroundGoal::new(0.7)));
@@ -109,13 +135,34 @@ impl MuleEntity {
         self.set_flag(FLAG_TAME, val);
     }
 
+    // mule: saddle lives in SADDLE slot (AbstractHorse.isSaddled)
     #[must_use]
     pub fn is_saddled(&self) -> bool {
-        self.has_flag(FLAG_SADDLE)
+        let equipment = self
+            .mob_entity
+            .living_entity
+            .entity_equipment
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        equipment
+            .equipment
+            .get(&EquipmentSlot::SADDLE)
+            .is_some_and(|stack| !stack.is_empty())
     }
 
     pub fn set_saddled(&self, val: bool) {
-        self.set_flag(FLAG_SADDLE, val);
+        if val {
+            self.mob_entity.set_item_slot_and_drop_when_killed(
+                &EquipmentSlot::SADDLE,
+                ItemStack::new(1, &Item::SADDLE),
+            );
+            self.saddle_inventory
+                .set_stack(0, ItemStack::new(1, &Item::SADDLE));
+        } else {
+            self.mob_entity
+                .set_item_slot(&EquipmentSlot::SADDLE, ItemStack::EMPTY.clone());
+            self.saddle_inventory.set_stack(0, ItemStack::EMPTY.clone());
+        }
     }
 
     #[must_use]
@@ -147,9 +194,20 @@ impl Animal for MuleEntity {
             || item_stack.item == &Item::SUGAR
             || item_stack.item == &Item::HAY_BLOCK
             || item_stack.item == &Item::APPLE
+            || item_stack.item == &Item::CARROT
             || item_stack.item == &Item::GOLDEN_CARROT
             || item_stack.item == &Item::GOLDEN_APPLE
             || item_stack.item == &Item::ENCHANTED_GOLDEN_APPLE
+    }
+}
+
+impl CustomSound for MuleEntity {
+    fn death_sound(&self) -> Option<Sound> {
+        Some(Sound::EntityMuleDeath)
+    }
+
+    fn hurt_sound(&self) -> Option<Sound> {
+        Some(Sound::EntityMuleHurt)
     }
 }
 
@@ -159,7 +217,7 @@ impl Mob for MuleEntity {
     }
 
     fn mob_play_step_sound(&self, pos: &BlockPos, state: &BlockState) {
-        super::horse::play_horse_step_sound(self, pos, state, false);
+        play_horse_step_sound(self, pos, state, false);
     }
 
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
@@ -168,6 +226,86 @@ impl Mob for MuleEntity {
 
     fn as_animal(&self) -> Option<&dyn Animal> {
         Some(self)
+    }
+
+    fn as_custom_sound(&self) -> Option<&dyn CustomSound> {
+        Some(self)
+    }
+
+    fn get_ambient_sound(&self) -> Option<Sound> {
+        Some(Sound::EntityMuleAmbient)
+    }
+
+    fn mob_controlling_passenger(&self) -> Option<Arc<dyn EntityBase>> {
+        controlling_passenger_horse(self, self.is_saddled())
+    }
+
+    fn tick_ridden(&self, controller: &Arc<dyn EntityBase>) {
+        tick_ridden_horse(self, controller);
+    }
+
+    // mule: jump rearing and sound (Mule.playJumpSound)
+    fn on_player_start_jump(&self, _jump_scale: i32) {
+        if self.is_saddled() {
+            self.set_flag(FLAG_STANDING, true);
+            let entity = self.get_entity();
+            let world = entity.world.load();
+            world.play_sound(
+                Sound::EntityMuleJump,
+                SoundCategory::Neutral,
+                &entity.pos.load(),
+            );
+        }
+    }
+
+    fn on_player_stop_jump(&self) {
+        self.set_flag(FLAG_STANDING, false);
+    }
+
+    // mule: open mount screen with 5 chest columns if chested (AbstractChestedHorse.openCustomInventoryScreen)
+    fn open_custom_inventory(&self, player: &Arc<Player>) {
+        if !self.is_baby() && self.is_tamed() {
+            let columns = if self.has_chest() { 5 } else { 0 };
+            let handler = Arc::new(std::sync::Mutex::new(MountScreenHandler::new(
+                0,
+                &player.inventory,
+                self.chest_inventory.clone(),
+                self.saddle_inventory.clone(),
+                self.armor_inventory.clone(),
+                columns,
+            )));
+            player.open_mount_screen(handler, columns, self.get_entity().entity_id);
+        }
+    }
+
+    fn get_temper(&self) -> i32 {
+        self.temper.load(Ordering::Relaxed)
+    }
+
+    fn max_temper(&self) -> i32 {
+        100
+    }
+
+    fn modify_temper(&self, delta: i32) {
+        let cur = self.temper.load(Ordering::Relaxed);
+        self.temper
+            .store((cur + delta).clamp(0, 100), Ordering::Relaxed);
+    }
+
+    fn tame_with_name(&self, player: &Player) -> bool {
+        tame_horse(self, player, &self.flags, &self.owner)
+    }
+
+    fn make_mad(&self) {
+        throw_rider_off(self, &self.flags, Sound::EntityMuleAngry);
+    }
+
+    fn finalize_spawn(
+        &self,
+        _world: &Arc<World>,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        self.finalize_spawn_super(group_data)
     }
 
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
@@ -219,19 +357,42 @@ impl Mob for MuleEntity {
     fn mob_interact(&self, player: &Arc<Player>, item_stack: &mut ItemStack) -> bool {
         let item = item_stack.get_item();
 
+        // Shift-right-click to open inventory
+        if !self.is_baby() && self.is_tame() && player.living_entity.entity.is_sneaking() {
+            self.open_custom_inventory(player);
+            return true;
+        }
+
+        // Chest equipping
         if self.is_tame() && item == &Item::CHEST && !self.has_chest() && !self.is_baby() {
             self.set_has_chest(true);
             item_stack.decrement_unless_creative(player.gamemode.load(), 1);
             let entity = self.get_entity();
             let world = entity.world.load();
             world.play_sound(
-                Sound::EntityDonkeyChest,
+                Sound::EntityMuleChest,
                 SoundCategory::Neutral,
                 &entity.pos.load(),
             );
             return true;
         }
 
+        // Feeding (mules cannot breed)
+        if self.is_food(item_stack)
+            && feed_horse(
+                self,
+                player,
+                item_stack,
+                &self.flags,
+                &self.temper,
+                Sound::EntityMuleEat,
+                false,
+            )
+        {
+            return true;
+        }
+
+        // Saddling
         if self.is_tame() && item == &Item::SADDLE && !self.is_saddled() && !self.is_baby() {
             self.set_saddled(true);
             item_stack.decrement_unless_creative(player.gamemode.load(), 1);
@@ -245,7 +406,8 @@ impl Mob for MuleEntity {
             return true;
         }
 
-        if !self.is_baby() && !self.is_food(item_stack) {
+        // Riding
+        if !self.is_baby() {
             let world = player.world();
             let ent = &self.mob_entity.living_entity.entity;
             if let Some(vehicle) = world.get_entity_by_id(ent.entity_id)
@@ -256,6 +418,6 @@ impl Mob for MuleEntity {
             }
         }
 
-        self.animal_interact(player, item_stack, Sound::EntityMuleAmbient)
+        false
     }
 }
