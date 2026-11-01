@@ -91,15 +91,14 @@ impl DrownedEntity {
             false,
         );
         // drowned: amphibious navigation, no water malus (Drowned constructor)
-        {
-            let mut navigator = base
-                .mob_entity
-                .navigator
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            *navigator = Navigator::amphibious(false);
-            navigator.set_pathfinding_malus(PathType::Water, 0.0);
-        }
+        let mut navigator = base
+            .mob_entity
+            .navigator
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *navigator = Navigator::amphibious(false);
+        navigator.set_pathfinding_malus(PathType::Water, 0.0);
+        drop(navigator);
         let drowned = Arc::new(Self {
             entity: base,
             searching_for_land: AtomicBool::new(false),
