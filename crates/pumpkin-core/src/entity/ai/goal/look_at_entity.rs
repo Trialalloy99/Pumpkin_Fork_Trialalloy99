@@ -17,7 +17,9 @@ pub struct LookAtEntityGoal {
     look_time: i32,
     chance: f32,
     look_forward: bool,
-    target_type: &'static EntityType,
+    look_at: TargetMatch,
+    /// Vanilla `Mob.class` look type: only mobs (no players, armor stands or items).
+    mobs_only: bool,
     target_predicate: TargetPredicate,
 }
 
@@ -38,9 +40,32 @@ impl LookAtEntityGoal {
             look_time: 0,
             chance,
             look_forward,
-            target_type,
+            look_at: TargetMatch::Type(target_type),
+            mobs_only: false,
             target_predicate,
         }
+    }
+
+    // look at: any type set, e.g. Guardian.class covers the elder guardian
+    #[must_use]
+    pub fn matching(
+        mob_weak: Weak<dyn Mob>,
+        look_at: TargetMatch,
+        range: f32,
+        chance: f32,
+    ) -> Box<Self> {
+        let mut goal = Self::new(mob_weak, &EntityType::ZOMBIE, range, chance, false);
+        goal.look_at = look_at;
+        Box::new(goal)
+    }
+
+    // look at: any mob in range (LookAtPlayerGoal(this, Mob.class, range))
+    #[must_use]
+    pub fn any_mob(mob_weak: Weak<dyn Mob>, range: f32, chance: f32) -> Box<Self> {
+        let mut goal = Self::new(mob_weak, &EntityType::ZOMBIE, range, chance, false);
+        goal.look_at = TargetMatch::Any;
+        goal.mobs_only = true;
+        Box::new(goal)
     }
 
     #[must_use]
@@ -74,7 +99,7 @@ impl LookAtEntityGoal {
 impl Goal for LookAtEntityGoal {
     fn tick_reach(&self, _mob: &dyn Mob, _running: bool) -> Option<GoalReach> {
         let range = f64::from(self.range);
-        let looks_at_players = *self.target_type == EntityType::PLAYER;
+        let looks_at_players = self.look_at.is_player();
         Some(GoalReach {
             entities: if looks_at_players { 0.0 } else { range },
             // The player search is unbounded, only the visibility-scaled range limits it.
@@ -116,10 +141,11 @@ impl Goal for LookAtEntityGoal {
 
         // The conditions filter the candidates instead of being applied to the nearest one.
         let predicate = &self.target_predicate;
-        self.target =
-            TargetMatch::Type(self.target_type).find_nearest(&world, &area, |candidate| {
-                predicate.test(&world, Some(mob), candidate)
-            });
+        let mobs_only = self.mobs_only;
+        self.target = self.look_at.find_nearest(&world, &area, |candidate| {
+            (!mobs_only || candidate.get_mob().is_some())
+                && predicate.test(&world, Some(mob), candidate)
+        });
 
         self.target.is_some()
     }

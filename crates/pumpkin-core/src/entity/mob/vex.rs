@@ -88,13 +88,14 @@ impl VexEntity {
             goal_selector.add_goal(
                 9,
                 Box::new(LookAtEntityGoal::new(
-                    mob_weak,
+                    mob_weak.clone(),
                     &EntityType::PLAYER,
                     3.0,
                     1.0,
                     false,
                 )),
             );
+            goal_selector.add_goal(10, LookAtEntityGoal::any_mob(mob_weak, 8.0, 0.02));
 
             let target_selector = &mob_arc.mob_entity.target_selector;
             target_selector.add_goal(1, raider::revenge_goal());

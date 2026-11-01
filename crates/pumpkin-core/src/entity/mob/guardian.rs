@@ -150,13 +150,12 @@ impl GuardianEntity {
             );
             goal_selector.add_goal(
                 8,
-                Box::new(LookAtEntityGoal::new(
+                LookAtEntityGoal::matching(
                     mob_weak,
-                    &EntityType::GUARDIAN,
+                    TargetMatch::AnyOf(&[&EntityType::GUARDIAN, &EntityType::ELDER_GUARDIAN]),
                     12.0,
                     0.01,
-                    false,
-                )),
+                ),
             );
             goal_selector.add_goal(9, Box::new(RandomLookAroundGoal::default()));
 

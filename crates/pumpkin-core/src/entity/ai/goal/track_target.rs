@@ -83,14 +83,22 @@ impl TrackTargetGoal {
         self.target_mob = target;
     }
 
-    fn can_navigate_to_entity(&mut self, mob: &dyn Mob) -> bool {
+    // target goal: path end within 1.5 blocks of the target (TargetGoal.canReach)
+    fn can_navigate_to_entity(&mut self, mob: &dyn Mob, target: &dyn EntityBase) -> bool {
         self.check_can_navigate_cooldown = to_goal_ticks(10 + mob.get_random().random_range(0..5));
-        // TODO: after implementing path
-        // Path inside `can_start`, claim `TARGET` only afterwards: the selector runs
-        // `can_replace_all` -> `can_start` -> claim -> `start`, so a failed path must not evict revenge.
-        // No navigator lock earlier in the tick (`has_malus` callers must not hold it).
-        // Selectors are `mem::take`n during the AI tick: never lock them from a goal.
-        false
+        let target_pos = target.get_entity().block_pos.load();
+        let steered = mob.get_mob_entity().steered();
+        let path = steered.navigator().create_path(
+            &steered.mob_entity().living_entity,
+            target_pos.to_centered_f64(),
+            0,
+        );
+        let Some(last) = path.as_ref().and_then(|path| path.get_nodes().last()) else {
+            return false;
+        };
+        let xx = last.pos.0.x - target_pos.0.x;
+        let zz = last.pos.0.z - target_pos.0.z;
+        f64::from(xx * xx + zz * zz) <= 2.25
     }
 
     const fn remembers_visible_target(&mut self, has_line_of_sight: bool) -> bool {
@@ -121,7 +129,10 @@ impl TrackTargetGoal {
             return false;
         }
 
-        // TODO: isInPositionTargetRange (isWithinHome in Java) check
+        // target goal: target inside the mob's home range (Mob.isWithinHome)
+        if !mob_entity.is_in_position_target_range_pos(&target.get_entity().block_pos.load()) {
+            return false;
+        }
 
         if self.check_can_navigate {
             self.check_can_navigate_cooldown -= 1;
@@ -130,7 +141,7 @@ impl TrackTargetGoal {
             }
 
             if self.can_navigate_flag == UNSET {
-                self.can_navigate_flag = if self.can_navigate_to_entity(mob) {
+                self.can_navigate_flag = if self.can_navigate_to_entity(mob, target) {
                     CAN_TRACK
                 } else {
                     CANNOT_TRACK
