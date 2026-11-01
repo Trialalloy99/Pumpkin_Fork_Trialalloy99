@@ -6,7 +6,7 @@ use crate::block::entities::chiseled_bookshelf::ChiseledBookshelfBlockEntity;
 use crate::{
     block::{
         BlockBehaviour, BlockHitResult, GetComparatorOutputArgs, NormalUseArgs, OnPlaceArgs,
-        PlacedArgs, UseWithItemArgs, registry::BlockActionResult,
+        OnStateReplacedArgs, PlacedArgs, UseWithItemArgs, registry::BlockActionResult,
     },
     entity::{EntityBase, player::Player},
     world::World,
@@ -14,9 +14,11 @@ use crate::{
 use pumpkin_data::{
     BlockStateId,
     block_properties::{ChiseledBookshelfLikeProperties, HorizontalFacing},
+    game_event::GameEvent,
     item::Item,
     item_stack::ItemStack,
     sound::{Sound, SoundCategory},
+    statistic::StatisticCategory,
     tag,
     tag::Taggable,
 };
@@ -104,6 +106,12 @@ impl BlockBehaviour for ChiseledBookshelfBlock {
         args.world.add_block_entity(Arc::new(block_entity));
     }
 
+    fn on_state_replaced(&self, args: OnStateReplacedArgs<'_>) {
+        // chiseled bookshelf: update comparator signal on destroy (ChiseledBookShelfBlock.affectNeighborsAfterRemoval)
+        args.world
+            .update_neighbour_for_output_signal(args.position, args.block);
+    }
+
     fn get_comparator_output(&self, args: GetComparatorOutputArgs<'_>) -> Option<u8> {
         if let Some(block_entity) = args.world.get_block_entity(args.position)
             && let Some(block_entity) = block_entity
@@ -126,7 +134,8 @@ impl ChiseledBookshelfBlock {
         slot: i8,
         item: &mut ItemStack,
     ) {
-        // TODO: Increment used stats for chiseled bookshelf on the player
+        // chiseled bookshelf: award item used stat (ChiseledBookShelfBlock.addBook)
+        player.increment_stat(StatisticCategory::Used, item.get_item().id as i32, 1);
 
         let sound = if item.get_item() == &Item::ENCHANTED_BOOK {
             Sound::BlockChiseledBookshelfInsertEnchanted
@@ -141,6 +150,7 @@ impl ChiseledBookshelfBlock {
         entity.update_state(properties, world, slot as usize);
 
         world.play_sound(sound, SoundCategory::Blocks, &position.to_centered_f64());
+        world.emit_game_event(GameEvent::BlockChange.name(), position.to_centered_f64());
     }
 
     fn try_remove_book(

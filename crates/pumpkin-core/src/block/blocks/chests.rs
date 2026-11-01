@@ -285,17 +285,6 @@ fn get_chest_screen_handler_factory(
 }
 
 fn normal_use_chest_impl(args: &NormalUseArgs<'_>) -> BlockActionResult {
-    let stat = if args.block.id == Block::TRAPPED_CHEST.id {
-        pumpkin_data::statistic::CustomStatistic::TriggerTrappedChest
-    } else {
-        pumpkin_data::statistic::CustomStatistic::OpenChest
-    };
-    args.player.increment_stat(
-        pumpkin_data::statistic::StatisticCategory::Custom,
-        stat as i32,
-        1,
-    );
-
     if let Some(factory) = get_chest_screen_handler_factory(GetScreenHandlerFactoryArgs {
         server: args.server,
         world: args.world,
@@ -303,6 +292,18 @@ fn normal_use_chest_impl(args: &NormalUseArgs<'_>) -> BlockActionResult {
         position: args.position,
         player: args.player,
     }) {
+        // chest: award stat on successful open (ChestBlock.useWithoutItem)
+        let stat = if args.block.id == Block::TRAPPED_CHEST.id {
+            pumpkin_data::statistic::CustomStatistic::TriggerTrappedChest
+        } else {
+            pumpkin_data::statistic::CustomStatistic::OpenChest
+        };
+        args.player.increment_stat(
+            pumpkin_data::statistic::StatisticCategory::Custom,
+            stat as i32,
+            1,
+        );
+
         args.player
             .open_handled_screen(factory.as_ref(), Some(*args.position));
     }
@@ -658,8 +659,30 @@ fn get_chest_properties_if_can_connect(
 }
 
 fn is_chest_blocked(world: &World, block_pos: &BlockPos) -> bool {
-    // TODO: Block opening when a cat is sitting on top.
-    has_block_on_top(world, block_pos)
+    if has_block_on_top(world, block_pos) {
+        return true;
+    }
+    // chest: cannot open if cat is sitting on chest (ChestBlock.isCatSittingOnChest)
+    is_cat_sitting_on_chest(world, block_pos)
+}
+
+fn is_cat_sitting_on_chest(world: &World, block_pos: &BlockPos) -> bool {
+    let check_bb = pumpkin_util::math::boundingbox::BoundingBox::from_block(&block_pos.up());
+    for entity in world.entities.load().iter() {
+        if entity.get_entity().entity_type.id == pumpkin_data::entity::EntityType::CAT.id
+            && let Some(cat) = entity
+                .cast_any()
+                .downcast_ref::<crate::entity::passive::cat::CatEntity>()
+        {
+            use crate::entity::passive::tamable::TamableAnimal;
+            if cat.is_in_sitting_pose()
+                && check_bb.intersects(&entity.get_entity().bounding_box.load())
+            {
+                return true;
+            }
+        }
+    }
+    false
 }
 fn has_block_on_top(world: &World, block_pos: &BlockPos) -> bool {
     let above_pos = block_pos.up();

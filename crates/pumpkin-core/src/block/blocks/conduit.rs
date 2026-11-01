@@ -9,6 +9,7 @@ use pumpkin_world::tick::TickPriority;
 use std::sync::Arc;
 
 #[pumpkin_block("minecraft:conduit")]
+// conduit: waterlogged state and fluid update parity (ConduitBlock)
 pub struct ConduitBlock;
 
 impl BlockBehaviour for ConduitBlock {

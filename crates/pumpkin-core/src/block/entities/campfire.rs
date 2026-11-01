@@ -84,6 +84,7 @@ impl BlockEntity for CampfireBlockEntity {
         ))
     }
 
+    #[allow(clippy::too_many_lines)]
     fn tick(&self, world: &Arc<World>) {
         let block = world.get_block(&self.position);
         if block != &Block::CAMPFIRE && block != &Block::SOUL_CAMPFIRE {
@@ -175,6 +176,10 @@ impl BlockEntity for CampfireBlockEntity {
                 result = event.result;
             }
             Self::spawn_cooked_item(world, self.position, result);
+            world.emit_game_event(
+                pumpkin_data::game_event::GameEvent::BlockChange.name(),
+                self.position.to_centered_f64(),
+            );
 
             *self.items[slot]
                 .lock()
@@ -299,6 +304,19 @@ impl CampfireBlockEntity {
         let _ = world.level.read_chunk_sync(&chunk_position, |chunk| {
             chunk.mark_dirty(true);
         });
+    }
+
+    // campfire: drop remaining items on break (CampfireBlockEntity.preRemoveSideEffects)
+    pub fn drop_all_items(&self, world: &Arc<World>) {
+        for item in &self.items {
+            let mut stack = item
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if !stack.is_empty() {
+                Self::spawn_cooked_item(world, self.position, stack.clone());
+                *stack = ItemStack::EMPTY.clone();
+            }
+        }
     }
 
     fn spawn_cooked_item(world: &Arc<World>, position: BlockPos, stack: ItemStack) {

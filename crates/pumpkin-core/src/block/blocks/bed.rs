@@ -134,6 +134,11 @@ impl BlockBehaviour for BedBlock {
             args.world.update_neighbors(&other_half_pos, None);
             return;
         }
+        let neighbor_props = BedProperties::from_state_id(neighbor_state_id);
+        if neighbor_props.part == bed_props.part || neighbor_props.facing != bed_props.facing {
+            args.world.update_neighbors(&other_half_pos, None);
+            return;
+        }
 
         let is_creative = args.player.gamemode.load() == GameMode::Creative;
         let flags = if bed_props.part == BedPart::Foot && !is_creative {
@@ -164,7 +169,7 @@ impl BlockBehaviour for BedBlock {
         let (other_block, other_state) = args.world.get_block_and_state(&other_half_pos);
         if other_block == args.block {
             let other_props = BedProperties::from_state_id(other_state.id);
-            if other_props.part != bed_props.part {
+            if other_props.part != bed_props.part && other_props.facing == bed_props.facing {
                 args.world.break_block(
                     &other_half_pos,
                     None,
@@ -218,13 +223,26 @@ impl BedBlock {
         let state_id = world.get_block_state_id(position);
         let bed_props = BedProperties::from_state_id(state_id);
 
-        let (bed_head_pos, bed_foot_pos) = if bed_props.part == BedPart::Head {
-            (
-                *position,
-                position.offset(bed_props.facing.opposite().to_offset()),
-            )
+        let other_half_pos = if bed_props.part == BedPart::Head {
+            position.offset(bed_props.facing.opposite().to_offset())
         } else {
-            (position.offset(bed_props.facing.to_offset()), *position)
+            position.offset(bed_props.facing.to_offset())
+        };
+
+        // bed: validate other half connected (AbstractBedBlock.useWithoutItem)
+        let (other_block, other_state) = world.get_block_and_state(&other_half_pos);
+        if *other_block != *block {
+            return BlockActionResult::Consume;
+        }
+        let other_props = BedProperties::from_state_id(other_state.id);
+        if other_props.part == bed_props.part || other_props.facing != bed_props.facing {
+            return BlockActionResult::Consume;
+        }
+
+        let (bed_head_pos, bed_foot_pos) = if bed_props.part == BedPart::Head {
+            (*position, other_half_pos)
+        } else {
+            (other_half_pos, *position)
         };
 
         // Explode if bed rule explodes (EnvironmentAttributes.BED_RULE)
