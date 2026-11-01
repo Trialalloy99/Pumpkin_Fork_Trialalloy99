@@ -632,6 +632,126 @@ fn decode_skin_png(bytes: &[u8]) -> Option<(u32, u32, Vec<u8>)> {
 }
 
 impl Player {
+    // mace: stop fall, smash sound, shove nearby (MaceItem.hurtEnemy)
+    fn mace_hurt_enemy(&self, world: &Arc<World>, victim: &dyn EntityBase) {
+        use crate::entity::combat::{
+            MACE_SMASH_ATTACK_HEAVY_THRESHOLD, MACE_SMASH_ATTACK_KNOCKBACK_POWER,
+            MACE_SMASH_ATTACK_KNOCKBACK_RADIUS,
+        };
+        let entity = &self.living_entity.entity;
+        let velocity = entity.velocity.load();
+        entity.set_velocity(Vector3::new(velocity.x, f64::from(0.01f32), velocity.z));
+        let pos = entity.pos.load();
+        let fall_distance = self.living_entity.fall_distance.load();
+        let victim_entity = victim.get_entity();
+        let sound = if !victim_entity.on_ground.load(std::sync::atomic::Ordering::Relaxed) {
+            Sound::ItemMaceSmashAir
+        } else if fall_distance > MACE_SMASH_ATTACK_HEAVY_THRESHOLD {
+            Sound::ItemMaceSmashGroundHeavy
+        } else {
+            Sound::ItemMaceSmashGround
+        };
+        world.play_sound(sound, SoundCategory::Players, &pos);
+
+        // mace: knockback ring around the victim (MaceItem.knockback)
+        let victim_pos = victim_entity.pos.load();
+        world.sync_world_event(
+            pumpkin_data::world::WorldEvent::ParticlesSmashAttack,
+            BlockPos::floored(victim_pos.x, victim_pos.y - 0.2, victim_pos.z),
+            750,
+        );
+        let radius = MACE_SMASH_ATTACK_KNOCKBACK_RADIUS;
+        let bb = victim_entity.bounding_box.load();
+        let area = pumpkin_util::math::boundingbox::BoundingBox::new(
+            bb.min.sub_raw(radius, radius, radius),
+            bb.max.add_raw(radius, radius, radius),
+        );
+        let heavy = if fall_distance > MACE_SMASH_ATTACK_HEAVY_THRESHOLD { 2.0 } else { 1.0 };
+        for nearby in world.get_entities_at_box(&area) {
+            let Some(living) = nearby.get_living_entity() else {
+                continue;
+            };
+            let nearby_entity = nearby.get_entity();
+            if nearby_entity.entity_id == entity.entity_id
+                || nearby_entity.entity_id == victim_entity.entity_id
+                || nearby.get_player().is_some_and(|player| {
+                    player.is_spectator() || (player.is_creative() && player.is_flying())
+                })
+                || (self as &dyn EntityBase).is_allied_to(nearby.as_ref())
+                // mace: vanilla checks the pet's owner against the victim
+                || nearby
+                    .get_mob()
+                    .and_then(crate::entity::mob::Mob::get_owner_uuid)
+                    .is_some_and(|owner| owner == victim_entity.entity_uuid)
+                || nearby
+                    .cast_any()
+                    .downcast_ref::<crate::entity::decoration::armor_stand::ArmorStandEntity>()
+                    .is_some_and(crate::entity::decoration::armor_stand::ArmorStandEntity::is_marker)
+            {
+                continue;
+            }
+            let direction = nearby_entity.pos.load() - victim_pos;
+            if direction.length_squared() > radius * radius {
+                continue;
+            }
+            let resistance = living.get_attribute_value(&Attributes::KNOCKBACK_RESISTANCE);
+            let power = (radius - direction.length())
+                * f64::from(MACE_SMASH_ATTACK_KNOCKBACK_POWER)
+                * heavy
+                * (1.0 - resistance);
+            if power > 0.0 {
+                let push = direction.normalize() * power;
+                nearby_entity.add_velocity(Vector3::new(
+                    push.x,
+                    f64::from(MACE_SMASH_ATTACK_KNOCKBACK_POWER),
+                    push.z,
+                ));
+            }
+        }
+    }
+
+    // mace: wind burst explosion at the attacker (enchantment/wind_burst.json post_attack explode)
+    fn mace_wind_burst(&self, world: &Arc<World>, item_stack: &ItemStack) {
+        let Some(enchantments) = item_stack.get_data_component::<EnchantmentsImpl>() else {
+            return;
+        };
+        let Some(level) = enchantments
+            .enchantment
+            .iter()
+            .find(|(enchantment, _)| **enchantment == Enchantment::WIND_BURST)
+            .map(|(_, level)| *level)
+        else {
+            return;
+        };
+        if self.is_flying() || self.living_entity.fall_distance.load() < 1.5 {
+            return;
+        }
+        // wind burst: lookup [1.2, 1.75, 2.2], else 1.5 + 0.35 per level above first
+        let knockback = match level {
+            1 => 1.2,
+            2 => 1.75,
+            3 => 2.2,
+            _ => 0.35f32.mul_add((level - 1) as f32, 1.5),
+        };
+        let calculator = Arc::new(crate::world::explosion::SimpleExplosionDamageCalculator::new(
+            false,
+            true,
+            Some(knockback),
+            Some(&pumpkin_data::tag::Block::MINECRAFT_BLOCKS_WIND_CHARGE_EXPLOSIONS),
+        ));
+        world.explode_with_effects(
+            self.living_entity.entity.pos.load(),
+            3.5,
+            crate::world::ExplosionInteraction::Trigger,
+            calculator,
+            (
+                pumpkin_data::particle::Particle::GustEmitterSmall,
+                pumpkin_data::particle::Particle::GustEmitterLarge,
+                Sound::EntityWindChargeWindBurst,
+            ),
+        );
+    }
+
     pub async fn fetch_skin(
         properties: &[Property],
     ) -> Option<pumpkin_protocol::bedrock::client::Skin> {
@@ -1467,20 +1587,23 @@ impl Player {
         let pos = victim_entity.pos.load();
         let attack_type = AttackType::new(self, attack_cooldown_progress as f32);
 
-        if matches!(attack_type, AttackType::Critical) {
-            damage *= 1.5;
-        }
-
-        let is_mace_smash = matches!(attack_type, AttackType::MaceSmash);
+        // mace: fall bonus before the crit multiplier (Player.attack, MaceItem.getAttackDamageBonus)
+        let is_mace_smash = item_stack.item == &pumpkin_data::item::Item::MACE
+            && crate::entity::combat::can_smash_attack(self);
         if is_mace_smash {
-            let fall_distance = self.living_entity.fall_distance.load();
+            let fall_distance = f64::from(self.living_entity.fall_distance.load());
             let mut smash_bonus_per_block = 0.0f64;
             if let Some(enchantments) = item_stack.get_data_component::<EnchantmentsImpl>() {
                 for (enchantment, level) in enchantments.enchantment.iter() {
                     enchantment.modify_fall_based_damage(*level, &mut smash_bonus_per_block);
                 }
             }
-            damage += (1.5 + smash_bonus_per_block) * f64::from(fall_distance);
+            damage += crate::entity::combat::mace_fall_damage(fall_distance)
+                + smash_bonus_per_block * fall_distance;
+        }
+
+        if matches!(attack_type, AttackType::Critical) {
+            damage *= 1.5;
         }
 
         if !victim.damage_with_context(
@@ -1526,29 +1649,10 @@ impl Player {
         }
 
         if is_mace_smash {
-            let fall_distance = self.living_entity.fall_distance.load();
+            self.mace_hurt_enemy(&world, victim.as_ref());
+            self.mace_wind_burst(&world, &item_stack);
+            // mace: postHurtEnemy (MaceItem.postHurtEnemy)
             self.living_entity.fall_distance.store(0.0);
-            if let Some(enchantments) = item_stack.get_data_component::<EnchantmentsImpl>() {
-                for (enchantment, level) in enchantments.enchantment.iter() {
-                    if **enchantment == Enchantment::WIND_BURST {
-                        let boost_y = 0.5 + 0.25 * (*level as f64);
-                        let vel = self.living_entity.entity.velocity.load();
-                        self.living_entity
-                            .entity
-                            .velocity
-                            .store(Vector3::new(vel.x, boost_y, vel.z));
-                    }
-                }
-            }
-            world.play_sound(
-                if fall_distance > 5.0 {
-                    Sound::ItemMaceSmashGroundHeavy
-                } else {
-                    Sound::ItemMaceSmashGround
-                },
-                SoundCategory::Players,
-                &pos,
-            );
         }
 
         player_attack_sound(&pos, &world, attack_type);

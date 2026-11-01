@@ -23,7 +23,34 @@ pub enum AttackType {
     Sweeping,
     Strong,
     Weak,
-    MaceSmash,
+}
+
+// mace: fall > 1.5, not gliding (MaceItem.canSmashAttack)
+#[must_use]
+pub fn can_smash_attack(player: &Player) -> bool {
+    player.living_entity.fall_distance.load() > MACE_SMASH_ATTACK_FALL_THRESHOLD
+        && !player.get_entity().is_fall_flying()
+}
+
+/// Vanilla `MaceItem.SMASH_ATTACK_FALL_THRESHOLD`.
+pub const MACE_SMASH_ATTACK_FALL_THRESHOLD: f32 = 1.5;
+/// Vanilla `MaceItem.SMASH_ATTACK_HEAVY_THRESHOLD`.
+pub const MACE_SMASH_ATTACK_HEAVY_THRESHOLD: f32 = 5.0;
+/// Vanilla `MaceItem.SMASH_ATTACK_KNOCKBACK_RADIUS`.
+pub const MACE_SMASH_ATTACK_KNOCKBACK_RADIUS: f64 = 3.5;
+/// Vanilla `MaceItem.SMASH_ATTACK_KNOCKBACK_POWER`.
+pub const MACE_SMASH_ATTACK_KNOCKBACK_POWER: f32 = 0.7;
+
+// mace: fall damage bonus (MaceItem.getAttackDamageBonus)
+#[must_use]
+pub fn mace_fall_damage(fall_distance: f64) -> f64 {
+    if fall_distance <= 3.0 {
+        4.0 * fall_distance
+    } else if fall_distance <= 8.0 {
+        2.0f64.mul_add(fall_distance - 3.0, 12.0)
+    } else {
+        22.0 + fall_distance - 8.0
+    }
 }
 
 impl AttackType {
@@ -34,11 +61,6 @@ impl AttackType {
         let on_ground = entity.on_ground.load(Ordering::Relaxed);
         let fall_distance = player.living_entity.fall_distance.load();
         let held_item = player.inventory().held_item();
-        let is_mace = held_item.item.id == pumpkin_data::item::Item::MACE.id;
-
-        if is_mace && !on_ground && fall_distance > 1.5 {
-            return Self::MaceSmash;
-        }
 
         let sword = held_item.is_sword();
         let is_bedrock = matches!(player.client.as_ref(), ClientPlatform::Bedrock(_));
@@ -123,9 +145,6 @@ pub fn player_attack_sound(pos: &Vector3<f64>, world: &World, attack_type: Attac
         }
         AttackType::Weak => {
             world.play_sound(Sound::EntityPlayerAttackWeak, SoundCategory::Players, pos);
-        }
-        AttackType::MaceSmash => {
-            world.play_sound(Sound::ItemMaceSmashAir, SoundCategory::Players, pos);
         }
     }
 }
