@@ -326,6 +326,8 @@ impl ProtoChunk {
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
 
+        // terrain: blocks only exist once vanilla TERRAIN is done
+        let has_terrain = StagedChunkEnum::from(chunk_data.status) >= StagedChunkEnum::Noise;
         for (section_idx, block_palette) in block_sections_guard.iter().enumerate() {
             let section_base_y = section_idx as i32 * 16;
 
@@ -333,7 +335,7 @@ impl ProtoChunk {
                 continue;
             }
 
-            for x in 0..16 {
+            for x in (0..16).filter(|_| has_terrain) {
                 for y in 0..16 {
                     for z in 0..16 {
                         let block_state_id = block_palette.get(x, y, z);
@@ -365,7 +367,7 @@ impl ProtoChunk {
         drop(block_sections_guard);
         drop(biome_sections_guard);
 
-        for z in 0..16 {
+        for z in (0..16).filter(|_| has_terrain) {
             for x in 0..16 {
                 let index = Self::local_position_to_height_map_index(x, z);
 

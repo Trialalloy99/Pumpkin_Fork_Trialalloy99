@@ -202,7 +202,7 @@ fn block_entities_survive_chunk_data_resume() {
     assert_eq!(chunk_again.pending_block_entities.lock().unwrap().len(), 1);
 }
 
-// Regression test for transposed heightmaps during Noise-stage chunk resume.
+// Regression test: a chunk saved after terrain resumes at carvers with identical blocks.
 // Flat terrain cannot expose this bug, so use a sloped chunk.
 #[test]
 fn heightmap_roundtrip_through_chunk_data_resume() {
@@ -222,13 +222,9 @@ fn heightmap_roundtrip_through_chunk_data_resume() {
     proto.set_structure_starts(generator);
     proto.set_structure_references(generator);
     proto.step_to_noise(generator);
-
-    let mut expected_heights = [[0i32; 16]; 16];
-    for z in 0..16i32 {
-        for x in 0..16i32 {
-            expected_heights[z as usize][x as usize] = proto.top_block_height_exclusive(x, z);
-        }
-    }
+    let surface_biomes = surface_biomes(&world_gen, cx, cz);
+    proto.step_to_surface(generator, &surface_biomes);
+    proto.step_to_carvers(generator);
 
     let mut staged = Chunk::Proto(Box::new(proto));
     staged.upgrade_to_level_chunk(&Dimension::OVERWORLD, &LightingEngineConfig::Default);
@@ -237,26 +233,9 @@ fn heightmap_roundtrip_through_chunk_data_resume() {
     };
     assert_eq!(chunk_data.status, pumpkin_data::chunk::ChunkStatus::Terrain);
 
-    let mut resumed = ProtoChunk::from_chunk_data(&chunk_data, &world_gen);
-    assert_eq!(resumed.stage, StagedChunkEnum::Noise);
-
-    let mut height_mismatches = 0;
-    for z in 0..16i32 {
-        for x in 0..16i32 {
-            let expected = expected_heights[z as usize][x as usize];
-            let got = resumed.top_block_height_exclusive(x, z);
-            if got != expected {
-                height_mismatches += 1;
-            }
-        }
-    }
-    assert_eq!(
-        height_mismatches, 0,
-        "heightmap corrupted by save/load roundtrip (transposed or lost)"
-    );
-
-    let surface_biomes = surface_biomes(&world_gen, cx, cz);
-    resumed.step_to_surface(generator, &surface_biomes);
+    // a resumed terrain chunk must not run surface or carvers again
+    let resumed = ProtoChunk::from_chunk_data(&chunk_data, &world_gen);
+    assert_eq!(resumed.stage, StagedChunkEnum::Carvers);
 
     let mut fresh = ProtoChunk::new(cx, cz, &world_gen);
     fresh.step_to_biomes(generator);
@@ -264,28 +243,29 @@ fn heightmap_roundtrip_through_chunk_data_resume() {
     fresh.set_structure_references(generator);
     fresh.step_to_noise(generator);
     fresh.step_to_surface(generator, &surface_biomes);
+    fresh.step_to_carvers(generator);
 
     let bottom = fresh.bottom_y() as i32;
     let top = bottom + fresh.height() as i32;
-    let mut surface_mismatches = 0;
+    let mut mismatches = 0;
     for lz in 0..16i32 {
         for lx in 0..16i32 {
+            assert_eq!(
+                fresh.top_block_height_exclusive(lx, lz),
+                resumed.top_block_height_exclusive(lx, lz),
+                "heightmap corrupted by save/load roundtrip"
+            );
             let (wx, wz) = (cx * 16 + lx, cz * 16 + lz);
-            for y in (bottom..top).rev() {
-                let f = fresh.get_block_state(&Vector3::new(wx, y, wz)).to_state();
-                if f.is_air() || f.is_liquid() {
-                    continue;
+            for y in bottom..top {
+                let pos = Vector3::new(wx, y, wz);
+                if fresh.get_block_state(&pos) != resumed.get_block_state(&pos) {
+                    mismatches += 1;
                 }
-                let r = resumed.get_block_state(&Vector3::new(wx, y, wz)).to_state();
-                if f.id != r.id {
-                    surface_mismatches += 1;
-                }
-                break;
             }
         }
     }
     assert_eq!(
-        surface_mismatches, 0,
-        "resumed chunk surface differs from uninterrupted generation (stone-trail bug)"
+        mismatches, 0,
+        "resumed terrain differs from uninterrupted generation"
     );
 }
