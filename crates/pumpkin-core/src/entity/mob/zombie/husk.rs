@@ -50,20 +50,22 @@ impl HuskEntity {
     // husk: ride a new camel husk with a parched behind, iron spear (Husk.finalizeSpawn)
     fn spawn_camel_husk_jockey(&self, world: &Arc<World>, reason: SpawnReason) {
         let mob_entity = self.get_mob_entity();
+        let entity = self.get_entity();
+        let pos = entity.pos.load();
+        let camel_husk = from_type(&EntityType::CAMEL_HUSK, pos, world, uuid::Uuid::new_v4());
+        // camel husk has no AI here yet; skip the jockey instead of spawning a dummy
+        let Some(camel_mob) = camel_husk.get_mob() else {
+            return;
+        };
         mob_entity.set_item_slot(
             &EquipmentSlot::MAIN_HAND,
             ItemStack::new(1, &Item::IRON_SPEAR),
         );
-        let entity = self.get_entity();
-        let pos = entity.pos.load();
-        let camel_husk = from_type(&EntityType::CAMEL_HUSK, pos, world, uuid::Uuid::new_v4());
         finalize_spawn(&camel_husk, world, None, reason);
         let parched = from_type(&EntityType::PARCHED, pos, world, uuid::Uuid::new_v4());
         parched.get_entity().set_rotation(entity.yaw.load(), 0.0);
         finalize_spawn(&parched, world, None, reason);
-        if let Some(camel_mob) = camel_husk.get_mob() {
-            camel_mob.get_mob_entity().add_pending_rider(parched);
-        }
+        camel_mob.get_mob_entity().add_pending_rider(parched);
         mob_entity.set_pending_vehicle(camel_husk, true);
     }
 }
