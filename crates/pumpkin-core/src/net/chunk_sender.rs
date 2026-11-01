@@ -13,8 +13,10 @@ use pumpkin_protocol::{ClientPacket, MultiVersionJavaPacket};
 use pumpkin_util::math::vector2::Vector2;
 use pumpkin_util::version::JavaMinecraftVersion;
 use pumpkin_world::chunk::ChunkData;
+use pumpkin_world::chunk_system::profiler;
 use pumpkin_world::cylindrical_chunk_iterator::Cylindrical;
 use pumpkin_world::level::{Level, SyncChunk};
+use std::sync::atomic::Ordering::Relaxed;
 
 use crate::net::ClientPlatform;
 
@@ -288,6 +290,7 @@ impl ChunkSender {
                     return Some(cached.clone());
                 }
 
+                let _profile = profiler::scope(profiler::Metric::SendEncodeChunk);
                 let chunk = &candidate.chunk;
                 let mut chunk_buf = Vec::with_capacity(32 * 1024);
                 if chunk_buf
@@ -345,6 +348,7 @@ impl ChunkSender {
                 continue;
             }
 
+            profiler::count(&profiler::SEND_BYTES, chunk.payload.len() as u64);
             client.try_enqueue_packet(chunk.payload.clone());
 
             self.pending_chunks.remove(&chunk.position);
@@ -353,6 +357,10 @@ impl ChunkSender {
         }
 
         let sent_count = dispatched_positions.len();
+        profiler::count(&profiler::CHUNKS_SENT, sent_count as u64);
+        if profiler::enabled() {
+            profiler::SEND_PENDING.store(self.pending_chunks.len() as u64, Relaxed);
+        }
         if sent_count > 0 {
             if version >= JavaMinecraftVersion::V_1_20_2
                 && let ClientPlatform::Java(java_client) = client

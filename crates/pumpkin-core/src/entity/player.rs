@@ -3155,6 +3155,9 @@ impl Player {
             }
         }
 
+        let send_profile = pumpkin_world::chunk_system::profiler::scope(
+            pumpkin_world::chunk_system::profiler::Metric::SendPlayerTick,
+        );
         let world = self.world();
         let player_chunk = self.get_entity().chunk_pos.load();
         let epoch = self.chunk_send_epoch.load(Ordering::Relaxed);
@@ -3226,6 +3229,7 @@ impl Player {
                 }
             },
         );
+        drop(send_profile);
 
         if let ClientPlatform::Bedrock(bedrock_client) = self.client.as_ref()
             && !self.bedrock_spawned.load(Ordering::Relaxed)

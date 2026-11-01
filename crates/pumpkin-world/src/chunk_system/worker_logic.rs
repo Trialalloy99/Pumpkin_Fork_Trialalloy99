@@ -123,6 +123,7 @@ pub async fn io_read_work(
         }
 
         let (t_send, mut t_recv) = tokio::sync::mpsc::channel(1000);
+        let io_timer = super::profiler::start();
 
         let batch_len = batch.len();
         let level_clone = level.clone();
@@ -143,7 +144,13 @@ pub async fn io_read_work(
                 Loaded(chunk) => {
                     let pos = ChunkPos::new(chunk.x, chunk.z);
                     let level = level.clone();
-                    let result = run_blocking(move || process_loaded_chunk(chunk, &level)).await;
+                    let result = run_blocking(move || {
+                        let timer = super::profiler::start();
+                        let chunk = process_loaded_chunk(chunk, &level);
+                        super::profiler::end(super::profiler::Metric::IoReadChunk, timer);
+                        chunk
+                    })
+                    .await;
                     let received = match result {
                         Ok(processed) => RecvChunk::IO(processed),
                         Err(err) => RecvChunk::GenerationFailure {
@@ -174,6 +181,7 @@ pub async fn io_read_work(
             }
         }
         let _ = fetch_task.await;
+        super::profiler::end(super::profiler::Metric::IoReadBatch, io_timer);
     }
     debug!("io read thread stop");
 }
@@ -200,6 +208,7 @@ pub async fn io_write_work(
             Err(_) => continue,
         };
         // debug!("io write thread receive chunks size {}", data.len());
+        let io_timer = super::profiler::start();
         let positions = data.iter().map(|(pos, _)| *pos).collect::<Vec<_>>();
         let level_for_upgrade = level.clone();
         let upgrade_result = run_blocking(move || {
@@ -260,6 +269,7 @@ pub async fn io_write_work(
             }
         }
         lock.1.notify_waiters();
+        super::profiler::end(super::profiler::Metric::IoWriteBatch, io_timer);
 
         if upgrade_failed {
             error!("Failed to upgrade chunks for saving");
@@ -284,6 +294,7 @@ pub fn run_generation(
         };
     };
     // Run generation with panic catching
+    let timer = super::profiler::start();
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         cache.advance(
             stage,
@@ -294,6 +305,12 @@ pub fn run_generation(
         cache // Return cache on success
     }));
 
+    if timer.is_some() {
+        super::profiler::end(super::profiler::stage_metric(stage), timer);
+        if stage == StagedChunkEnum::Full {
+            super::profiler::count(&super::profiler::CHUNKS_FULL, 1);
+        }
+    }
     match result {
         Ok(cache) => RecvChunk::Generation(cache),
         Err(payload) => {

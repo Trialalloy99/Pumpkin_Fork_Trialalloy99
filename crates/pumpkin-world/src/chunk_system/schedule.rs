@@ -150,6 +150,8 @@ impl GenerationSchedule {
                 .expect("Failed to build Chunk Generation ThreadPool"),
         );
         let max_in_flight = (gen_threads * 2) as u16;
+        super::profiler::GEN_THREADS.store(gen_threads as u64, Relaxed);
+        super::profiler::MAX_IN_FLIGHT.store(u64::from(max_in_flight), Relaxed);
 
         let level_sched = level;
         let lighting_config = level_sched.lighting_config;
@@ -280,6 +282,7 @@ impl GenerationSchedule {
     }
 
     fn sort_queue(&mut self) {
+        let _profile = super::profiler::scope(super::profiler::Metric::SchedSortQueue);
         if self.queue.is_empty() {
             return;
         }
@@ -557,6 +560,7 @@ impl GenerationSchedule {
     /// chunk data available, and re-queue them if so.
     /// Must be called after every `receive_chunk` call.
     fn check_waiting_tasks(&mut self) {
+        let _profile = super::profiler::scope(super::profiler::Metric::SchedCheckWaiting);
         if self.waiting_for_chunks.is_empty() {
             return;
         }
@@ -612,6 +616,7 @@ impl GenerationSchedule {
 
     #[expect(clippy::too_many_lines)]
     fn resort_work(&mut self, new_data: (Option<LevelChange>, Option<Vec<ChunkPos>>)) -> bool {
+        let _profile = super::profiler::scope(super::profiler::Metric::SchedResortWork);
         if new_data.0.is_none() && new_data.1.is_none() {
             return false;
         }
@@ -882,6 +887,7 @@ impl GenerationSchedule {
     }
 
     fn garbage_collect_dependencies(&mut self) {
+        let _profile = super::profiler::scope(super::profiler::Metric::SchedGcUnload);
         self.recompute_dependency_stages();
 
         // Garbage collect stranded dependencies and empty holders
@@ -925,6 +931,7 @@ impl GenerationSchedule {
     }
 
     fn process_unload_queue(&mut self) {
+        let _profile = super::profiler::scope(super::profiler::Metric::SchedGcUnload);
         if self.unload_chunks.is_empty() {
             return;
         }
@@ -1003,6 +1010,7 @@ impl GenerationSchedule {
     }
 
     fn save_all_chunk(&mut self, save_proto_chunk: bool) {
+        let _profile = super::profiler::scope(super::profiler::Metric::SchedSave);
         let mut chunks = Vec::with_capacity(self.chunk_map.len());
 
         for (pos, holder) in &mut self.chunk_map {
@@ -1096,6 +1104,7 @@ impl GenerationSchedule {
 
     #[expect(clippy::too_many_lines)]
     fn receive_chunk(&mut self, pos: ChunkPos, data: RecvChunk) {
+        let _profile = super::profiler::scope(super::profiler::Metric::SchedReceiveChunk);
         match data {
             RecvChunk::IO(chunk) => {
                 let mut holder = self.chunk_map.remove(&pos).expect("holder exists");
@@ -1340,6 +1349,13 @@ impl GenerationSchedule {
             thread::current().name().unwrap_or("unknown")
         );
         loop {
+            let _profile = super::profiler::scope(super::profiler::Metric::SchedLoop);
+            if super::profiler::enabled() {
+                super::profiler::QUEUE_LEN.store(self.queue.len() as u64, Relaxed);
+                super::profiler::RUNNING_TASKS.store(u64::from(self.running_task_count), Relaxed);
+                super::profiler::LOADED_HOLDERS.store(self.chunk_map.len() as u64, Relaxed);
+                super::profiler::sample();
+            }
             if level.should_unload.swap(false, Relaxed) {
                 self.garbage_collect_dependencies();
                 self.process_unload_queue();
@@ -1617,7 +1633,9 @@ impl GenerationSchedule {
                         let send_chunk = self.send_chunk.clone();
                         let level = level.clone();
 
+                        let dispatched = super::profiler::start();
                         self.generation_pool.spawn(move || {
+                            super::profiler::end(super::profiler::Metric::GenQueueWait, dispatched);
                             let result = crate::chunk_system::worker_logic::run_generation(
                                 pos, cache, stage, &level,
                             );

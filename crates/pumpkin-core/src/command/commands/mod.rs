@@ -58,6 +58,7 @@ mod pumpkin;
 mod raid;
 mod random;
 mod recipe;
+mod recording;
 mod reload;
 mod r#return;
 mod ride;
@@ -156,6 +157,7 @@ pub fn default_dispatcher(
     worldborder::register(&mut dispatcher, registry);
     particle::register(&mut dispatcher, registry);
     perf::register(&mut dispatcher, registry);
+    recording::register(&mut dispatcher, registry);
     playsound::register(&mut dispatcher, registry);
     fill::register(&mut dispatcher, registry);
     clear::register(&mut dispatcher, registry);
