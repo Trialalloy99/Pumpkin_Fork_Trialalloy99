@@ -5,6 +5,8 @@ pub mod biome_hashes;
 #[cfg(test)]
 pub mod dumps;
 #[cfg(test)]
+pub mod locate_cache;
+#[cfg(test)]
 pub mod resume;
 #[cfg(test)]
 pub mod stage_parity;
