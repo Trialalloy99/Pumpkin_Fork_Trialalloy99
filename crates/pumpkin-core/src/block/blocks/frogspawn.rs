@@ -95,7 +95,7 @@ impl BlockBehaviour for FrogspawnBlock {
         args.world.play_sound(
             Sound::BlockFrogspawnHatch,
             SoundCategory::Blocks,
-            &args.position.to_f64(),
+            &args.position.to_centered_f64(),
         );
         let count = rand::rng().random_range(MIN_TADPOLES_SPAWN..=MAX_TADPOLES_SPAWN);
         for _ in 0..count {
