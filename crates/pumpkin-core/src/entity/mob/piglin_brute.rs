@@ -3,11 +3,17 @@ use std::sync::{
     atomic::{AtomicBool, AtomicI32, Ordering},
 };
 
-use pumpkin_data::Block;
-use pumpkin_data::BlockState;
+use pumpkin_data::damage::DamageType;
+use pumpkin_data::data_component_impl::EquipmentSlot;
+use pumpkin_data::effect::StatusEffect;
 use pumpkin_data::entity::EntityType;
+use pumpkin_data::item::Item;
+use pumpkin_data::item_stack::ItemStack;
+use pumpkin_data::potion::Effect;
 use pumpkin_data::sound::{Sound, SoundCategory};
+use pumpkin_data::tag;
 use pumpkin_data::tracked_data;
+use pumpkin_data::{Block, BlockState};
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_util::math::position::BlockPos;
 
@@ -16,17 +22,28 @@ use crate::entity::{
     Entity, EntityBase,
     ai::goal::{
         active_target::ActiveTargetGoal, look_around::RandomLookAroundGoal,
-        look_at_entity::LookAtEntityGoal, melee_attack::MeleeAttackGoal, open_door::OpenDoorGoal,
+        look_at_entity::LookAtEntityGoal, melee_attack::MeleeAttackGoal,
+        move_towards_restriction::MoveTowardsRestrictionGoal, open_door::OpenDoorGoal,
         revenge::RevengeGoal, swim::SwimGoal, wander_around::WanderAroundGoal,
     },
-    mob::{Mob, MobEntity},
+    custom_sound::CustomSound,
+    mob::{
+        Mob, MobEntity, conversion::convert_single, equipment::RegionalDifficulty,
+        neutral::find_by_uuid, spawn::SpawnGroupData,
+    },
 };
+use crate::plugin::api::events::entity::entity_target::TargetReason;
 use crate::world::World;
 
 pub struct PiglinBruteEntity {
     pub mob_entity: MobEntity,
     pub immune_to_zombification: AtomicBool,
     pub time_in_overworld: AtomicI32,
+    was_fighting: AtomicBool,
+}
+
+fn is_abstract_piglin(entity_type: &'static EntityType) -> bool {
+    entity_type == &EntityType::PIGLIN || entity_type == &EntityType::PIGLIN_BRUTE
 }
 
 impl PiglinBruteEntity {
@@ -39,8 +56,10 @@ impl PiglinBruteEntity {
             mob_entity,
             immune_to_zombification: AtomicBool::new(false),
             time_in_overworld: AtomicI32::new(0),
+            was_fighting: AtomicBool::new(false),
         };
         let mob_arc = Arc::new(piglin);
+        mob_arc.mob_entity.set_can_pick_up_loot(true);
         let mob_weak: Weak<dyn Mob> = {
             let mob_arc: Arc<dyn Mob> = mob_arc.clone();
             Arc::downgrade(&mob_arc)
@@ -52,7 +71,8 @@ impl PiglinBruteEntity {
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
             goal_selector.add_goal(1, Box::new(OpenDoorGoal::new(true)));
             goal_selector.add_goal(2, Box::new(MeleeAttackGoal::new(1.0, true)));
-            goal_selector.add_goal(5, Box::new(WanderAroundGoal::new(1.0)));
+            goal_selector.add_goal(5, Box::new(MoveTowardsRestrictionGoal::new(0.6)));
+            goal_selector.add_goal(5, Box::new(WanderAroundGoal::new(0.6)));
             goal_selector.add_goal(
                 6,
                 LookAtEntityGoal::with_default(mob_weak.clone(), &EntityType::PLAYER, 8.0),
@@ -60,7 +80,15 @@ impl PiglinBruteEntity {
             goal_selector.add_goal(7, Box::new(RandomLookAroundGoal::default()));
 
             let target_selector = &mob_arc.mob_entity.target_selector;
-            target_selector.add_goal(1, Box::new(RevengeGoal::new(true)));
+            target_selector.add_goal(
+                1,
+                Box::new(
+                    RevengeGoal::new(true)
+                        .ignoring(is_abstract_piglin)
+                        .alerting_others()
+                        .forget_unseen_after(600),
+                ),
+            );
             target_selector.add_goal(
                 2,
                 ActiveTargetGoal::with_default(&mob_arc.mob_entity, &EntityType::PLAYER, true),
@@ -103,62 +131,87 @@ impl PiglinBruteEntity {
     }
 
     fn convert_to_zombified(&self) {
-        let entity = &self.mob_entity.living_entity.entity;
-        let world = entity.world.load();
-        let pos = entity.pos.load();
-
-        if world.level_info.load().difficulty != pumpkin_util::Difficulty::Peaceful {
-            world.play_sound(
-                Sound::EntityPiglinBruteConvertedToZombified,
-                SoundCategory::Hostile,
-                &pos,
-            );
-        }
-
-        let zombified = crate::entity::r#type::from_type(
+        self.make_sound(Sound::EntityPiglinBruteConvertedToZombified);
+        let _ = convert_single(
+            self,
             &EntityType::ZOMBIFIED_PIGLIN,
-            pos,
-            &world,
-            uuid::Uuid::new_v4(),
-        );
-
-        let zombified_base = zombified.get_entity();
-        zombified_base.set_rotation(entity.yaw.load(), entity.pitch.load());
-        zombified_base.head_yaw.store(entity.head_yaw.load());
-        zombified_base.velocity.store(entity.velocity.load());
-
-        if let Some(living) = zombified.get_living_entity() {
-            living.set_health(self.mob_entity.living_entity.health.load());
-        }
-
-        if let Some(custom_name) = &**entity.custom_name.load() {
-            zombified_base.set_custom_name(custom_name.clone());
-        }
-
-        {
-            let src_equip = self
-                .mob_entity
-                .living_entity
-                .entity_equipment
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some(living) = zombified.get_living_entity() {
-                let mut dst_equip = living
-                    .entity_equipment
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                for (slot, item) in &src_equip.equipment {
-                    dst_equip.put(slot, item.clone());
+            true,
+            true,
+            |zombified| {
+                if let Some(living) = zombified.get_living_entity() {
+                    living.add_effect(Effect {
+                        effect_type: &StatusEffect::NAUSEA,
+                        duration: 200,
+                        amplifier: 0,
+                        ambient: false,
+                        show_particles: true,
+                        show_icon: true,
+                        blend: false,
+                    });
                 }
-            }
-        }
+            },
+        );
+    }
+}
 
-        world.spawn_entity(zombified);
-        entity.remove();
+impl CustomSound for PiglinBruteEntity {
+    fn death_sound(&self) -> Option<Sound> {
+        Some(Sound::EntityPiglinBruteDeath)
+    }
+
+    fn hurt_sound(&self) -> Option<Sound> {
+        Some(Sound::EntityPiglinBruteHurt)
+    }
+
+    fn sound_category(&self) -> SoundCategory {
+        SoundCategory::Hostile
     }
 }
 
 impl Mob for PiglinBruteEntity {
+    fn as_custom_sound(&self) -> Option<&dyn CustomSound> {
+        Some(self)
+    }
+
+    fn get_ambient_sound(&self) -> Option<Sound> {
+        Some(Sound::EntityPiglinBruteAmbient)
+    }
+
+    // piglin brute: home and golden axe (PiglinBrute.finalizeSpawn)
+    fn finalize_spawn(
+        &self,
+        world: &Arc<World>,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        let mob = &self.mob_entity;
+        mob.position_target
+            .store(self.get_entity().block_pos.load());
+        mob.position_target_range.store(100, Ordering::Relaxed);
+        self.populate_default_equipment_slots(
+            world,
+            &RegionalDifficulty::at(world, self.get_entity().pos.load()),
+        );
+        self.finalize_spawn_super(group_data)
+    }
+
+    fn populate_default_equipment_slots(
+        &self,
+        _world: &Arc<World>,
+        _difficulty: &RegionalDifficulty,
+    ) {
+        self.mob_entity.set_item_slot(
+            &EquipmentSlot::MAIN_HAND,
+            ItemStack::new(1, &Item::GOLDEN_AXE),
+        );
+    }
+
+    fn mob_wants_to_pick_up(&self, stack: &ItemStack) -> bool {
+        stack.item == &Item::GOLDEN_AXE && self.can_hold_item(stack)
+    }
+
+    fn preferred_weapon_type(&self) -> Option<&'static pumpkin_data::tag::Tag> {
+        Some(&tag::Item::MINECRAFT_PIGLIN_PREFERRED_WEAPONS)
+    }
     fn mob_play_step_sound(&self, _pos: &BlockPos, _state: &BlockState) {
         self.play_entity_sound(Sound::EntityPiglinBruteStep, 0.15, 1.0);
     }
@@ -185,7 +238,6 @@ impl Mob for PiglinBruteEntity {
         if time_in_overworld > 0 {
             nbt.put_int("TimeInOverworld", time_in_overworld);
         }
-        nbt.put_bool("CanPickUpLoot", true);
     }
 
     fn mob_read_nbt(&self, nbt: &NbtCompound) {
@@ -204,6 +256,11 @@ impl Mob for PiglinBruteEntity {
         }
 
         let world = entity.world.load();
+        let fighting = self.mob_entity.get_target().is_some();
+        let was_fighting = self.was_fighting.swap(fighting, Ordering::Relaxed);
+        if fighting && (!was_fighting || rand::random::<f32>() < 0.0125) {
+            self.make_sound(Sound::EntityPiglinBruteAngry);
+        }
         if self.is_converting(&world) {
             let time = self.time_in_overworld.fetch_add(1, Ordering::Relaxed) + 1;
             if time > Self::CONVERSION_TIME {
@@ -212,6 +269,55 @@ impl Mob for PiglinBruteEntity {
         } else {
             self.time_in_overworld.store(0, Ordering::Relaxed);
         }
+    }
+
+    fn on_damage_with_context(
+        &self,
+        _damage_type: DamageType,
+        source: Option<&dyn EntityBase>,
+        cause: Option<&dyn EntityBase>,
+    ) -> bool {
+        let Some(source) = cause.or(source) else {
+            return true;
+        };
+        if is_abstract_piglin(source.get_entity().entity_type) {
+            return true;
+        }
+        let entity = self.get_entity();
+        let world = entity.world.load();
+        let Some(attacker) = find_by_uuid(&world, source.get_entity().entity_uuid) else {
+            return true;
+        };
+        let area = entity.bounding_box.load().expand(16.0, 8.0, 16.0);
+        for nearby in world.get_entities_at_box(&area) {
+            if !is_abstract_piglin(nearby.get_entity().entity_type) {
+                continue;
+            }
+            let Some(piglin) = nearby.get_mob() else {
+                continue;
+            };
+            if piglin.is_baby_mob() {
+                continue;
+            }
+            let nearby_pos = nearby.get_entity().pos.load();
+            let new_distance =
+                nearby_pos.squared_distance_to_vec(&attacker.get_entity().pos.load());
+            let closer = piglin
+                .get_mob_entity()
+                .get_target()
+                .as_ref()
+                .is_none_or(|current| {
+                    new_distance
+                        < nearby_pos.squared_distance_to_vec(&current.get_entity().pos.load())
+                });
+            if closer {
+                piglin.set_mob_target(
+                    Some(attacker.clone()),
+                    TargetReason::TargetAttackedNearbyEntity,
+                );
+            }
+        }
+        true
     }
 
     fn get_base_experience_reward(&self) -> u32 {

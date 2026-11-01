@@ -1697,6 +1697,12 @@ pub trait Mob: EntityBase + Send + Sync {
         })
     }
 
+    // mob age: non-AgeableMob baby state (AbstractPiglin.isBaby)
+    fn is_baby_mob(&self) -> bool {
+        self.as_ageable()
+            .is_some_and(crate::entity::ageable::AgeableMob::is_baby)
+    }
+
     fn as_custom_sound(&self) -> Option<&dyn crate::entity::custom_sound::CustomSound> {
         None
     }

@@ -999,6 +999,10 @@ impl PiglinEntity {
 }
 
 impl Mob for PiglinEntity {
+    fn is_baby_mob(&self) -> bool {
+        self.is_baby()
+    }
+
     // piglin: own pickup (Piglin.pickUpItem), not the generic Mob looting
     fn uses_mob_looting(&self) -> bool {
         false
