@@ -963,11 +963,16 @@ impl ProtoChunk {
             generation_shape.max_y() as i32,
             generation_shape.vertical_cell_block_count() as usize,
         );
+        let setup_timer = crate::chunk_system::profiler::start();
         let mut surface_height_estimate_sampler = SurfaceHeightEstimateSampler::generate(
             &generator.base_router.surface_estimator,
             &surface_config,
         );
 
+        crate::chunk_system::profiler::end(
+            crate::chunk_system::profiler::Metric::GenSurfaceSetup,
+            setup_timer,
+        );
         self.build_surface(
             generator,
             surface_biomes,
@@ -1171,6 +1176,7 @@ impl ProtoChunk {
             &terrain_cache.secondary_noise,
             settings.sea_level,
         );
+        let vein_timer = crate::chunk_system::profiler::start();
         let mut vein_context = settings.ore_veins_enabled.then(|| {
             let volume = DensityVolume::with_block_step(
                 16,
@@ -1196,6 +1202,10 @@ impl ProtoChunk {
                 ore_random_deriver: &random_config.ore_random_deriver,
             }
         });
+        crate::chunk_system::profiler::end(
+            crate::chunk_system::profiler::Metric::GenSurfaceSetup,
+            vein_timer,
+        );
         context.vein_context = vein_context.as_mut();
         for local_x in 0..16 {
             for local_z in 0..16 {

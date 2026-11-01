@@ -37,9 +37,10 @@ pub enum Metric {
     SchedSave,
     SendPlayerTick,
     SendEncodeChunk,
+    GenSurfaceSetup,
 }
 
-const METRIC_COUNT: usize = Metric::SendEncodeChunk as usize + 1;
+const METRIC_COUNT: usize = Metric::GenSurfaceSetup as usize + 1;
 
 const NAMES: [&str; METRIC_COUNT] = [
     "gen: structure_starts",
@@ -65,6 +66,7 @@ const NAMES: [&str; METRIC_COUNT] = [
     "sched: save",
     "send: player chunk tick",
     "send: encode chunk",
+    "gen: surface setup (part of surface)",
 ];
 
 struct Slot {
