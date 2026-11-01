@@ -67,26 +67,27 @@ Unser Fortschritt steht auf **https://claude.ai/artifact/KAHK4pXmbbEhd9nXiBuobN*
 |---|---|---|
 | 1 | Vex (plus die Vex-Beschwörung beim Evoker) | fertig auf `feat/vex-ai` und `playable`; Test im Spiel steht aus |
 | Commands | `/locate` (alle POI-Typen, POIs aus geladenen Chunks), `/perf` | fertig auf `batch-commands` |
-| 2 | Guardian, Elder Guardian, Illusioner, Vindicator, Ravager, Endermite | fertig auf `batch-2`; Test im Spiel steht aus |
-| 3 | Zombie, Husk, Zombie Villager, Zombified Piglin, Enderman, Wolf | in Arbeit auf `batch-3`: Lücken werden geschlossen |
+| 2 | Guardian, Elder Guardian, Illusioner, Vindicator, Ravager, Endermite | fertig (Lücken in `batch-3` geschlossen); Test im Spiel steht aus |
+| 3 | Zombie, Husk, Zombie Villager, Zombified Piglin, Enderman, Wolf | fertig auf `batch-3` (Husk erst mit dem Kamel-Husk aus Batch 4 komplett); Test im Spiel steht aus |
+| 4 | Camel Husk, Parched, Skeleton, Stray, Bogged, Creeper, Spider, Cave Spider, Drowned, Witch | in Arbeit auf `batch-4` (von `batch-3` abgezweigt) |
 
 Aus dem Tracker entfernt, weil Vanilla sie auf einem dedizierten Server nicht hat: `/publish` und `/unpublish` (nur Einzelspieler) sowie `/jfr` (Java Flight Recorder, braucht eine JVM).
 
-Offene Lücken aus Batch 2, als Aufgaben für später:
-- `LookAtEntityGoal` kann nur einen einzigen Typ. Die Vanilla-Ziele `LookAtPlayerGoal(Mob.class, 8)` fehlen deshalb bei Vex, Vindicator, Illusioner und Ravager. Beim Guardian fehlt das Hinschauen zum Elder Guardian.
-- `TrackTargetGoal::can_navigate_to_entity` ist ein TODO und gibt `false` zurück. Ziele mit „mustReach“ (Johnny beim Vindicator) prüfen die Erreichbarkeit deshalb nicht.
-- Ravager: Betäubung, wenn der Angriff auf ein Schild trifft (`blockedByItem`), fehlt, weil Pumpkin keinen Hook dafür hat. `attackTick` wird nur bei einem Treffer gesetzt, Vanilla setzt es bei jedem Versuch.
-- Guardian: Wasser-Malus 0 für das Pathfinding ist nicht gesetzt. Für die Blickglättung beim Schwimmen gibt es eine Annäherung, weil `LookControlTrait` sein Ziel nicht herausgibt.
-- Der Evoker hat noch ein eigenes Zaubersystem. Er sollte auf `mob/spellcaster.rs` umgestellt werden, das der Illusioner schon nutzt.
+Batch 2 und 3: alle bekannten Lücken sind geschlossen. Was dafür neu dazukam (für spätere Agents):
+- `mob/spawn.rs`: `SpawnReason` (Vanilla `EntitySpawnReason`), `finalize_spawn(.., reason)`, `MobEntity::spawn_reason()`, `set_pending_vehicle` (Mob reitet nach dem Spawnen auf, z. B. Chicken Jockey).
+- `item/items/spear.rs`: `SpearItem::mob_kinetic_tick` (Speer für Mobs), `ai/goal/spear_use.rs` (`SpearUseGoal`).
+- `world/village.rs`: `sections_to_village`, `is_close_to_village`, `is_village`, `find_occupied_village_poi`; `ai/goal/move_through_village.rs`.
+- `Mob`-Hooks: `pre_attack` (jeder Nahkampfversuch), `blocked_by_item` (Schild hat geblockt), `actually_hurt_override` und `hurt_armor` (Wolfsrüstung), `charge_speed_modifier`.
+- Schilde blocken jetzt auch Nahkampf ohne übergebene Position (vorher blockten sie Mob- und Spieler-Nahkampf gar nicht).
+- Rüstung im Körper-Slot zählt beim Rüstungswert mit (Wolfs- und Pferderüstung).
+- `LookAtEntityGoal::any_mob` (Vanilla `LookAtPlayerGoal(Mob.class)`) und `::matching` (mehrere Typen).
+- `TrackTargetGoal`: Erreichbarkeit (`canReach`) und Heimat-Bereich sind umgesetzt.
+- Bewusste Näherungen: Glocken gelten als „belegt“, sobald ein Villager in 48 Blöcken ist (Pumpkin-Villager beanspruchen keine Treffpunkte). `noCollision` beim Kamel-Husk prüft nur Blöcke.
+- Technische Schuld ohne Verhaltensunterschied: Der Evoker nutzt noch sein eigenes Zaubersystem statt `mob/spellcaster.rs`.
 
-Offene Lücken aus Batch 3 (werden gerade geschlossen, vorher nicht `done`):
-- Zombie: Chicken Jockey fehlt (in `finalize_spawn` gibt es kein `Arc` zum Aufsitzen), dazu `SpearUseGoal` und `MoveThroughVillageGoal`. Baby-Hitbox nicht angepasst. Bei der Verstärkung ist `isUnobstructed` nur angenähert.
-- Zombified Piglin: Verstärkung durch Artgenossen und Lava-Malus fehlen.
-- Enderman: Wasser-Malus fehlt. Der getragene Block wird als Int-ID gespeichert, nicht im Vanilla-Format (BlockState-Codec).
-- Wolf: Absorption durch Wolfsrüstung nicht geprüft. Schütteln wird beim Tod nicht zurückgesetzt.
-- `mob/conversion.rs` übernimmt keine Passagiere, Reittiere und Leinen.
+Bekannt und nicht von uns: `cargo test -p pumpkin-world` hat einen Fehlschlag in `world_info_save` (`write_world_info_reports_final_rename_failure`), weil der Container als root läuft und Ordnerrechte nicht greifen.
 
-Beim Vex fehlt noch: Vanilla hat ein zweites Umschau-Ziel (`LookAtPlayerGoal` mit `Mob`, Reichweite 8), das bei uns fehlt. `LookAtEntityGoal` kann nur einen einzigen Entity-Typ als Ziel.
+Platz: `target/debug/incremental` wächst auf über 20 GB. Wenn die Platte voll ist, `rm -rf target/debug/incremental target/release`.
 
 Offene Upstream-PRs sind für die Auswahl egal. Wir bauen unsere eigene spielbare Version und warten auf niemanden. Wichtig sind sie nur als Hinweis, dass es beim Nachziehen von upstream an diesen Stellen Konflikte geben kann. Upstream arbeiten andere bereits an: Silverfish (#3886), Phantom (#3715), Spider und Cave Spider (#4368), Witch (#4393), Pufferfish (#4050), Zoglin und Hoglin (#4095), Ausrüstung beim Spawnen (#4391). Den Endermite hat AdmerPRO beansprucht (#4255). 
 
