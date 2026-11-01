@@ -6,14 +6,16 @@ use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_util::Difficulty;
 
+use crate::entity::mob::spawn::SpawnGroupData;
+use crate::entity::mob::zombie::maybe_wear_halloween_head;
 use crate::entity::{
     Entity,
     ai::behavior::fleeing::{self, Flee},
     ai::behavior::hunting::{self, Hunt},
     ai::goal::{
-        bow_attack::BowAttackGoal, look_around::RandomLookAroundGoal,
-        look_at_entity::LookAtEntityGoal, melee_attack::MeleeAttackGoal, revenge::RevengeGoal,
-        swim::SwimGoal, wander_around::WanderAroundGoal,
+        bow_attack::BowAttackGoal, flee_sun::FleeSunGoal, look_around::RandomLookAroundGoal,
+        look_at_entity::LookAtEntityGoal, melee_attack::MeleeAttackGoal,
+        restrict_sun::RestrictSunGoal, revenge::RevengeGoal, wander_around::WanderAroundGoal,
     },
     ai::target_match::TargetMatch,
     mob::{Mob, MobEntity, equipment::RegionalDifficulty},
@@ -63,12 +65,15 @@ impl SkeletonEntityBase {
             let goal_selector = &mob_arc.mob_entity.goals_selector;
             let target_selector = &mob_arc.mob_entity.target_selector;
 
-            goal_selector.add_goal(0, Box::new(SwimGoal::default()));
-            // TODO: RestrictSunGoal(2) and FleeSunGoal(3), once both match vanilla.
+            // skeleton: goals (AbstractSkeleton.registerGoals), no float goal: skeletons sink
+            goal_selector.add_goal(2, Box::new(RestrictSunGoal::new()));
+            goal_selector.add_goal(3, Box::new(FleeSunGoal::new(1.0)));
             fleeing::apply(goal_selector, SKELETON_FLEES);
             // Vanilla `reassessWeaponGoal`: the bow or the melee goal at 4, by the held weapon.
-            // TODO: attack interval per type and difficulty (vanilla 40, 20 on hard; bogged and parched 70, 50 on hard).
-            goal_selector.add_goal(4, Box::new(BowAttackGoal::new(1.0, 20, 15.0)));
+            goal_selector.add_goal(
+                4,
+                Box::new(BowAttackGoal::new(1.0, 20, 15.0).with_difficulty_interval()),
+            );
             goal_selector.add_goal(
                 4,
                 Box::new(
@@ -91,6 +96,78 @@ impl SkeletonEntityBase {
         mob_arc
     }
 }
+
+impl SkeletonEntityBase {
+    // skeleton: spawn equipment, loot pickup, halloween head (AbstractSkeleton.finalizeSpawn)
+    pub fn finalize_skeleton_spawn(
+        &self,
+        mob: &dyn Mob,
+        world: &Arc<World>,
+        group_data: Option<SpawnGroupData>,
+    ) -> Option<SpawnGroupData> {
+        let group_data = mob.finalize_spawn_super(group_data);
+        let difficulty = RegionalDifficulty::at(world, mob.get_entity().pos.load());
+        mob.populate_default_equipment_slots(world, &difficulty);
+        mob.populate_default_equipment_enchantments(&difficulty);
+        self.mob_entity
+            .set_can_pick_up_loot(rand::random::<f32>() < 0.55 * difficulty.special_multiplier);
+        maybe_wear_halloween_head(&self.mob_entity);
+        group_data
+    }
+
+    // skeleton: body follows a ridden mob (AbstractSkeleton.rideTick, spider jockey)
+    pub fn follow_vehicle_body(&self) {
+        let entity = &self.mob_entity.living_entity.entity;
+        if let Some(vehicle) = entity.get_vehicle()
+            && vehicle.get_mob().is_some()
+        {
+            entity.body_yaw.store(vehicle.get_entity().body_yaw.load());
+        }
+    }
+}
+
+/// Shared `Mob` overrides of every `AbstractSkeleton` subclass.
+macro_rules! abstract_skeleton_mob {
+    ($base:ident) => {
+        fn get_mob_entity(&self) -> &crate::entity::mob::MobEntity {
+            &self.$base.mob_entity
+        }
+
+        fn finalize_spawn(
+            &self,
+            world: &std::sync::Arc<crate::world::World>,
+            group_data: Option<crate::entity::mob::spawn::SpawnGroupData>,
+        ) -> Option<crate::entity::mob::spawn::SpawnGroupData> {
+            self.$base.finalize_skeleton_spawn(self, world, group_data)
+        }
+
+        fn populate_default_equipment_slots(
+            &self,
+            world: &std::sync::Arc<crate::world::World>,
+            difficulty: &crate::entity::mob::equipment::RegionalDifficulty,
+        ) {
+            self.$base
+                .populate_default_equipment_slots(world, difficulty);
+        }
+
+        // skeleton: no spears (AbstractSkeleton.wantsToPickUp)
+        fn mob_wants_to_pick_up(&self, stack: &pumpkin_data::item_stack::ItemStack) -> bool {
+            !pumpkin_data::tag::Taggable::has_tag(
+                stack.item,
+                &pumpkin_data::tag::Item::MINECRAFT_SPEARS,
+            )
+        }
+
+        fn preferred_weapon_type(&self) -> Option<&'static pumpkin_data::tag::Tag> {
+            Some(&pumpkin_data::tag::Item::MINECRAFT_SKELETON_PREFERRED_WEAPONS)
+        }
+
+        fn post_tick(&self) {
+            self.$base.follow_vehicle_body();
+        }
+    };
+}
+pub(crate) use abstract_skeleton_mob;
 
 impl Mob for SkeletonEntityBase {
     fn get_mob_entity(&self) -> &MobEntity {

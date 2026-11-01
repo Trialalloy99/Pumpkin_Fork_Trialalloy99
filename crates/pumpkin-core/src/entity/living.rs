@@ -1164,6 +1164,10 @@ impl LivingEntity {
         {
             return false;
         }
+        // parched: immune to weakness (Parched.canBeAffected)
+        if entity_type == &EntityType::PARCHED && effect.effect_type == &StatusEffect::WEAKNESS {
+            return false;
+        }
 
         if entity_type.has_tag(&tag::EntityType::MINECRAFT_IMMUNE_TO_INFESTED) {
             effect.effect_type != &StatusEffect::INFESTED

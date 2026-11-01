@@ -1499,6 +1499,11 @@ pub trait Mob: EntityBase + Send + Sync {
         true
     }
 
+    /// Bow attack interval (hard, other difficulties), vanilla `getHardAttackInterval`/`getAttackInterval`.
+    fn bow_attack_intervals(&self) -> (i32, i32) {
+        (20, 40)
+    }
+
     /// Vanilla `Mob.getPreferredWeaponType`.
     fn preferred_weapon_type(&self) -> Option<&'static pumpkin_data::tag::Tag> {
         None
@@ -1708,8 +1713,21 @@ pub trait Mob: EntityBase + Send + Sync {
 
     /// How much this mob likes standing on `pos`, used to rank stroll candidates.
     fn get_walk_target_value(&self, pos: &BlockPos) -> f32 {
-        self.as_animal()
-            .map_or(0.0, |animal| animal.animal_walk_target_value(pos))
+        if let Some(animal) = self.as_animal() {
+            return animal.animal_walk_target_value(pos);
+        }
+        // monster: prefer dark spots (Monster.getWalkTargetValue)
+        if crate::entity::ai::target_match::TargetMatch::Monster
+            .matches(self.get_entity().entity_type)
+        {
+            return 0.5
+                - self
+                    .get_entity()
+                    .world
+                    .load()
+                    .get_light_level_dependent_magic_value(pos);
+        }
+        0.0
     }
 
     fn as_tamable(&self) -> Option<&dyn crate::entity::passive::tamable::TamableAnimal> {

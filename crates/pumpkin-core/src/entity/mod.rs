@@ -3159,7 +3159,11 @@ impl Entity {
     /// Mirrors vanilla `LivingEntity#canFreeze`: spectators and entities wearing
     /// freeze-immune wearables (e.g. leather armor) cannot freeze.
     fn can_freeze(&self, caller: &dyn EntityBase) -> bool {
-        if caller.is_spectator() || self.is_freeze_immune() {
+        // skeleton: never freezes, converts to a stray instead (Skeleton.canFreeze)
+        if caller.is_spectator()
+            || self.is_freeze_immune()
+            || self.entity_type == &EntityType::SKELETON
+        {
             return false;
         }
 

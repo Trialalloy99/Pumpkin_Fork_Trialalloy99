@@ -998,14 +998,15 @@ impl PathNavigation {
                 pos.z.floor() as i32,
             );
             let world = entity.entity.world.load();
-            if world.get_sky_light_level(&bp) < 15
+            // avoid sun: cut at the first sky-exposed node (GroundPathNavigation.trimPath)
+            if !world.can_see_sky(&bp)
                 && let Some(path) = &mut self.path
             {
                 let mut cut_index = None;
                 for i in 0..path.get_node_count() {
                     if let Some(node) = path.get_node(i) {
                         let node_bp = BlockPos::new(node.pos.0.x, node.pos.0.y, node.pos.0.z);
-                        if world.get_sky_light_level(&node_bp) >= 15 {
+                        if world.can_see_sky(&node_bp) {
                             cut_index = Some(i);
                             break;
                         }

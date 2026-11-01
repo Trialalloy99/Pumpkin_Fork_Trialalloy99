@@ -232,6 +232,34 @@ impl ArrowEntity {
         damage_succeeded
     }
 
+    // arrow: add a custom potion effect, amplifier 0 (Arrow.addEffect)
+    pub fn add_effect(&self, effect: &'static pumpkin_data::effect::StatusEffect, duration: i32) {
+        let mut stack = self
+            .item_stack
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut contents = stack
+            .get_data_component::<pumpkin_data::data_component_impl::PotionContentsImpl>()
+            .cloned()
+            .unwrap_or(pumpkin_data::data_component_impl::PotionContentsImpl {
+                potion_id: None,
+                custom_color: None,
+                custom_effects: Vec::new(),
+                custom_name: None,
+            });
+        contents
+            .custom_effects
+            .push(pumpkin_data::data_component_impl::StatusEffectInstance {
+                effect_id: std::borrow::Cow::Borrowed(effect.minecraft_name),
+                amplifier: 0,
+                duration,
+                ambient: false,
+                show_particles: true,
+                show_icon: true,
+            });
+        stack.set_data_component(contents);
+    }
+
     #[must_use]
     pub fn get_effect_color(item_stack: &ItemStack) -> i32 {
         if let Some(pc) =
