@@ -6,10 +6,12 @@ use crate::block::{
 };
 use crate::world::World;
 use pumpkin_data::block_properties::FarmlandLikeProperties;
+use pumpkin_data::game_event::GameEvent;
 use pumpkin_data::tag;
 use pumpkin_data::tag::Taggable;
 use pumpkin_data::{Block, BlockDirection, BlockState, BlockStateId};
 use pumpkin_macros::pumpkin_block;
+use pumpkin_util::math::boundingbox::BoundingBox;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 use pumpkin_world::tick::TickPriority;
@@ -24,13 +26,8 @@ pub struct FarmlandBlock;
 
 impl BlockBehaviour for FarmlandBlock {
     fn on_scheduled_tick(&self, args: OnScheduledTickArgs<'_>) {
-        // TODO: push up entities
         if !can_place_at(args.world.as_ref(), args.position) {
-            args.world.set_block_state(
-                args.position,
-                Block::DIRT.default_state.id,
-                BlockFlags::NOTIFY_ALL,
-            );
+            turn_to_dirt(args.world, args.position);
         }
     }
 
@@ -76,11 +73,7 @@ impl BlockBehaviour for FarmlandBlock {
                 );
                 let dim = entity.entity_dimension.load();
                 if can_trample && dim.width * dim.width * dim.height > 0.512 {
-                    args.world.set_block_state(
-                        &pos,
-                        Block::DIRT.default_state.id,
-                        BlockFlags::NOTIFY_ALL,
-                    );
+                    turn_to_dirt(args.world, &pos);
                 }
             }
             living.handle_fall_damage(args.entity, args.fall_distance, 1.0);
@@ -121,12 +114,7 @@ impl BlockBehaviour for FarmlandBlock {
                 .get_block(&args.position.up())
                 .has_tag(&tag::Block::MINECRAFT_MAINTAINS_FARMLAND)
             {
-                //TODO push entities up
-                args.world.set_block_state(
-                    args.position,
-                    Block::DIRT.default_state.id,
-                    BlockFlags::NOTIFY_ALL,
-                );
+                turn_to_dirt(args.world, args.position);
             }
         } else {
             let mut new_moisture = (props.moisture as i32 - 1).clamp(0, 7);
@@ -185,4 +173,24 @@ fn is_water_nearby(world: &Arc<World>, block_pos: &BlockPos) -> bool {
         }
     }
     false
+}
+
+// farmland: push entities up and emit block change event (FarmlandBlock.turnToBaseBlock)
+fn turn_to_dirt(world: &Arc<World>, pos: &BlockPos) {
+    push_entities_up(world, pos);
+    world.set_block_state(pos, Block::DIRT.default_state.id, BlockFlags::NOTIFY_ALL);
+    world.emit_game_event(GameEvent::BlockChange.name(), pos.to_centered_f64());
+}
+
+fn push_entities_up(world: &World, block_pos: &BlockPos) {
+    let check_bb = BoundingBox::from_block(block_pos);
+    for entity in world.entities.load().iter() {
+        let entity_base = entity.get_entity();
+        let entity_bb = entity_base.bounding_box.load();
+        if check_bb.intersects(&entity_bb) {
+            let current_pos = entity_base.pos.load();
+            let new_pos = Vector3::new(current_pos.x, current_pos.y + 1.0 / 16.0, current_pos.z);
+            entity_base.set_pos(new_pos);
+        }
+    }
 }
