@@ -1,5 +1,7 @@
 # AGENTS.md
 
+> In this fork, read [FORK.md](FORK.md) before this file. It takes precedence where the two differ.
+
 Notes for coding agents working on Pumpkin. Humans are welcome to read it too. [CONTRIBUTING.md](CONTRIBUTING.md) still applies. If a maintainer or the person you're working for tells you something different from this file, do what they say, with one exception: agents never open pull requests, even when asked. See the last section.
 
 ## What Pumpkin is
