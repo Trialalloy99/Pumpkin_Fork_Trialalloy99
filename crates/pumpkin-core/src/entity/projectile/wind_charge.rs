@@ -37,9 +37,10 @@ pub struct WindChargeEntity {
 
 pub static WIND_CHARGE_EXPLOSION_DAMAGE_CALCULATOR: LazyLock<Arc<SimpleExplosionDamageCalculator>> =
     LazyLock::new(|| {
+        // wind charge: explodes blocks, no entity damage (WindCharge.EXPLOSION_DAMAGE_CALCULATOR)
         Arc::new(SimpleExplosionDamageCalculator::new(
-            true,
             false,
+            true,
             Some(1.22),
             Some(&tag::Block::MINECRAFT_BLOCKS_WIND_CHARGE_EXPLOSIONS),
         ))
@@ -48,9 +49,10 @@ pub static WIND_CHARGE_EXPLOSION_DAMAGE_CALCULATOR: LazyLock<Arc<SimpleExplosion
 pub static BREEZE_WIND_CHARGE_EXPLOSION_DAMAGE_CALCULATOR: LazyLock<
     Arc<SimpleExplosionDamageCalculator>,
 > = LazyLock::new(|| {
+    // breeze wind charge: explodes blocks, no entity damage (BreezeWindCharge.EXPLOSION_DAMAGE_CALCULATOR)
     Arc::new(SimpleExplosionDamageCalculator::new(
-        true,
         false,
+        true,
         None,
         Some(&tag::Block::MINECRAFT_BLOCKS_WIND_CHARGE_EXPLOSIONS),
     ))
@@ -87,15 +89,29 @@ impl WindChargeEntity {
     }
 
     pub fn create_explosion(&self, position: Vector3<f64>) {
-        let (power, calculator) = match self.kind {
-            WindChargeKind::Normal { .. } => (1.2, WIND_CHARGE_EXPLOSION_DAMAGE_CALCULATOR.clone()),
-            WindChargeKind::Breeze => (3.0, BREEZE_WIND_CHARGE_EXPLOSION_DAMAGE_CALCULATOR.clone()),
+        let (power, calculator, sound) = match self.kind {
+            WindChargeKind::Normal { .. } => (
+                1.2,
+                WIND_CHARGE_EXPLOSION_DAMAGE_CALCULATOR.clone(),
+                pumpkin_data::sound::Sound::EntityWindChargeWindBurst,
+            ),
+            WindChargeKind::Breeze => (
+                3.0,
+                BREEZE_WIND_CHARGE_EXPLOSION_DAMAGE_CALCULATOR.clone(),
+                pumpkin_data::sound::Sound::EntityBreezeWindBurst,
+            ),
         };
-        self.get_entity().world.load().explode_with_calculator(
+        // wind charge: gust particles + burst sound (WindCharge.explode)
+        self.get_entity().world.load().explode_with_effects(
             position,
             power,
             crate::world::ExplosionInteraction::Trigger,
-            Some(calculator),
+            calculator,
+            (
+                pumpkin_data::particle::Particle::GustEmitterSmall,
+                pumpkin_data::particle::Particle::GustEmitterLarge,
+                sound,
+            ),
         );
     }
 

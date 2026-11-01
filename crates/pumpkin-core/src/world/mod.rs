@@ -3969,6 +3969,22 @@ impl World {
         self.run_explosion(&explosion, position, power);
     }
 
+    // explosion with its own particles and sound, e.g. wind charges (ServerLevel.explode)
+    pub fn explode_with_effects(
+        self: &Arc<Self>,
+        position: Vector3<f64>,
+        power: f32,
+        interaction: ExplosionInteraction,
+        damage_calculator: Arc<dyn ExplosionDamageCalculator>,
+        effects: (Particle, Particle, Sound),
+    ) {
+        let block_interaction = self.get_block_interaction(interaction);
+        let explosion = Explosion::new(power, position, block_interaction)
+            .with_damage_calculator(damage_calculator)
+            .with_effects(effects.0, effects.1, effects.2);
+        self.run_explosion(&explosion, position, power);
+    }
+
     // explosion caused by an entity, e.g. a creeper (Level.explode(source, ...))
     pub fn explode_from_entity(
         self: &Arc<Self>,
@@ -4031,12 +4047,19 @@ impl World {
         }
 
         let block_count = explosion.explode(self);
-        let particle = if power < 2.0 {
-            Particle::Explosion
+        // world: small unless big and block-breaking (ServerExplosion.isSmall)
+        let small = power < 2.0 || !explosion.interacts_with_blocks();
+        let (small_particle, large_particle, sound) = explosion.effects.unwrap_or((
+            Particle::Explosion,
+            Particle::ExplosionEmitter,
+            Sound::EntityGenericExplode,
+        ));
+        let particle = if small {
+            small_particle
         } else {
-            Particle::ExplosionEmitter
+            large_particle
         };
-        let sound = IdOr::<SoundEvent>::Id(Sound::EntityGenericExplode as u16);
+        let sound = IdOr::<SoundEvent>::Id(sound as u16);
         for player in self.players.load().iter() {
             if player.position().squared_distance_to_vec(&position) > 4096.0 {
                 continue;

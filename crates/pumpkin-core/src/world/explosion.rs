@@ -192,6 +192,12 @@ pub struct Explosion {
     preserve_rails: bool,
     /// Entity that exploded (vanilla `Explosion.source`), credited for the damage.
     source: Option<Arc<dyn EntityBase>>,
+    /// Small particle, large particle and sound sent to clients; `None` is the generic explosion.
+    pub effects: Option<(
+        pumpkin_data::particle::Particle,
+        pumpkin_data::particle::Particle,
+        pumpkin_data::sound::Sound,
+    )>,
 }
 
 impl Explosion {
@@ -204,7 +210,29 @@ impl Explosion {
             damage_calculator: None,
             preserve_rails: false,
             source: None,
+            effects: None,
         }
+    }
+
+    // explosion: custom particles + sound (ServerLevel.explode smallParticle/largeParticle/sound)
+    #[must_use]
+    pub const fn with_effects(
+        mut self,
+        small: pumpkin_data::particle::Particle,
+        large: pumpkin_data::particle::Particle,
+        sound: pumpkin_data::sound::Sound,
+    ) -> Self {
+        self.effects = Some((small, large, sound));
+        self
+    }
+
+    // explosion: destroys blocks (ServerExplosion.interactsWithBlocks)
+    #[must_use]
+    pub fn interacts_with_blocks(&self) -> bool {
+        matches!(
+            self.block_interaction,
+            BlockInteraction::Destroy | BlockInteraction::DestroyWithDecay
+        )
     }
 
     // explosion: credit an exploding entity, skip it in the damage pass (Explosion.source)
