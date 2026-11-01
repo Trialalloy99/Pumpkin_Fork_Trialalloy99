@@ -64,22 +64,24 @@ impl PistonBlockEntity {
         let motion_dir = self.movement_direction();
         let amount = f64::from(self.amount_extended(last));
 
-        // Block AABB at the current visual position (start of this tick).
-        // For source=true (the piston head BE), vanilla uses the piston-head
-        // collision shape — a 4-pixel-thick slab at the front face — rather than
-        // the full cube. Without this, the head "sweeps" too much volume and
-        // drags entities (e.g. end crystals) back with it during retraction.
+        // piston: moved block's own collision boxes, head slab for a retracting head (PistonMovingBlockEntity.moveCollidedEntities)
+        let offset = Self::dir_vec(self.facing, amount);
         let raw_block_aabb = BoundingBox::from_block(&self.position);
-        let block_aabb = if self.source {
-            Self::head_shape_aabb(raw_block_aabb, self.facing)
+        let shapes: Vec<BoundingBox> = if self.source {
+            vec![Self::head_shape_aabb(raw_block_aabb, self.facing).shift(offset)]
         } else {
-            raw_block_aabb
-        }
-        .shift(Self::dir_vec(self.facing, amount));
+            let origin = self.position.0.to_f64() + offset;
+            self.pushed_block_state
+                .get_block_collision_shapes()
+                .map(|shape| shape.shift(origin))
+                .collect()
+        };
+        let Some(bounds) = shapes.iter().copied().reduce(|a, b| Self::minmax(a, b)) else {
+            return;
+        };
 
-        // Stretch by motion to get the swept volume (one tick of animation).
-        let motion = Self::dir_vec(motion_dir, delta);
-        let swept = block_aabb.stretch(motion);
+        let swept = Self::minmax(Self::movement_area(bounds, motion_dir, delta), bounds);
+        let bounce = self.pushed_block_state.id.to_block() == &Block::SLIME_BLOCK;
 
         for entity in world.get_entities_at_box(&swept) {
             let e = entity.get_entity();
@@ -92,8 +94,31 @@ impl PistonBlockEntity {
                 continue;
             }
 
+            // piston: slime block launches along the push axis (moveCollidedEntities causeBounce)
+            if bounce {
+                let mut velocity = e.velocity.load();
+                let step = Self::dir_vec(motion_dir, 1.0);
+                match motion_dir {
+                    BlockDirection::East | BlockDirection::West => velocity.x = step.x,
+                    BlockDirection::Up | BlockDirection::Down => velocity.y = step.y,
+                    BlockDirection::North | BlockDirection::South => velocity.z = step.z,
+                }
+                e.velocity.store(velocity);
+                e.velocity_dirty.store(true, Ordering::SeqCst);
+            }
+
             let entity_aabb = e.bounding_box.load();
-            let intersection = Self::intersection_size(swept, motion_dir, entity_aabb);
+            let mut intersection = 0.0f64;
+            for shape in &shapes {
+                let moving = Self::movement_area(*shape, motion_dir, delta);
+                if moving.intersects(&entity_aabb) {
+                    intersection =
+                        intersection.max(Self::intersection_size(moving, motion_dir, entity_aabb));
+                    if intersection >= delta {
+                        break;
+                    }
+                }
+            }
             if intersection <= 0.0 {
                 continue;
             }
@@ -107,6 +132,93 @@ impl PistonBlockEntity {
             // block position (it replaces the piston during animation).
             if !self.extending && self.source {
                 Self::push_out_of_piston_body(e, &self.position, motion_dir, delta);
+            }
+        }
+
+        self.move_stuck_entities(world, amount, delta);
+    }
+
+    // piston: slab swept in front of the moving face (PistonMath.getMovementArea)
+    fn movement_area(aabb: BoundingBox, dir: BlockDirection, delta: f64) -> BoundingBox {
+        let mut area = aabb;
+        match dir {
+            BlockDirection::East => {
+                area.min.x = aabb.max.x;
+                area.max.x = aabb.max.x + delta;
+            }
+            BlockDirection::West => {
+                area.max.x = aabb.min.x;
+                area.min.x = aabb.min.x - delta;
+            }
+            BlockDirection::Up => {
+                area.min.y = aabb.max.y;
+                area.max.y = aabb.max.y + delta;
+            }
+            BlockDirection::Down => {
+                area.max.y = aabb.min.y;
+                area.min.y = aabb.min.y - delta;
+            }
+            BlockDirection::South => {
+                area.min.z = aabb.max.z;
+                area.max.z = aabb.max.z + delta;
+            }
+            BlockDirection::North => {
+                area.max.z = aabb.min.z;
+                area.min.z = aabb.min.z - delta;
+            }
+        }
+        area
+    }
+
+    // piston: box around both (AABB.minmax)
+    fn minmax(a: BoundingBox, b: BoundingBox) -> BoundingBox {
+        BoundingBox::new(
+            Vector3::new(
+                a.min.x.min(b.min.x),
+                a.min.y.min(b.min.y),
+                a.min.z.min(b.min.z),
+            ),
+            Vector3::new(
+                a.max.x.max(b.max.x),
+                a.max.y.max(b.max.y),
+                a.max.z.max(b.max.z),
+            ),
+        )
+    }
+
+    // piston: honey block carries entities standing on it sideways (PistonMovingBlockEntity.moveStuckEntities)
+    fn move_stuck_entities(&self, world: &Arc<World>, amount: f64, delta: f64) {
+        if self.pushed_block_state.id.to_block() != &Block::HONEY_BLOCK {
+            return;
+        }
+        let motion_dir = self.movement_direction();
+        if matches!(motion_dir, BlockDirection::Up | BlockDirection::Down) {
+            return;
+        }
+        let sticky_top = self
+            .pushed_block_state
+            .get_block_collision_shapes()
+            .map(|shape| shape.max.y)
+            .fold(0.0f64, f64::max);
+        let origin = self.position.0.to_f64() + Self::dir_vec(self.facing, amount);
+        let area = BoundingBox::new(
+            Vector3::new(origin.x, origin.y + sticky_top, origin.z),
+            Vector3::new(origin.x + 1.0, origin.y + 1.500_001, origin.z + 1.0),
+        );
+        for entity in world.get_entities_at_box(&area) {
+            let e = entity.get_entity();
+            if entity.get_player().is_some() || !e.on_ground.load(Ordering::Relaxed) {
+                continue;
+            }
+            let pos = e.pos.load();
+            let supported = e.supporting_block_pos.load() == Some(self.position);
+            if supported
+                || (pos.x >= area.min.x
+                    && pos.x <= area.max.x
+                    && pos.z >= area.min.z
+                    && pos.z <= area.max.z)
+            {
+                Self::move_entity(e, motion_dir, delta);
             }
         }
     }
