@@ -162,7 +162,34 @@ impl BlockBehaviour for NoteBlock {
         } else {
             1.0 // default pitch
         };
-        // check hasCustomSound
+        // note block: player head sound from the skull above (NoteBlock.getCustomSoundId)
+        if instrument == NoteblockInstrument::CustomHead {
+            let Some(block_entity) = args.world.get_block_entity(&args.position.up()) else {
+                return false;
+            };
+            let Some(skull) = block_entity
+                .as_any()
+                .downcast_ref::<crate::block::entities::skull::SkullBlockEntity>()
+            else {
+                return false;
+            };
+            let sound = skull
+                .note_block_sound
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .clone();
+            let Some(sound) = sound else {
+                return false;
+            };
+            args.world.play_custom_sound(
+                &sound,
+                SoundCategory::Records,
+                &args.position.to_centered_f64(),
+                3.0,
+                pitch,
+            );
+            return true;
+        }
         args.world.play_sound_raw(
             convert_instrument_to_sound(instrument) as u16,
             SoundCategory::Records,
