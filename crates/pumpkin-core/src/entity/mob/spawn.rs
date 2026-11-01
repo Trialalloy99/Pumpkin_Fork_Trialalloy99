@@ -33,6 +33,11 @@ pub enum SpawnGroupData {
         variant: FoxVariant,
         size: u32,
     },
+    /// Vanilla `Axolotl.AxolotlGroupData`: two common coats for the group, babies from the third on.
+    Axolotl {
+        variants: [i32; 2],
+        group_size: u32,
+    },
     /// Vanilla `ZombieGroupData` (and `HuskGroupData`): baby group, jockey allowed, camel husk tried.
     Zombie {
         baby: bool,

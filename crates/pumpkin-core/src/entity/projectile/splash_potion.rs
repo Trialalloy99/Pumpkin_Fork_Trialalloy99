@@ -96,6 +96,29 @@ pub(crate) fn extinguish_fire_if_water_potion(
 ) {
     if is_water_potion(stack) {
         extinguish_fire(world, hit_pos);
+        rehydrate_axolotls(world, hit_pos);
+    }
+}
+
+// axolotl: SplashPotion.applyWater rehydrates axolotls within 4 blocks
+fn rehydrate_axolotls(world: &Arc<crate::world::World>, hit_pos: Vector3<f64>) {
+    let area = pumpkin_util::math::boundingbox::BoundingBox::new(
+        Vector3::new(hit_pos.x - 4.0, hit_pos.y - 2.0, hit_pos.z - 4.0),
+        Vector3::new(hit_pos.x + 4.0, hit_pos.y + 2.0, hit_pos.z + 4.0),
+    );
+    for entity in world.get_entities_at_box(&area) {
+        if let Some(axolotl) = entity.get_mob().and_then(|mob| {
+            mob.cast_any()
+                .downcast_ref::<crate::entity::passive::axolotl::AxolotlEntity>()
+        }) && axolotl
+            .get_entity()
+            .pos
+            .load()
+            .squared_distance_to_vec(&hit_pos)
+            < 16.0
+        {
+            axolotl.rehydrate();
+        }
     }
 }
 
