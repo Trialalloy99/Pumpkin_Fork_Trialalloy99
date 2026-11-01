@@ -23,6 +23,7 @@ use crate::entity::{
 };
 
 pub const FLAG_TAME: u8 = 2;
+pub const FLAG_SADDLE: u8 = 4;
 pub const FLAG_BRED: u8 = 8;
 pub const FLAG_EATING: u8 = 16;
 pub const FLAG_STANDING: u8 = 32;
