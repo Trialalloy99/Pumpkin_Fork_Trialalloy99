@@ -754,19 +754,23 @@ impl VillagerEntity {
         self.add_trades(profession, level);
     }
 
-    fn update_special_prices(&self, player: &Player) {
-        let player_uuid = player.get_entity().entity_uuid;
-        let reputation = self
-            .gossips
+    // villager: weighted gossip sum (Villager.getPlayerReputation)
+    #[must_use]
+    pub fn get_player_reputation(&self, player_uuid: &Uuid) -> i32 {
+        self.gossips
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(&player_uuid)
+            .get(player_uuid)
             .map_or(0, |gossips| {
                 gossips
                     .iter()
                     .map(|(kind, value)| kind.weight() * value)
                     .sum()
-            });
+            })
+    }
+
+    fn update_special_prices(&self, player: &Player) {
+        let reputation = self.get_player_reputation(&player.get_entity().entity_uuid);
         let hero_amplifier = player
             .living_entity
             .get_effect(&StatusEffect::HERO_OF_THE_VILLAGE)

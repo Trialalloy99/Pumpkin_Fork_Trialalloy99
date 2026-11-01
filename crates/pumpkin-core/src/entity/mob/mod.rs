@@ -922,6 +922,9 @@ impl MobEntity {
         let attack_damage: f32 =
             self.living_entity
                 .get_attribute_value(&Attributes::ATTACK_DAMAGE) as f32;
+        let attack_damage = caller
+            .get_mob()
+            .map_or(attack_damage, |mob| mob.mob_attack_damage(attack_damage));
 
         let damaged = target.damage_with_context(
             target,
@@ -1635,6 +1638,14 @@ pub trait Mob: EntityBase + Send + Sync {
     }
 
     fn on_attack(&self, _target: &dyn EntityBase) {}
+
+    // mob: melee damage roll (IronGolem.doHurtTarget)
+    fn mob_attack_damage(&self, base: f32) -> f32 {
+        base
+    }
+
+    // mob: before pushing a touching entity (Mob.doPush)
+    fn on_push_entity(&self, _other: &Arc<dyn EntityBase>) {}
 
     /// Vanilla `BABY_DIMENSIONS` of a mob with its own baby hitbox; `None` halves the adult one.
     fn baby_dimensions(&self) -> Option<pumpkin_util::math::boundingbox::EntityDimensions> {

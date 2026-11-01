@@ -1749,7 +1749,11 @@ impl LivingEntity {
             }
         }
 
+        let pusher = dyn_self.get_mob();
         for entity in pushable {
+            if let Some(mob) = pusher {
+                mob.on_push_entity(&entity);
+            }
             entity.push(dyn_self);
         }
     }
