@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::time::Instant;
 
 use pumpkin_data::biome::Biome;
 use pumpkin_data::structures::{StructureKeys, StructurePlacementType, StructureSet};
@@ -226,6 +227,7 @@ impl CommandExecutor for LocateStructureExecutor {
         }
 
         let origin = BlockPos::floored_v(context.source.position);
+        let started = Instant::now();
 
         let world = context.source.world();
         let seed = world.level.seed.0;
@@ -285,11 +287,16 @@ impl CommandExecutor for LocateStructureExecutor {
         };
 
         let distance = horizontal_distance(&origin, &target);
+        let name = result_name(searched, &format!("minecraft:{}", key.to_name()));
+        tracing::info!(
+            "Locating element {name} took {} ms",
+            started.elapsed().as_millis()
+        );
         send_success(
             context,
             translation::java::COMMANDS_LOCATE_STRUCTURE_SUCCESS,
             translation::bedrock::COMMANDS_LOCATE_STRUCTURE_SUCCESS,
-            result_name(searched, &format!("minecraft:{}", key.to_name())),
+            name,
             &target,
             false,
             distance,
@@ -329,6 +336,7 @@ impl CommandExecutor for LocateBiomeExecutor {
         }
 
         let origin = BlockPos::floored_v(context.source.position);
+        let started = Instant::now();
         let world = context.source.world().clone();
         let world_gen = world.level.world_gen.load_full();
 
@@ -346,11 +354,16 @@ impl CommandExecutor for LocateBiomeExecutor {
         };
 
         let distance = absolute_distance(&origin, &target);
+        let name = result_name(&searched, &format!("minecraft:{}", biome.registry_id));
+        tracing::info!(
+            "Locating element {name} took {} ms",
+            started.elapsed().as_millis()
+        );
         send_success(
             context,
             translation::java::COMMANDS_LOCATE_BIOME_SUCCESS,
             translation::bedrock::COMMANDS_LOCATE_BIOME_SUCCESS,
-            result_name(&searched, &format!("minecraft:{}", biome.registry_id)),
+            name,
             &target,
             true,
             distance,
@@ -386,6 +399,7 @@ impl CommandExecutor for LocatePoiExecutor {
         };
 
         let origin = BlockPos::floored_v(context.source.position);
+        let started = Instant::now();
         let world = context.source.world().clone();
 
         let found = {
@@ -404,11 +418,16 @@ impl CommandExecutor for LocatePoiExecutor {
         };
 
         let distance = horizontal_distance(&origin, &target);
+        let name = result_name(searched, &poi_type);
+        tracing::info!(
+            "Locating element {name} took {} ms",
+            started.elapsed().as_millis()
+        );
         send_success(
             context,
             translation::java::COMMANDS_LOCATE_POI_SUCCESS,
             translation::java::COMMANDS_LOCATE_POI_SUCCESS,
-            result_name(searched, &poi_type),
+            name,
             &target,
             false,
             distance,
