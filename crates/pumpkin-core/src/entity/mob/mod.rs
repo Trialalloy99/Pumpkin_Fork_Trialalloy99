@@ -38,8 +38,8 @@ use pumpkin_util::Difficulty;
 use pumpkin_util::math::boundingbox::BoundingBox;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
+use pumpkin_util::random::RandomGenerator;
 use pumpkin_util::random::xoroshiro128::Xoroshiro;
-use pumpkin_util::random::{RandomGenerator, get_seed};
 use pumpkin_util::version::JavaMinecraftVersion;
 use rand::RngExt;
 use std::sync::atomic::Ordering::Relaxed;
@@ -842,14 +842,14 @@ impl MobEntity {
             return false;
         }
 
+        // monster: sky darken counts, thunder darkens by 10 (Monster.isDarkEnoughToSpawn)
         let current_brightness = if is_thundering {
-            (sky_light - 10).max(block_light)
+            world.get_raw_brightness(pos, 10)
         } else {
-            sky_light.max(block_light)
+            world.get_max_local_raw_brightness(pos)
         };
 
-        // TODO
-        let mut random = RandomGenerator::Xoroshiro(Xoroshiro::from_seed(get_seed()));
+        let mut random = RandomGenerator::Xoroshiro(Xoroshiro::from_seed(rand::random()));
         current_brightness <= dimension.monster_spawn_light_level.get(&mut random) as u8
     }
 
@@ -896,7 +896,7 @@ impl MobEntity {
     }
 
     pub fn is_bright_enough_to_spawn(world: &World, pos: &BlockPos) -> bool {
-        world.get_max_local_raw_brightness(pos) > 8
+        world.get_raw_brightness(pos, 0) > 8
     }
 
     pub fn check_surface_water_animal_spawn_rules(world: &World, pos: &BlockPos) -> bool {
@@ -2347,20 +2347,9 @@ impl<T: Mob + Send + 'static> EntityBase for T {
             mob_entity.breeding_cooldown.fetch_sub(1, Relaxed);
         }
 
+        // animal: love countdown, hearts are client-side only (Animal.aiStep)
         if mob_entity.love_ticks.load(Relaxed) > 0 {
-            let ticks = mob_entity.love_ticks.fetch_sub(1, Relaxed);
-            if ticks % 10 == 0 {
-                let entity = &mob_entity.living_entity.entity;
-                let pos = entity.pos.load();
-                let world = entity.world.load();
-                world.spawn_particle(
-                    pos + Vector3::new(0.0, f64::from(entity.height()) + 0.5, 0.0),
-                    Vector3::new(0.5, 0.5, 0.5),
-                    1.0,
-                    1,
-                    pumpkin_data::particle::Particle::Heart,
-                );
-            }
+            mob_entity.love_ticks.fetch_sub(1, Relaxed);
         }
 
         mob_entity.check_despawn(self);

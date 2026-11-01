@@ -898,7 +898,8 @@ pub trait EntityBase: Send + Sync + std::any::Any {
             dx *= PUSH_STRENGTH;
             dz *= PUSH_STRENGTH;
 
-            if !self_entity.has_passengers() && self.is_pushable() {
+            // push: players move client-side, server never sends them push velocity
+            if !self_entity.has_passengers() && self.is_pushable() && self.get_player().is_none() {
                 let mut vel = self_entity.velocity.load();
                 vel.x -= dx;
                 vel.z -= dz;
@@ -906,7 +907,10 @@ pub trait EntityBase: Send + Sync + std::any::Any {
                 self_entity.velocity_dirty.store(true, Ordering::SeqCst);
             }
 
-            if !other_entity.has_passengers() && entity.is_pushable() {
+            if !other_entity.has_passengers()
+                && entity.is_pushable()
+                && entity.get_player().is_none()
+            {
                 let mut vel = other_entity.velocity.load();
                 vel.x += dx;
                 vel.z += dz;

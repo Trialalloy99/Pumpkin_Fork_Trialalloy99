@@ -83,7 +83,6 @@ pub trait Animal: Mob {
                 mob_entity.set_love_ticks(ticks, Some(player.gameprofile.id));
                 let entity = &mob_entity.living_entity.entity;
                 let world = entity.world.load();
-                let pos = entity.pos.load();
 
                 world.send_entity_status(
                     entity,
@@ -91,13 +90,6 @@ pub trait Animal: Mob {
                     ActorEventID::InLoveHearts,
                 );
 
-                world.spawn_particle(
-                    pos + Vector3::new(0.0, f64::from(entity.height()), 0.0),
-                    Vector3::new(0.5, 0.5, 0.5),
-                    1.0,
-                    7,
-                    Particle::Heart,
-                );
                 self.play_eating_sound();
                 return true;
             }
