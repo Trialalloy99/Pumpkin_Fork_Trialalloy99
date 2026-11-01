@@ -71,6 +71,7 @@ Unser Fortschritt steht auf **https://claude.ai/artifact/KAHK4pXmbbEhd9nXiBuobN*
 | 3 | Zombie, Husk, Zombie Villager, Zombified Piglin, Enderman, Wolf | fertig, in `playable` gemergt (Husk erst mit dem Kamel-Husk aus Batch 4 komplett); Test im Spiel steht aus |
 | 5 (Codex) | Slime, Magma Cube, Phantom, Silverfish, Blaze, Pillager, Piglin Brute, Hoglin, Zoglin, Polar Bear | Auftrag in `CODEX_BATCH5.md`, Branch `batch-5-codex` |
 | 4 | Parched, Skeleton, Stray, Bogged, Creeper, Spider, Cave Spider, Drowned, Witch | fertig, in `playable` gemergt; Test im Spiel steht aus. Camel Husk verschoben (braucht das ganze Kamel) |
+| 6 | Cow, Mooshroom, Pig, Sheep, Chicken, Rabbit, Iron Golem, Snow Golem, Squid, Glow Squid | Branch `batch-6`; Iron Golem bis auf „Villager will Golem“ (siehe unten); Test im Spiel steht aus |
 
 Aus dem Tracker entfernt, weil Vanilla sie auf einem dedizierten Server nicht hat: `/publish` und `/unpublish` (nur Einzelspieler) sowie `/jfr` (Java Flight Recorder, braucht eine JVM).
 
@@ -97,10 +98,21 @@ Batch 4, neu dazugekommen:
 - `Mob::killed_entity` kann Drops verhindern (Villager-Infektion jetzt wie Vanilla).
 - `RestrictSunGoal` und `FleeSunGoal` wie Vanilla. Die Navigation meidet Sonne per `can_see_sky`.
 
+Batch 6, neu dazugekommen:
+- Reiten mit Steuerung: `Mob::tick_ridden`, ein Spieler als steuernder Passagier lässt den Client das Tier bewegen (Vanilla `travelRidden`). Der Schweine-Sattel liegt jetzt im SADDLE-Slot (Client sieht ihn), Boost wird an den Client synchronisiert (auch beim Strider).
+- Eigene Sprung-Steuerung: `Mob::jump_control_tick`, `jump_power_multiplier`, `on_jump_from_ground` (Hase).
+- `Mob::mob_attack_damage` (Schadenswurf, Eisengolem), `Mob::on_push_entity` (Vanilla `doPush`).
+- `Animal::eating_sound` statt Ambient-Sound beim Füttern.
+- `world/village.rs`: `occupied_village_sections` + `sections_to_village_in` (ein POI-Scan für viele Abfragen), `occupied_pois_in_range`.
+- `land_random_pos::get_pos_towards`, `VillagerEntity::get_player_reputation`.
+- Codegen: `Biome::snow_golem_melts` (heiße Biome schmelzen Schneegolems).
+
 Offene Aufgaben, die nicht Teil einer Batch waren:
 - **Kamel und Camel Husk:** Vanilla nutzt Brain-KI (CamelAi), Sitzen und Dash, Reiten und die ganze `AbstractHorse`-Basis (Zähmen, Sattel, Inventar). Das fehlt in Pumpkin. Erst danach funktioniert der Kamel-Husk-Jockey beim Husk. Der Code dafür ist schon drin und springt an, sobald `CAMEL_HUSK` ein Mob ist.
 - **Zombie-Nautilus:** fehlt als Mob. Der Drowned-Jockey springt automatisch an, sobald er existiert.
 - **`/effect`:** geht in Pumpkin nur für Spieler, in Vanilla für alle Lebewesen.
+- **Villager-Gedächtnis:** Villager merken sich nicht, wann sie geschlafen haben (`LAST_SLEPT`) und ob ein Golem in der Nähe war (`GOLEM_DETECTED_RECENTLY`). Deshalb fehlt beim Eisengolem das Laufen zu Villagern, die einen Golem wollen, und das Golem-Spawnen der Villager ist nicht Vanilla.
+- **Ertrinken an Land:** Landmobs verlieren unter Wasser keine Luft (nur Spieler und Wassertiere haben Luft-Logik).
 
 Platz: `target/debug/incremental` wächst auf über 20 GB. Wenn die Platte voll ist, `rm -rf target/debug/incremental target/release`.
 
