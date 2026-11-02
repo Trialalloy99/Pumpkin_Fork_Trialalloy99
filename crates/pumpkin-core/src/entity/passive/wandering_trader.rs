@@ -152,6 +152,8 @@ pub struct WanderingTraderEntity {
     pub trading_player: std::sync::Mutex<Option<(Uuid, u8)>>,
     pub is_trading: AtomicBool,
     pub trade_sound_cooldown: AtomicI32,
+    // wandering trader: AbstractVillager inventory, 8 slots
+    pub inventory: std::sync::Mutex<Vec<ItemStack>>,
     pub ageable_data: AgeableData,
     self_weak: std::sync::Mutex<Option<Weak<Self>>>,
 }
@@ -161,14 +163,12 @@ impl WanderingTraderEntity {
     #[must_use]
     pub fn new(entity: Entity) -> Arc<Self> {
         let mut mob_entity = MobEntity::new(entity);
-        {
-            let navigator = mob_entity
-                .navigator
-                .get_mut()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            navigator.set_pathfinding_malus(PathType::DangerFire, FIRE_IN_NEIGHBOR_MALUS);
-            navigator.set_pathfinding_malus(PathType::DamageFire, -1.0);
-        }
+        let navigator = mob_entity
+            .navigator
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        navigator.set_pathfinding_malus(PathType::DangerFire, FIRE_IN_NEIGHBOR_MALUS);
+        navigator.set_pathfinding_malus(PathType::DamageFire, -1.0);
         let trader = Self {
             mob_entity,
             despawn_delay: AtomicI32::new(DEFAULT_DESPAWN_DELAY),
@@ -178,6 +178,7 @@ impl WanderingTraderEntity {
             trading_player: std::sync::Mutex::new(None),
             is_trading: AtomicBool::new(false),
             trade_sound_cooldown: AtomicI32::new(0),
+            inventory: std::sync::Mutex::new(Vec::new()),
             ageable_data: AgeableData::default(),
             self_weak: std::sync::Mutex::new(None),
         };
@@ -660,6 +661,22 @@ impl Mob for WanderingTraderEntity {
             );
         }
 
+        let items: Vec<pumpkin_nbt::tag::NbtTag> = self
+            .inventory
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .filter(|item| !item.is_empty())
+            .map(|item| {
+                let mut item_nbt = NbtCompound::new();
+                item.write_item_stack(&mut item_nbt);
+                pumpkin_nbt::tag::NbtTag::Compound(item_nbt)
+            })
+            .collect();
+        if !items.is_empty() {
+            nbt.put_list("Inventory", items);
+        }
+
         let offers = self
             .offers
             .lock()
@@ -769,6 +786,21 @@ impl Mob for WanderingTraderEntity {
                     }
                 }
             }
+        }
+
+        if let Some(items) = nbt.get_list("Inventory") {
+            let mut inventory = self
+                .inventory
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            inventory.clear();
+            inventory.extend(
+                items
+                    .iter()
+                    .filter_map(|tag| tag.extract_compound())
+                    .filter_map(ItemStack::read_item_stack)
+                    .take(8),
+            );
         }
 
         let current_age = self.get_age();
