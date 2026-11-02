@@ -40,17 +40,18 @@ impl BlockBehaviour for SugarCaneBlock {
                     BlockFlags::NOTIFY_ALL,
                 );
                 let props = CactusLikeProperties { age: 0 };
+                // sugar cane: age is set silently (flags 260)
                 args.world.set_block_state(
                     args.position,
                     props.to_state_id(args.block),
-                    BlockFlags::NOTIFY_ALL,
+                    BlockFlags::empty(),
                 );
             } else {
                 let props = CactusLikeProperties { age: age + 1 };
                 args.world.set_block_state(
                     args.position,
                     props.to_state_id(args.block),
-                    BlockFlags::NOTIFY_ALL,
+                    BlockFlags::empty(),
                 );
             }
         }

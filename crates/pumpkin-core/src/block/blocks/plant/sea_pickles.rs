@@ -137,8 +137,11 @@ impl BlockBehaviour for SeaPickleBlock {
 
 impl PlantBlockBase for SeaPickleBlock {
     fn can_plant_on_top(&self, block_accessor: &dyn BlockAccessor, pos: &BlockPos) -> bool {
-        block_accessor
-            .get_block_state(pos)
-            .is_center_solid(BlockDirection::Up)
+        // sea pickle: collision top face not empty or sturdy (SeaPickleBlock.mayPlaceOn)
+        let state = block_accessor.get_block_state(pos);
+        state
+            .get_block_collision_shapes()
+            .any(|shape| shape.max.y >= 1.0 - 1.0E-7)
+            || state.is_side_solid(BlockDirection::Up)
     }
 }

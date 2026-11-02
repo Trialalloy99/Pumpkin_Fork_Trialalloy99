@@ -25,19 +25,13 @@ pub struct TripwireBlock;
 
 impl BlockBehaviour for TripwireBlock {
     fn get_inside_collision_shape(&self, args: GetInsideCollisionShapeArgs<'_>) -> BoundingBox {
-        let props = TripwireProperties::from_state_id(args.state.id);
-        if props.attached {
-            BoundingBox::new(
-                Vector3::new(0.0, 0.0625, 0.0),
-                Vector3::new(1.0, 0.15625, 1.0),
-            )
-        } else {
-            BoundingBox::new(Vector3::new(0.0, 0.0, 0.0), Vector3::new(1.0, 0.5, 1.0))
-        }
+        Self::shape_bounds(TripwireProperties::from_state_id(args.state.id))
     }
 
     fn on_entity_collision(&self, args: OnEntityCollisionArgs<'_>) {
-        if args.entity.get_entity().is_spectator() {
+        if args.entity.get_entity().is_spectator()
+            || crate::entity::mob::ignores_block_triggers(args.entity)
+        {
             return;
         }
         let mut props = TripwireProperties::from_state_id(args.state.id);
@@ -135,8 +129,8 @@ impl BlockBehaviour for TripwireBlock {
             return;
         }
 
-        let aabb = BoundingBox::from_block(args.position);
-        // TODO entity.canAvoidTraps()
+        // tripwire: entities in the state's shape bounds (TripWireBlock.checkPressed)
+        let aabb = Self::shape_bounds(props).at_pos(*args.position);
         let has_entity = args.world.get_entities_at_box(&aabb).iter().any(|e| {
             !e.get_entity().is_spectator()
                 && !crate::entity::mob::ignores_block_triggers(e.as_ref())
@@ -169,6 +163,17 @@ impl BlockBehaviour for TripwireBlock {
 }
 
 impl TripwireBlock {
+    const fn shape_bounds(props: TripwireProperties) -> BoundingBox {
+        if props.attached {
+            BoundingBox::new(
+                Vector3::new(0.0, 0.0625, 0.0),
+                Vector3::new(1.0, 0.15625, 1.0),
+            )
+        } else {
+            BoundingBox::new(Vector3::new(0.0, 0.0, 0.0), Vector3::new(1.0, 0.5, 1.0))
+        }
+    }
+
     fn update(world: &Arc<World>, pos: &BlockPos, state_id: BlockStateId) {
         for dir in [BlockDirection::South, BlockDirection::West] {
             for i in 1..42 {

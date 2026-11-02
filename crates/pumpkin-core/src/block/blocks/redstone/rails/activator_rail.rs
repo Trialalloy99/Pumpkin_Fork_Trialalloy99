@@ -18,11 +18,9 @@ use pumpkin_data::Block;
 use pumpkin_util::math::position::BlockPos;
 
 use super::super::block_receives_redstone_power;
+use super::HorizontalFacingRailExt;
 use super::RailProperties;
-use super::common::{
-    can_place_rail_at, compute_placed_rail_shape, rail_placement_is_valid,
-    update_flanking_rails_shape,
-};
+use super::common::{can_place_rail_at, place_rail_state, rail_placement_is_valid};
 
 #[pumpkin_block("minecraft:activator_rail")]
 pub struct ActivatorRailBlock;
@@ -33,17 +31,21 @@ impl BlockBehaviour for ActivatorRailBlock {
         let player_facing = args.player.get_entity().get_horizontal_facing();
 
         rail_props.set_waterlogged(args.replacing.water_source());
-        rail_props.set_straight_shape(compute_placed_rail_shape(
-            args.world,
-            args.position,
-            player_facing,
-        ));
+        // rail: BaseRailBlock.getStateForPlacement
+        rail_props.set_straight_shape(player_facing.to_rail_shape_flat());
 
         rail_props.to_state_id(args.block)
     }
 
     fn placed(&self, args: PlacedArgs<'_>) {
-        update_flanking_rails_shape(args.world, args.block, args.state_id, args.position);
+        if Block::from_state_id(args.old_state_id) != args.block {
+            place_rail_state(
+                args.world,
+                Block::from_state_id(args.state_id),
+                args.state_id,
+                args.position,
+            );
+        }
         self.update_powered_state(args.world, args.block, args.position);
     }
 

@@ -4,9 +4,9 @@ use crate::block::blocks::redstone::block_receives_redstone_power;
 use crate::block::entities::bell::BellBlockEntity;
 use crate::block::registry::BlockActionResult;
 use crate::block::{
-    BlockBehaviour, BlockHitResult, BrokenArgs, CanPlaceAtArgs, GetStateForNeighborUpdateArgs,
-    NormalUseArgs, OnNeighborUpdateArgs, OnPlaceArgs, OnProjectileHitArgs, PathComputationType,
-    PlacedArgs,
+    BlockBehaviour, BlockHitResult, BrokenArgs, CanPlaceAtArgs, ExplodeArgs,
+    GetStateForNeighborUpdateArgs, NormalUseArgs, OnNeighborUpdateArgs, OnPlaceArgs,
+    OnProjectileHitArgs, PathComputationType, PlacedArgs,
 };
 use crate::entity::EntityBase;
 use crate::world::World;
@@ -63,27 +63,53 @@ fn ring_bell(
     true
 }
 
-fn is_point_on_bell(
-    hit: &BlockHitResult,
+// bell: BellBlock.isProperHit
+fn is_proper_hit(
+    face: BlockDirection,
+    click_y: f32,
     attachment: BellAttachment,
     block_face: HorizontalFacing,
 ) -> bool {
-    if hit.face == &BlockDirection::Up || hit.face == &BlockDirection::Down {
+    if face == BlockDirection::Up || face == BlockDirection::Down {
         return false;
     }
-    if hit.cursor_pos.y <= 0.8124f32 {
+    if click_y <= 0.8124f32 {
         match attachment {
-            BellAttachment::Floor => {
-                hit.face.to_axis() == block_face.to_block_direction().to_axis()
-            }
+            BellAttachment::Floor => face.to_axis() == block_face.to_block_direction().to_axis(),
             BellAttachment::SingleWall | BellAttachment::DoubleWall => {
-                hit.face.to_axis() != block_face.to_block_direction().to_axis()
+                face.to_axis() != block_face.to_block_direction().to_axis()
             }
             BellAttachment::Ceiling => true,
         }
     } else {
         false
     }
+}
+
+fn is_point_on_bell(
+    hit: &BlockHitResult,
+    attachment: BellAttachment,
+    block_face: HorizontalFacing,
+) -> bool {
+    is_proper_hit(*hit.face, hit.cursor_pos.y, attachment, block_face)
+}
+
+// bell: face of the block a projectile hit position lies on
+fn hit_face(pos: &BlockPos, hit: &pumpkin_util::math::vector3::Vector3<f64>) -> BlockDirection {
+    let x = hit.x - f64::from(pos.0.x);
+    let y = hit.y - f64::from(pos.0.y);
+    let z = hit.z - f64::from(pos.0.z);
+    [
+        (x, BlockDirection::West),
+        (1.0 - x, BlockDirection::East),
+        (y, BlockDirection::Down),
+        (1.0 - y, BlockDirection::Up),
+        (z, BlockDirection::North),
+        (1.0 - z, BlockDirection::South),
+    ]
+    .into_iter()
+    .min_by(|a, b| a.0.total_cmp(&b.0))
+    .map_or(BlockDirection::Up, |(_, face)| face)
 }
 
 #[pumpkin_block("minecraft:bell")]
@@ -284,7 +310,22 @@ impl BlockBehaviour for BellBlock {
         }
     }
 
+    // bell: rings when an explosion hits it (BellBlock.onExplosionHit)
+    fn explode(&self, args: ExplodeArgs<'_>) {
+        ring_bell(*args.position, args.world, None, None);
+    }
+
     fn on_projectile_hit(&self, args: OnProjectileHitArgs<'_>) {
+        // bell: projectiles must hit the bell's side (BellBlock.onProjectileHit)
+        let props = BellLikeProperties::from_state_id(args.state.id);
+        if !is_proper_hit(
+            hit_face(args.position, args.hit_pos),
+            (args.hit_pos.y - f64::from(args.position.0.y)) as f32,
+            props.attachment,
+            props.facing,
+        ) {
+            return;
+        }
         let player = args
             .projectile
             .get_projectile_owner()

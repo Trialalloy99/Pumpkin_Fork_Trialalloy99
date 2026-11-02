@@ -9,6 +9,7 @@ use pumpkin_world::world::{BlockAccessor, BlockFlags};
 
 use crate::world::World;
 
+use super::rail_state::RailState;
 use super::{HorizontalFacingRailExt, Rail, RailElevation, RailProperties, StraightRailShapeExt};
 
 pub(super) fn rail_placement_is_valid(world: &World, block: &Block, pos: &BlockPos) -> bool {
@@ -200,4 +201,16 @@ fn compute_flanking_rail_new_shape(
     }
 
     rail.get_new_rail_shape(new_neighbor_directions[0], new_neighbor_directions[1])
+}
+
+// rail: BaseRailBlock.onPlace -> updateDir (RailState.place)
+pub(super) fn place_rail_state(
+    world: &Arc<World>,
+    block: &'static Block,
+    state_id: BlockStateId,
+    pos: &BlockPos,
+) {
+    let current = RailProperties::new(state_id, block).shape();
+    let has_signal = super::super::block_receives_redstone_power(world, pos);
+    RailState::new(world, *pos, block, state_id).place(has_signal, true, current);
 }

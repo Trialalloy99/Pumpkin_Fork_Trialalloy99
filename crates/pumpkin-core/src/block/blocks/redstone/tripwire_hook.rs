@@ -15,9 +15,9 @@ use rand::{RngExt, rng};
 
 use crate::{
     block::{
-        BlockBehaviour, CanPlaceAtArgs, EmitsRedstonePowerArgs, GetRedstonePowerArgs,
-        GetStateForNeighborUpdateArgs, OnPlaceArgs, OnScheduledTickArgs, OnStateReplacedArgs,
-        PlayerPlacedArgs,
+        BlockBehaviour, BlockIsReplacing, CanPlaceAtArgs, EmitsRedstonePowerArgs,
+        GetRedstonePowerArgs, GetStateForNeighborUpdateArgs, OnPlaceArgs, OnScheduledTickArgs,
+        OnStateReplacedArgs, PlayerPlacedArgs,
     },
     world::World,
 };
@@ -25,18 +25,38 @@ use crate::{
 type TripwireProperties = pumpkin_data::block_properties::TripwireLikeProperties;
 type TripwireHookProperties = pumpkin_data::block_properties::TripwireHookLikeProperties;
 
+fn future_hook_state_with(
+    state: TripwireHookProperties,
+    facing: pumpkin_data::block_properties::HorizontalFacing,
+) -> BlockStateId {
+    let mut state = state;
+    state.facing = facing;
+    state.to_state_id(&Block::TRIPWIRE_HOOK)
+}
+
 #[pumpkin_block("minecraft:tripwire_hook")]
 pub struct TripwireHookBlock;
 
 impl BlockBehaviour for TripwireHookBlock {
+    // tripwire hook: first horizontal looking direction with a wall behind (TripWireHookBlock.getStateForPlacement)
     fn on_place(&self, args: OnPlaceArgs<'_>) -> BlockStateId {
         let mut props = TripwireHookProperties::default(args.block);
         props.powered = false;
         props.attached = false;
-        let facing = args.direction.opposite();
-        if Self::can_survive(args.world, args.position, facing) {
-            props.facing = facing.to_cardinal_direction();
-            return props.to_state_id(args.block);
+        let replace_clicked = !matches!(args.replacing, BlockIsReplacing::None);
+        for direction in crate::block::blocks::vine::get_nearest_looking_directions(
+            args.player,
+            replace_clicked,
+            args.direction,
+        ) {
+            if !direction.is_horizontal() {
+                continue;
+            }
+            let facing = direction.opposite();
+            if Self::can_survive(args.world, args.position, facing) {
+                props.facing = facing.to_cardinal_direction();
+                return props.to_state_id(args.block);
+            }
         }
         args.block.default_state.id
     }
@@ -134,6 +154,22 @@ impl BlockBehaviour for TripwireHookBlock {
 }
 
 impl TripwireHookBlock {
+    // hook: TripWireHookBlock.onRemoved
+    fn on_removed(world: &Arc<World>, pos: BlockPos, state_id: BlockStateId) {
+        let props = TripwireHookProperties::from_state_id(state_id);
+        if props.powered || props.attached {
+            Self::update(world, pos, state_id, true, false, -1, None);
+        }
+        if props.powered {
+            Self::update_neighbors_on_axis(
+                &Block::TRIPWIRE_HOOK,
+                world,
+                pos,
+                props.facing.to_block_direction(),
+            );
+        }
+    }
+
     pub fn can_survive(
         world: &dyn BlockAccessor,
         block_pos: &BlockPos,
@@ -226,6 +262,15 @@ impl TripwireHookBlock {
                 end_hook_pos,
                 BlockDirection::from_cardinal_direction(future_hook_facing),
             );
+            // hook: start hook removed by the end hook update (TripWireHookBlock.calculateState)
+            if world.get_block(&start_hook_pos) != &Block::TRIPWIRE_HOOK {
+                Self::on_removed(
+                    world,
+                    start_hook_pos,
+                    future_hook_state_with(future_hook_state, start_hook_props.facing),
+                );
+                return;
+            }
             Self::play_sound(
                 world,
                 &end_hook_pos,
