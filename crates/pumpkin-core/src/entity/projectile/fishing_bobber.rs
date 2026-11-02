@@ -320,7 +320,7 @@ impl FishingBobberEntity {
                     state.hook_state = HookState::Bobbing;
                     return;
                 }
-                self.check_collision(&world, entity);
+                self.check_collision(&world, entity, caller);
             }
             HookState::HookedInEntity => {
                 if self.hooked_entity_id.load(Ordering::Relaxed) != NO_HOOKED_ENTITY {
@@ -398,7 +398,7 @@ impl FishingBobberEntity {
     }
 
     // fishing hook: hit entity or shorten the move to the hit block (FishingHook.checkCollision)
-    fn check_collision(&self, world: &Arc<World>, entity: &Entity) {
+    fn check_collision(&self, world: &Arc<World>, entity: &Entity, caller: &dyn EntityBase) {
         let start = entity.pos.load();
         let velocity = entity.velocity.load();
         let end = start.add(&velocity);
@@ -440,6 +440,10 @@ impl FishingBobberEntity {
         }
 
         if let Some((_, hooked)) = closest {
+            // projectile: Projectile.hitTargetOrDeflectSelf
+            if crate::entity::projectile_deflection::try_deflect(caller, hooked.as_ref()) {
+                return;
+            }
             self.set_hooked_entity(Some(hooked.get_entity()));
         } else if !block_hit.is_miss {
             entity.velocity.store(reach);
