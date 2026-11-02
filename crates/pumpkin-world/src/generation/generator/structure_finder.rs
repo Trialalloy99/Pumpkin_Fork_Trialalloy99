@@ -381,106 +381,119 @@ pub fn structure_spawns_at(
     let global_cache = &generator.global_structure_cache;
     let (pos_chunk_x, pos_chunk_z) = (pos.0.x >> 4, pos.0.z >> 4);
 
-    for &set_index in spawn_override_sets() {
-        if !generator.enabled_structure_sets.contains(&set_index) {
-            continue;
-        }
-        let set = &StructureSet::ALL[set_index];
-        let StructurePlacementType::RandomSpread(spread) = &set.placement.placement_type else {
-            continue;
-        };
-        let min_rx = floor_div(pos_chunk_x - 8, spread.spacing);
-        let max_rx = floor_div(pos_chunk_x + 8, spread.spacing);
-        let min_rz = floor_div(pos_chunk_z - 8, spread.spacing);
-        let max_rz = floor_div(pos_chunk_z + 8, spread.spacing);
-        for rx in min_rx..=max_rx {
-            for rz in min_rz..=max_rz {
-                let (chunk_x, chunk_z) =
-                    get_structure_chunk_in_region(spread, seed, rx, rz, set.placement.salt);
-                if (chunk_x - pos_chunk_x).abs() > 8
-                    || (chunk_z - pos_chunk_z).abs() > 8
-                    || !should_generate_structure(
-                        &set.placement,
-                        &generator.structure_calculator,
-                        chunk_x,
-                        chunk_z,
-                        global_cache,
-                    )
-                {
-                    continue;
-                }
-                let entries = if set.structures.len() == 1 {
-                    set.structures.to_vec()
-                } else {
-                    crate::generation::proto_chunk::ProtoChunk::weighted_structure_order(
-                        set.structures,
-                        generator.random_config.seed,
-                        chunk_x,
-                        chunk_z,
-                    )
-                };
-                for entry in entries {
-                    let key = entry.structure;
-                    let start =
-                        global_cache.get_or_compute_structure_start(key, chunk_x, chunk_z, || {
-                            let settings = generator.settings;
-                            let mut height_sampler = NoiseHeightSampler::new(generator);
-                            let mut biome_sampler =
-                                MultiNoiseSampler::generate(&generator.base_router.multi_noise);
-                            let biome_supplier: &dyn BiomeSupplier = &generator.biome_supplier;
-                            let context = StructureGeneratorContext {
-                                seed,
-                                chunk_x,
-                                chunk_z,
-                                random: create_chunk_random(seed, chunk_x, chunk_z),
-                                sea_level: settings.sea_level,
-                                min_y: (settings.shape.min_y as i32).max(generator.dimension.min_y),
-                                height: settings
-                                    .shape
-                                    .height
-                                    .min(generator.dimension.height as u16),
-                                height_sampler: Some(&mut height_sampler),
-                                structure_key: Some(key),
-                            };
-                            lazily_generate_structure(
-                                &key,
-                                Structure::get(&key),
-                                context,
-                                biome_supplier,
-                                &mut biome_sampler,
-                            )
-                        });
-                    let Some(start) = start else {
-                        continue;
-                    };
-                    let structure = Structure::get(&key);
-                    if let Some(spawn_override) = structure
-                        .spawn_overrides
-                        .iter()
-                        .find(|spawn_override| spawn_override.category == category)
+    let starts = global_cache.get_or_compute_spawn_starts(pos_chunk_x, pos_chunk_z, || {
+        let mut found = Vec::new();
+        for &set_index in spawn_override_sets() {
+            if !generator.enabled_structure_sets.contains(&set_index) {
+                continue;
+            }
+            let set = &StructureSet::ALL[set_index];
+            let StructurePlacementType::RandomSpread(spread) = &set.placement.placement_type else {
+                continue;
+            };
+            let min_rx = floor_div(pos_chunk_x - 8, spread.spacing);
+            let max_rx = floor_div(pos_chunk_x + 8, spread.spacing);
+            let min_rz = floor_div(pos_chunk_z - 8, spread.spacing);
+            let max_rz = floor_div(pos_chunk_z + 8, spread.spacing);
+            for rx in min_rx..=max_rx {
+                for rz in min_rz..=max_rz {
+                    let (chunk_x, chunk_z) =
+                        get_structure_chunk_in_region(spread, seed, rx, rz, set.placement.salt);
+                    if (chunk_x - pos_chunk_x).abs() > 8
+                        || (chunk_z - pos_chunk_z).abs() > 8
+                        || !should_generate_structure(
+                            &set.placement,
+                            &generator.structure_calculator,
+                            chunk_x,
+                            chunk_z,
+                            global_cache,
+                        )
                     {
-                        let inside = match spawn_override.bounding_box {
-                            BoundingBoxType::Full => start.get_bounding_box().contains_pos(&pos.0),
-                            BoundingBoxType::Piece => start
-                                .collector
-                                .lock()
-                                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                                .pieces
-                                .iter()
-                                .any(|piece| {
-                                    piece
-                                        .get_structure_piece()
-                                        .bounding_box
-                                        .contains_pos(&pos.0)
-                                }),
-                        };
-                        if inside {
-                            return Some(spawn_override.spawns);
+                        continue;
+                    }
+                    let entries = if set.structures.len() == 1 {
+                        set.structures.to_vec()
+                    } else {
+                        crate::generation::proto_chunk::ProtoChunk::weighted_structure_order(
+                            set.structures,
+                            generator.random_config.seed,
+                            chunk_x,
+                            chunk_z,
+                        )
+                    };
+                    for entry in entries {
+                        let key = entry.structure;
+                        let start = global_cache.get_or_compute_structure_start(
+                            key,
+                            chunk_x,
+                            chunk_z,
+                            || {
+                                let settings = generator.settings;
+                                let mut height_sampler = NoiseHeightSampler::new(generator);
+                                let mut biome_sampler =
+                                    MultiNoiseSampler::generate(&generator.base_router.multi_noise);
+                                let biome_supplier: &dyn BiomeSupplier = &generator.biome_supplier;
+                                let context = StructureGeneratorContext {
+                                    seed,
+                                    chunk_x,
+                                    chunk_z,
+                                    random: create_chunk_random(seed, chunk_x, chunk_z),
+                                    sea_level: settings.sea_level,
+                                    min_y: (settings.shape.min_y as i32)
+                                        .max(generator.dimension.min_y),
+                                    height: settings
+                                        .shape
+                                        .height
+                                        .min(generator.dimension.height as u16),
+                                    height_sampler: Some(&mut height_sampler),
+                                    structure_key: Some(key),
+                                };
+                                lazily_generate_structure(
+                                    &key,
+                                    Structure::get(&key),
+                                    context,
+                                    biome_supplier,
+                                    &mut biome_sampler,
+                                )
+                            },
+                        );
+                        if let Some(start) = start {
+                            found.push((key, start));
+                            break;
                         }
                     }
-                    break;
                 }
             }
+        }
+        found
+    });
+
+    for (key, start) in starts.iter() {
+        let structure = Structure::get(key);
+        let Some(spawn_override) = structure
+            .spawn_overrides
+            .iter()
+            .find(|spawn_override| spawn_override.category == category)
+        else {
+            continue;
+        };
+        let inside = match spawn_override.bounding_box {
+            BoundingBoxType::Full => start.get_bounding_box().contains_pos(&pos.0),
+            BoundingBoxType::Piece => start
+                .collector
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .pieces
+                .iter()
+                .any(|piece| {
+                    piece
+                        .get_structure_piece()
+                        .bounding_box
+                        .contains_pos(&pos.0)
+                }),
+        };
+        if inside {
+            return Some(spawn_override.spawns);
         }
     }
     None

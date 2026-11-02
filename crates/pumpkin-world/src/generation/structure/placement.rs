@@ -25,6 +25,9 @@ use super::structures::StructurePosition;
 
 type StrongholdChunks = Option<Vec<(i32, i32)>>;
 type CachedStructureStart = Arc<OnceLock<Option<StructurePosition>>>;
+pub type SpawnStarts = Arc<[(StructureKeys, StructurePosition)]>;
+
+const MAX_CACHED_SPAWN_CHUNKS: usize = 65_536;
 
 /// stronghold lookup.
 pub enum StrongholdLayout<'a> {
@@ -54,6 +57,8 @@ pub struct GlobalStructureCache {
     structure_starts: OnceLock<
         DashMap<(StructureKeys, i32, i32), CachedStructureStart, rustc_hash::FxBuildHasher>,
     >,
+    // spawn: starts with spawn overrides near a chunk (ChunkGenerator.getMobsAt structure lookup)
+    spawn_starts: OnceLock<DashMap<(i32, i32), SpawnStarts, rustc_hash::FxBuildHasher>>,
 }
 
 struct StrongholdJob {
@@ -77,6 +82,7 @@ impl GlobalStructureCache {
             stronghold_job: None,
             stronghold_job_started: Once::new(),
             structure_starts: OnceLock::new(),
+            spawn_starts: OnceLock::new(),
         }
     }
 
@@ -204,6 +210,26 @@ impl GlobalStructureCache {
             |cached| cached.value().clone(),
         );
         start.get_or_init(compute).clone()
+    }
+
+    pub fn get_or_compute_spawn_starts(
+        &self,
+        chunk_x: i32,
+        chunk_z: i32,
+        compute: impl FnOnce() -> Vec<(StructureKeys, StructurePosition)>,
+    ) -> SpawnStarts {
+        let cache = self
+            .spawn_starts
+            .get_or_init(|| DashMap::with_hasher(rustc_hash::FxBuildHasher));
+        if let Some(cached) = cache.get(&(chunk_x, chunk_z)) {
+            return cached.value().clone();
+        }
+        let starts: SpawnStarts = compute().into();
+        if cache.len() >= MAX_CACHED_SPAWN_CHUNKS {
+            cache.clear();
+        }
+        cache.insert((chunk_x, chunk_z), starts.clone());
+        starts
     }
 
     /// Calculates the 128 ring positions matching vanilla Minecraft's
