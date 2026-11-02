@@ -139,9 +139,7 @@ const AXOLOTL_HUNTS: &[Hunt] = &[
 
 const TEMPT_ITEMS: &[&Item] = &[&Item::TROPICAL_FISH_BUCKET];
 
-fn is_common(variant: AxolotlVariant) -> bool {
-    variant != AxolotlVariant::Blue
-}
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(i32)]
@@ -174,12 +172,16 @@ impl AxolotlVariant {
     // axolotl: Variant.getCommonSpawnVariant / getRareSpawnVariant
     #[must_use]
     pub fn spawn_variant(common: bool) -> Self {
-        let variants = [Self::Lucy, Self::Wild, Self::Gold, Self::Cyan, Self::Blue];
-        let valid: Vec<Self> = variants
-            .into_iter()
-            .filter(|variant| is_common(*variant) == common)
-            .collect();
-        valid[rand::random_range(0..valid.len())]
+        if common {
+            match rand::random_range(0..4) {
+                0 => Self::Lucy,
+                1 => Self::Wild,
+                2 => Self::Gold,
+                _ => Self::Cyan,
+            }
+        } else {
+            Self::Blue
+        }
     }
 }
 
@@ -752,6 +754,11 @@ impl Mob for AxolotlEntity {
 
     fn mob_is_pushed_by_fluids(&self) -> bool {
         false
+    }
+
+    // axolotl: cannot be targeted while playing dead (Axolotl.canBeSeenAsEnemy)
+    fn mob_can_be_seen_as_enemy(&self) -> bool {
+        !self.is_playing_dead()
     }
 
     fn remove_when_far_away(&self, _distance_sq: f64) -> bool {
