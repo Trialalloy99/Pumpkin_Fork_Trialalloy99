@@ -4284,6 +4284,26 @@ impl Entity {
     pub const LEASH_SNAP_DISTANCE: f64 = 12.0;
     pub const LEASH_ELASTIC_DISTANCE: f64 = 6.0;
 
+    // leash: Leashable.leashSnapDistance, happy ghast overrides
+    #[must_use]
+    pub fn leash_snap_distance(&self) -> f64 {
+        if self.entity_type == &EntityType::HAPPY_GHAST {
+            16.0
+        } else {
+            Self::LEASH_SNAP_DISTANCE
+        }
+    }
+
+    // leash: Leashable.leashElasticDistance, happy ghast overrides
+    #[must_use]
+    pub fn leash_elastic_distance(&self) -> f64 {
+        if self.entity_type == &EntityType::HAPPY_GHAST {
+            10.0
+        } else {
+            Self::LEASH_ELASTIC_DISTANCE
+        }
+    }
+
     pub fn leash_to(&self, holder: Arc<dyn EntityBase>) {
         let holder_entity_id = holder.get_entity().entity_id;
         let world = self.world.load();
@@ -4482,7 +4502,7 @@ impl Entity {
     }
 
     // leash: spring pull with torque, snaps past 12 blocks (Leashable.tickLeash)
-    pub fn tick_leash(&self) {
+    pub fn tick_leash(&self) -> bool {
         let delayed = *self
             .delayed_leash
             .lock()
@@ -4493,12 +4513,12 @@ impl Entity {
 
         let holder = {
             let Ok(guard) = self.leashed_to.try_lock() else {
-                return;
+                return false;
             };
             guard.clone()
         };
         let Some(holder) = holder else {
-            return;
+            return false;
         };
         let holder_entity = holder.get_entity();
         let world = self.world.load();
@@ -4509,17 +4529,27 @@ impl Entity {
             } else {
                 self.unleash();
             }
-            return;
+            return false;
         }
         if holder_entity.world.load().uuid != world.uuid {
-            return;
+            return false;
+        }
+        // leash: Leashable.whenLeashedTo, happy ghast holder
+        if Self::supports_quad_leash(self.entity_type)
+            && let Some(ghast) = holder.get_mob().and_then(|mob| {
+                mob.cast_any()
+                    .downcast_ref::<crate::entity::passive::happy_ghast::HappyGhastEntity>()
+            })
+        {
+            ghast.notify_leash_holder();
         }
 
+        let mut pulled = false;
         let center = |b: BoundingBox| (b.min + b.max) * 0.5;
         let distance = center(self.bounding_box.load())
             .squared_distance_to_vec(&center(holder_entity.bounding_box.load()))
             .sqrt();
-        if distance > Self::LEASH_SNAP_DISTANCE {
+        if distance > self.leash_snap_distance() {
             world.play_sound(
                 pumpkin_data::sound::Sound::ItemLeadBreak,
                 pumpkin_data::sound::SoundCategory::Neutral,
@@ -4527,11 +4557,11 @@ impl Entity {
             );
             self.drop_leash();
         } else if distance
-            > Self::LEASH_ELASTIC_DISTANCE
+            > self.leash_elastic_distance()
                 - f64::from(holder_entity.width())
                 - f64::from(self.width())
         {
-            self.check_elastic_leash(&holder);
+            pulled = self.check_elastic_leash(&holder);
         }
 
         let momentum = self.leash_angular_momentum.load();
@@ -4539,6 +4569,7 @@ impl Entity {
         self.set_rotation((f64::from(yaw) - momentum) as f32, self.pitch.load());
         self.leash_angular_momentum
             .store(momentum * f64::from(self.leash_angular_friction()));
+        pulled
     }
 
     // leash: unleash and drop the lead item (Leashable.dropLeash)
@@ -4567,7 +4598,7 @@ impl Entity {
     }
 
     // leash: damped spring between the attachment points (Leashable.checkElasticInteractions)
-    fn check_elastic_leash(&self, holder: &Arc<dyn EntityBase>) {
+    fn check_elastic_leash(&self, holder: &Arc<dyn EntityBase>) -> bool {
         const AXIS_SPECIFIC_ELASTICITY: Vector3<f64> = Vector3::new(0.8, 0.2, 0.8);
         const TORSIONAL_ELASTICITY: f64 = 10.0;
         const STIFFNESS: f64 = 0.11;
@@ -4627,11 +4658,11 @@ impl Entity {
                     holder_entity.yaw.load(),
                 );
             let distance = attach.squared_distance_to_vec(&pivot).sqrt();
-            if distance < Self::LEASH_ELASTIC_DISTANCE {
+            if distance < self.leash_elastic_distance() {
                 continue;
             }
             let mut displacement =
-                (pivot - attach).normalize() * (distance - Self::LEASH_ELASTIC_DISTANCE);
+                (pivot - attach).normalize() * (distance - self.leash_elastic_distance());
             let point_torque = lever.z * displacement.x - lever.x * displacement.z;
             if own_movement.x * displacement.x
                 + own_movement.y * displacement.y
@@ -4645,7 +4676,7 @@ impl Entity {
             any = true;
         }
         if !any {
-            return;
+            return false;
         }
         if quad {
             force = force * 0.25;
@@ -4663,6 +4694,7 @@ impl Entity {
         ) + relative * STIFFNESS;
         self.velocity.store(own_movement + push);
         self.velocity_dirty.store(true, Relaxed);
+        true
     }
 
     // leash: boats, rafts and happy ghasts take four ropes (supportQuadLeash)
@@ -5784,7 +5816,7 @@ pub(crate) fn leash_interact(
                         .pos
                         .load()
                         .squared_distance_to_vec(&entity.pos.load())
-                        <= Entity::LEASH_SNAP_DISTANCE * Entity::LEASH_SNAP_DISTANCE
+                        <= other_entity.leash_snap_distance() * other_entity.leash_snap_distance()
                 {
                     other_entity.attach_leash(this_arc.clone());
                     any = true;
@@ -5861,7 +5893,7 @@ pub(crate) fn leash_interact(
         let distance = center(entity.bounding_box.load())
             .squared_distance_to_vec(&center(player.get_entity().bounding_box.load()))
             .sqrt();
-        if distance <= Entity::LEASH_SNAP_DISTANCE {
+        if distance <= entity.leash_snap_distance() {
             if entity.is_leashed() {
                 entity.drop_leash();
             }

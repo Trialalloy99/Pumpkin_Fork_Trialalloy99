@@ -5,8 +5,10 @@ use super::memory::MemoryModuleId;
 use super::memory::position_tracker::PositionTracker;
 
 pub mod animal_panic;
+pub mod baby_follow_adult;
 pub mod count_down_cooldown_ticks;
 pub mod do_nothing;
+pub mod follow_temptation;
 pub mod gate;
 pub mod go_and_give_items_to_target;
 pub mod go_to_wanted_item;
@@ -32,6 +34,7 @@ pub mod utils;
 pub use animal_panic::AnimalPanic;
 pub use count_down_cooldown_ticks::CountDownCooldownTicks;
 pub use do_nothing::DoNothing;
+pub use follow_temptation::FollowTemptation;
 pub use gate::{GateBehavior, OrderPolicy, RunningPolicy, run_one, run_one_with_conditions};
 pub use go_and_give_items_to_target::GoAndGiveItemsToTarget;
 pub use look_at_target_sink::LookAtTargetSink;

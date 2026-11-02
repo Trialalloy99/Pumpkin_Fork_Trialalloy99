@@ -6,12 +6,14 @@ use crate::entity::ai::target_predicate::TargetPredicate;
 use super::memory::{MemoryModuleId, types};
 use super::{BrainTick, VisibilityContext};
 
+pub mod adult;
 pub mod breeze_attack_entity;
 pub mod dummy;
 pub mod hurt_by;
 pub mod nearest_items;
 pub mod nearest_living_entities;
 pub mod nearest_players;
+pub mod tempting;
 
 pub use dummy::DummySensor;
 pub use hurt_by::HurtBySensor;
@@ -33,6 +35,8 @@ pub enum SensorType {
     HurtBy,
     NearestItems,
     BreezeAttackEntity,
+    FoodTemptations,
+    NearestAdultAnyType,
 }
 
 impl SensorType {
@@ -45,6 +49,8 @@ impl SensorType {
             Self::HurtBy => "minecraft:hurt_by",
             Self::NearestItems => "minecraft:nearest_items",
             Self::BreezeAttackEntity => "minecraft:breeze_attack_entity_sensor",
+            Self::FoodTemptations => "minecraft:food_temptations",
+            Self::NearestAdultAnyType => "minecraft:nearest_adult_any_type",
         }
     }
 
@@ -56,7 +62,9 @@ impl SensorType {
             | Self::NearestPlayers
             | Self::HurtBy
             | Self::NearestItems
-            | Self::BreezeAttackEntity => DEFAULT_SCAN_RATE,
+            | Self::BreezeAttackEntity
+            | Self::FoodTemptations
+            | Self::NearestAdultAnyType => DEFAULT_SCAN_RATE,
         }
     }
 
@@ -68,6 +76,8 @@ impl SensorType {
             Self::HurtBy => Box::new(HurtBySensor),
             Self::NearestItems => Box::new(nearest_items::NearestItemSensor),
             Self::BreezeAttackEntity => Box::new(breeze_attack_entity::BreezeAttackEntitySensor),
+            Self::FoodTemptations => Box::new(tempting::TemptingSensor),
+            Self::NearestAdultAnyType => Box::new(adult::AdultSensorAnyType),
         }
     }
 

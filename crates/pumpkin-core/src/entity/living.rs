@@ -304,6 +304,10 @@ impl LivingEntity {
     }
 
     pub(crate) fn get_pitch(&self) -> f32 {
+        // happy ghast: getVoicePitch is fixed
+        if self.entity.entity_type == &EntityType::HAPPY_GHAST {
+            return 1.0;
+        }
         let mut rng = rand::rng();
         if self.is_baby() {
             (rng.random::<f32>() - rng.random::<f32>()) * 0.2 + 1.5
@@ -1891,12 +1895,28 @@ impl LivingEntity {
     }
 
     pub(crate) fn travel_flying(&self, caller: &dyn EntityBase) {
+        self.travel_flying_with(
+            caller,
+            f64::from(0.02f32),
+            f64::from(0.02f32),
+            f64::from(self.get_speed()),
+        );
+    }
+
+    // living: LivingEntity.travelFlying(input, waterSpeed, lavaSpeed, airSpeed)
+    pub(crate) fn travel_flying_with(
+        &self,
+        caller: &dyn EntityBase,
+        water_speed: f64,
+        lava_speed: f64,
+        air_speed: f64,
+    ) {
         let (speed, drag) = if self.entity.is_in_water() {
-            (f64::from(0.02f32), f64::from(0.8f32))
+            (water_speed, f64::from(0.8f32))
         } else if self.entity.touching_lava.load(Relaxed) {
-            (f64::from(0.02f32), 0.5)
+            (lava_speed, 0.5)
         } else {
-            (f64::from(self.get_speed()), f64::from(0.91f32))
+            (air_speed, f64::from(0.91f32))
         };
         self.entity
             .update_velocity_from_input(self.movement_input.load(), speed);

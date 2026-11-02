@@ -194,6 +194,20 @@ impl MobEntity {
             .store(Vector3::new(input.x, input.y, f64::from(speed)));
     }
 
+    // mob: Mob.stopInPlace
+    pub fn stop_in_place(&self) {
+        self.steered().navigator().stop();
+        self.living_entity.set_speed(0.0);
+        self.living_entity
+            .movement_input
+            .store(Vector3::new(0.0, 0.0, 0.0));
+        self.living_entity
+            .entity
+            .velocity
+            .store(Vector3::new(0.0, 0.0, 0.0));
+        self.living_entity.entity.leash_angular_momentum.store(0.0);
+    }
+
     const CONTROL_FLAGS_UPDATE_INTERVAL: i32 = 5;
     const AI_DISABLED_FLAG: u8 = 1;
     const LEFT_HANDED_FLAG: u8 = 2;
@@ -1567,6 +1581,9 @@ pub trait Mob: EntityBase + Send + Sync {
 
     fn before_mob_ai_step(&self) {}
 
+    // mob: Leashable.onElasticLeashPull
+    fn on_elastic_leash_pull(&self) {}
+
     fn mob_ai_step(&self) {}
 
     // mob: own jump control, true = handled (Rabbit.RabbitJumpControl.tick)
@@ -2531,7 +2548,9 @@ impl<T: Mob + Send + 'static> EntityBase for T {
     fn tick(&self, caller: &dyn EntityBase, server: &Server) {
         let mob_entity = self.get_mob_entity();
         mob_entity.process_navigation_updates();
-        mob_entity.living_entity.entity.tick_leash();
+        if mob_entity.living_entity.entity.tick_leash() {
+            self.on_elastic_leash_pull();
+        }
         sun_burn::tick(self);
         looting::tick_looting(self);
         // path max fall distance follows target + health (Mob.getMaxFallDistance)

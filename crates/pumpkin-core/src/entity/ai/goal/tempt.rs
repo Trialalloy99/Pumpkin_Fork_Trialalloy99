@@ -6,7 +6,9 @@ use crate::entity::ai::target_predicate::TargetPredicate;
 use crate::entity::{ai::pathfinder::NavigatorGoal, mob::Mob, player::Player};
 use pumpkin_data::attributes::Attributes;
 use pumpkin_data::item::Item;
+use pumpkin_data::item_stack::ItemStack;
 use pumpkin_util::math::vector3::Vector3;
+use rand::RngExt;
 
 const DEFAULT_STOP_DISTANCE: f64 = 2.5;
 /// Following stops once the player moves further than this while being watched.
@@ -18,6 +20,8 @@ pub struct TemptGoal {
     goal_control: Controls,
     speed: f64,
     tempt_items: &'static [&'static Item],
+    predicate: Option<fn(&dyn Mob, &ItemStack) -> bool>,
+    non_pathfinder: bool,
     can_scare: bool,
     stop_distance: f64,
     target_player: Option<Arc<Player>>,
@@ -45,6 +49,8 @@ impl TemptGoal {
             goal_control: Controls::MOVE | Controls::LOOK,
             speed,
             tempt_items,
+            predicate: None,
+            non_pathfinder: false,
             can_scare,
             stop_distance,
             target_player: None,
@@ -56,18 +62,32 @@ impl TemptGoal {
         }
     }
 
+    /// Vanilla `TemptGoal.ForNonPathfinders`: steers through the move control, tempt items by predicate.
+    #[must_use]
+    pub const fn for_non_pathfinders(
+        mut self,
+        predicate: fn(&dyn Mob, &ItemStack) -> bool,
+    ) -> Self {
+        self.predicate = Some(predicate);
+        self.non_pathfinder = true;
+        self
+    }
+
     #[must_use]
     pub const fn is_running(&self) -> bool {
         self.running
     }
 
-    fn is_tempt_item(&self, stack: &pumpkin_data::item_stack::ItemStack) -> bool {
+    fn is_tempt_item(&self, mob: &dyn Mob, stack: &ItemStack) -> bool {
+        if let Some(predicate) = self.predicate {
+            return predicate(mob, stack);
+        }
         stack.item_count > 0 && self.tempt_items.iter().any(|i| i.id == stack.item.id)
     }
 
-    fn is_holding_tempt_item(&self, player: &Player) -> bool {
-        self.is_tempt_item(&player.inventory().held_item())
-            || self.is_tempt_item(&player.inventory().off_hand_item())
+    fn is_holding_tempt_item(&self, mob: &dyn Mob, player: &Player) -> bool {
+        self.is_tempt_item(mob, &player.inventory().held_item())
+            || self.is_tempt_item(mob, &player.inventory().off_hand_item())
     }
 
     /// Non-combat, line of sight ignored, ranged by `tempt_range` and filtered on the held item.
@@ -86,7 +106,7 @@ impl TemptGoal {
             mob_entity.living_entity.entity.pos.load(),
             range,
             |player| {
-                self.is_holding_tempt_item(player)
+                self.is_holding_tempt_item(mob, player)
                     && conditions.test(&world, Some(mob), player.as_ref())
             },
         )
@@ -191,9 +211,30 @@ impl Goal for TemptGoal {
             );
 
         let mob_pos = mob_entity.living_entity.entity.pos.load();
+        let close =
+            mob_pos.squared_distance_to_vec(&player_pos) < self.stop_distance * self.stop_distance;
+        if self.non_pathfinder {
+            let mut move_control = mob_entity
+                .move_control
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if close {
+                move_control.set_wait();
+            } else {
+                let eye = player.get_entity().get_eye_pos();
+                let scale: f64 = mob.get_random().random();
+                move_control.set_wanted_position(
+                    mob_pos.x + (eye.x - mob_pos.x) * scale,
+                    mob_pos.y + (eye.y - mob_pos.y) * scale,
+                    mob_pos.z + (eye.z - mob_pos.z) * scale,
+                    self.speed,
+                );
+            }
+            return;
+        }
         let steered = mob_entity.steered();
         let mut navigator = steered.navigator();
-        if mob_pos.squared_distance_to_vec(&player_pos) < self.stop_distance * self.stop_distance {
+        if close {
             navigator.stop();
         } else {
             navigator.set_progress(NavigatorGoal::new(mob_pos, player_pos, self.speed));
@@ -202,7 +243,15 @@ impl Goal for TemptGoal {
 
     fn stop(&mut self, mob: &dyn Mob) {
         self.target_player = None;
-        mob.get_mob_entity().steered().navigator().stop();
+        if self.non_pathfinder {
+            mob.get_mob_entity()
+                .move_control
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .set_wait();
+        } else {
+            mob.get_mob_entity().steered().navigator().stop();
+        }
         self.cooldown = to_goal_ticks(100);
         self.running = false;
     }
