@@ -29,9 +29,9 @@ use crate::entity::{
     },
     ai::goal::{
         breed::BreedGoal, escape_danger::EscapeDangerGoal, look_around::RandomLookAroundGoal,
-        look_at_entity::LookAtEntityGoal, melee_attack::MeleeAttackGoal, revenge::RevengeGoal,
-        swim::SwimGoal, tempt::TemptGoal, try_find_water::TryFindWaterGoal,
-        wander_around::WanderAroundGoal,
+        look_at_entity::LookAtEntityGoal, melee_attack::MeleeAttackGoal,
+        random_swimming::RandomSwimmingGoal, revenge::RevengeGoal, swim::SwimGoal,
+        tempt::TemptGoal, try_find_water::TryFindWaterGoal,
     },
     ai::pathfinder::Navigator,
     custom_sound::CustomSound,
@@ -70,7 +70,7 @@ impl NautilusEntity {
             .move_control
             .get_mut()
             .unwrap_or_else(std::sync::PoisonError::into_inner) =
-            Box::new(SmoothSwimmingMoveControl::new(85, 10, 0.02, 0.1, true));
+            Box::new(SmoothSwimmingMoveControl::new(85, 10, 0.011, 0.0, true));
         *mob_entity
             .look_control
             .get_mut()
@@ -107,7 +107,7 @@ impl NautilusEntity {
             goal_selector.add_goal(2, BreedGoal::new(0.4));
             goal_selector.add_goal(3, Box::new(TemptGoal::new(1.3, NAUTILUS_FOOD, false)));
             goal_selector.add_goal(4, Box::new(MeleeAttackGoal::new(0.6, true)));
-            goal_selector.add_goal(5, Box::new(WanderAroundGoal::new(1.0)));
+            goal_selector.add_goal(5, Box::new(RandomSwimmingGoal::new(1.0, 1)));
             goal_selector.add_goal(
                 6,
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 6.0),
@@ -281,6 +281,18 @@ impl Mob for NautilusEntity {
     }
 
     fn mob_play_step_sound(&self, _pos: &BlockPos, _state: &BlockState) {}
+
+    // nautilus: no gravity, 0.9 drag in water (AbstractNautilus.travelInWater)
+    fn travel_in_water(&self, caller: &dyn EntityBase, _gravity: f64, _falling: bool) {
+        let living = &self.mob_entity.living_entity;
+        let entity = &living.entity;
+        entity.update_velocity_from_input(
+            living.movement_input.load(),
+            f64::from(living.get_speed()),
+        );
+        living.make_move(caller);
+        entity.velocity.store(entity.velocity.load() * 0.9);
+    }
 
     fn as_custom_sound(&self) -> Option<&dyn CustomSound> {
         Some(self)
