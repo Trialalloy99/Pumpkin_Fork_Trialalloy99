@@ -1617,7 +1617,16 @@ pub trait Mob: EntityBase + Send + Sync {
         false
     }
 
-    /// Generic `Mob.aiStep` looting; mobs with their own pickup (piglin, allay) opt out.
+    // mob: wantsToPickUp for sensors that already hold the brain
+    fn wants_to_pick_up_in_brain(
+        &self,
+        stack: &ItemStack,
+        _brain: &crate::entity::ai::brain::BrainState,
+    ) -> bool {
+        self.wants_to_pick_up(stack)
+    }
+
+    /// Generic `Mob.aiStep` looting; mobs with their own pickup (allay) opt out.
     fn uses_mob_looting(&self) -> bool {
         true
     }

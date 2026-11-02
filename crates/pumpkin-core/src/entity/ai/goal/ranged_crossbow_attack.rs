@@ -54,7 +54,7 @@ impl RangedCrossbowAttackGoal {
         }
     }
 
-    fn is_holding_crossbow(mob: &dyn Mob) -> bool {
+    pub(crate) fn is_holding_crossbow(mob: &dyn Mob) -> bool {
         let equipment_guard = mob
             .get_mob_entity()
             .living_entity
@@ -66,7 +66,7 @@ impl RangedCrossbowAttackGoal {
         })
     }
 
-    fn shoot(mob: &dyn Mob, target: &Arc<dyn EntityBase>) {
+    pub(crate) fn shoot(mob: &dyn Mob, target: &Arc<dyn EntityBase>) {
         let entity = mob.get_entity();
         let world = entity.world.load();
         let world_full = entity.world.load_full();

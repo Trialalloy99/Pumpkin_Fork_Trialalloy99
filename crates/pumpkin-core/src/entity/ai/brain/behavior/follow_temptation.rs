@@ -8,6 +8,7 @@ use super::timed::Behavior;
 use crate::entity::EntityBase;
 
 const TEMPTATION_COOLDOWN: i32 = 100;
+const NEVER_TIMES_OUT: i32 = i32::MAX - 1;
 
 const ENTRY_CONDITIONS: [(MemoryModuleId, MemoryStatus); 6] = [
     (types::LOOK_TARGET.id(), MemoryStatus::Registered),
@@ -68,11 +69,11 @@ impl Behavior for FollowTemptation {
 
     // brain: FollowTemptation.timedOut is always false
     fn min_duration(&self) -> i32 {
-        i32::MAX
+        NEVER_TIMES_OUT
     }
 
     fn max_duration(&self) -> i32 {
-        i32::MAX
+        NEVER_TIMES_OUT
     }
 
     fn start(&mut self, tick: &mut BrainTick<'_>) {

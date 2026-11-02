@@ -13,6 +13,7 @@ pub mod hurt_by;
 pub mod nearest_items;
 pub mod nearest_living_entities;
 pub mod nearest_players;
+pub mod piglin_specific;
 pub mod tempting;
 
 pub use dummy::DummySensor;
@@ -37,6 +38,7 @@ pub enum SensorType {
     BreezeAttackEntity,
     FoodTemptations,
     NearestAdultAnyType,
+    PiglinSpecific,
 }
 
 impl SensorType {
@@ -51,6 +53,7 @@ impl SensorType {
             Self::BreezeAttackEntity => "minecraft:breeze_attack_entity_sensor",
             Self::FoodTemptations => "minecraft:food_temptations",
             Self::NearestAdultAnyType => "minecraft:nearest_adult_any_type",
+            Self::PiglinSpecific => "minecraft:piglin_specific_sensor",
         }
     }
 
@@ -64,7 +67,8 @@ impl SensorType {
             | Self::NearestItems
             | Self::BreezeAttackEntity
             | Self::FoodTemptations
-            | Self::NearestAdultAnyType => DEFAULT_SCAN_RATE,
+            | Self::NearestAdultAnyType
+            | Self::PiglinSpecific => DEFAULT_SCAN_RATE,
         }
     }
 
@@ -78,6 +82,7 @@ impl SensorType {
             Self::BreezeAttackEntity => Box::new(breeze_attack_entity::BreezeAttackEntitySensor),
             Self::FoodTemptations => Box::new(tempting::TemptingSensor),
             Self::NearestAdultAnyType => Box::new(adult::AdultSensorAnyType),
+            Self::PiglinSpecific => Box::new(piglin_specific::PiglinSpecificSensor),
         }
     }
 

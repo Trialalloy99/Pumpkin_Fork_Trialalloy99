@@ -46,6 +46,17 @@ impl OneShot {
 }
 
 impl OneShot {
+    /// Vanilla `BehaviorBuilder.triggerIf(predicate, behavior)`.
+    #[must_use]
+    pub fn when(
+        mut self,
+        predicate: impl Fn(&BrainTick<'_>) -> bool + Send + Sync + 'static,
+    ) -> Self {
+        let mut trigger = std::mem::replace(&mut self.trigger, Box::new(|_| false));
+        self.trigger = Box::new(move |tick| predicate(tick) && trigger(tick));
+        self
+    }
+
     fn fire(&mut self, tick: &mut BrainTick<'_>) -> bool {
         tick.state.check_all(&self.conditions) && (self.trigger)(tick)
     }
