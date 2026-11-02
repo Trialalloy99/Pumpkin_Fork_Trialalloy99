@@ -253,6 +253,11 @@ impl ThrownItemEntity {
                 }
             }
 
+            // projectile: hit position is where it entered the target, so knockback pushes away (Projectile.onHit)
+            if let ProjectileHit::Entity { hit_pos, .. } = &h {
+                entity.set_pos(*hit_pos);
+            }
+
             // Just trigger hit effects and remove
             caller.on_hit(h);
             entity.remove();
