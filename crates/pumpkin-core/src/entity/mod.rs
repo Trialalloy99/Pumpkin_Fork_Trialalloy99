@@ -4700,6 +4700,7 @@ impl Entity {
     // leash: boats, rafts and happy ghasts take four ropes (supportQuadLeash)
     fn supports_quad_leash(entity_type: &EntityType) -> bool {
         entity_type == &EntityType::HAPPY_GHAST
+            || entity_type == &EntityType::SNIFFER
             || entity_type.resource_name.ends_with("_boat")
             || entity_type.resource_name.ends_with("_raft")
     }

@@ -26,6 +26,8 @@ pub struct FollowTemptation {
     speed_modifier: f32,
     close_enough_distance: f64,
     look_in_the_eyes: bool,
+    baby_close_enough_distance: Option<f64>,
+    on_start: Option<fn(&mut BrainTick<'_>)>,
 }
 
 impl FollowTemptation {
@@ -39,7 +41,23 @@ impl FollowTemptation {
             speed_modifier,
             close_enough_distance,
             look_in_the_eyes,
+            baby_close_enough_distance: None,
+            on_start: None,
         }
+    }
+
+    // brain: FollowTemptation closeEnoughDistance by age
+    #[must_use]
+    pub const fn with_baby_distance(mut self, distance: f64) -> Self {
+        self.baby_close_enough_distance = Some(distance);
+        self
+    }
+
+    // brain: FollowTemptation.start override
+    #[must_use]
+    pub const fn with_on_start(mut self, on_start: fn(&mut BrainTick<'_>)) -> Self {
+        self.on_start = Some(on_start);
+        self
     }
 }
 
@@ -55,6 +73,12 @@ impl Behavior for FollowTemptation {
 
     fn max_duration(&self) -> i32 {
         i32::MAX
+    }
+
+    fn start(&mut self, tick: &mut BrainTick<'_>) {
+        if let Some(on_start) = self.on_start {
+            on_start(tick);
+        }
     }
 
     fn can_still_use(&mut self, tick: &mut BrainTick<'_>) -> bool {
@@ -80,7 +104,11 @@ impl Behavior for FollowTemptation {
         );
         let own = tick.mob.get_entity().pos.load();
         let distance_sq = own.squared_distance_to_vec(&player.get_entity().pos.load());
-        if distance_sq < self.close_enough_distance * self.close_enough_distance {
+        let close = match self.baby_close_enough_distance {
+            Some(baby) if tick.mob.get_mob_entity().living_entity.is_baby() => baby,
+            _ => self.close_enough_distance,
+        };
+        if distance_sq < close * close {
             tick.state.erase(types::WALK_TARGET.id());
         } else {
             tick.state.set(

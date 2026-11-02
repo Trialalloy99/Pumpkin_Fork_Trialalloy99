@@ -4,6 +4,7 @@ use super::BrainTick;
 use super::memory::MemoryModuleId;
 use super::memory::position_tracker::PositionTracker;
 
+pub mod animal_make_love;
 pub mod animal_panic;
 pub mod baby_follow_adult;
 pub mod count_down_cooldown_ticks;
@@ -19,6 +20,7 @@ pub mod melee_attack;
 pub mod move_to_target_sink;
 pub mod one_shot;
 pub mod random_stroll;
+pub mod set_entity_look_target;
 pub mod set_entity_look_target_sometimes;
 pub mod set_walk_target_from_attack_target_if_target_out_of_reach;
 pub mod set_walk_target_from_look_target;
