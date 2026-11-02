@@ -752,10 +752,8 @@ fn end_stage_parity_hashes() {
 }
 
 // geode: vanilla seed 12345 has an amethyst geode over chunk (73, -21), y -28..-13
-#[test]
-fn amethyst_geode_generates_where_vanilla_places_it() {
+fn generate_feature_chunk(cx: i32, cz: i32) -> TestGridCache {
     let block_registry = TestBlockRegistry;
-    let (cx, cz) = (73, -21);
     let world_gen = get_world_gen(
         Seed(12345),
         Dimension::OVERWORLD,
@@ -799,6 +797,13 @@ fn amethyst_geode_generates_where_vanilla_places_it() {
             );
         }
     }
+    cache
+}
+
+#[test]
+fn amethyst_geode_generates_where_vanilla_places_it() {
+    let (cx, cz) = (73, -21);
+    let cache = generate_feature_chunk(cx, cz);
     let chunk = cache.chunks.get(&(cx, cz)).unwrap();
     let amethyst = (36..=51)
         .flat_map(|y| (0..16).flat_map(move |z| (0..16).map(move |x| (x, y, z))))
@@ -814,4 +819,20 @@ fn amethyst_geode_generates_where_vanilla_places_it() {
         })
         .count();
     assert!(amethyst > 100, "geode blocks: {amethyst}");
+}
+
+// dripstone: vanilla seed 12345 has no dripstone in chunk (-65, -98), the old placeholder made ~290 blocks
+#[test]
+fn dripstone_caves_do_not_fill_with_stray_dripstone() {
+    let (cx, cz) = (-65, -98);
+    let cache = generate_feature_chunk(cx, cz);
+    let chunk = cache.chunks.get(&(cx, cz)).unwrap();
+    let dripstone = (0..384)
+        .flat_map(|y| (0..16).flat_map(move |z| (0..16).map(move |x| (x, y, z))))
+        .filter(|&(x, y, z)| {
+            pumpkin_data::Block::from_state_id(chunk.get_block_state_raw(x, y, z)).id
+                == pumpkin_data::Block::DRIPSTONE_BLOCK.id
+        })
+        .count();
+    assert_eq!(dripstone, 0);
 }

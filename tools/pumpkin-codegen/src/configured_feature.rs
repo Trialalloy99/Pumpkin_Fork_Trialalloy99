@@ -1013,7 +1013,35 @@ pub fn value_to_configured_feature(v: &Value) -> TokenStream {
             quote! { ConfiguredFeature::BonusChest(crate::generation::feature::features::bonus_chest::BonusChestFeature {}) }
         }
         "minecraft:dripstone_cluster" | "minecraft:speleothem_cluster" => {
-            quote! { ConfiguredFeature::DripstoneCluster(crate::generation::feature::features::drip_stone::cluster::DripstoneClusterFeature {}) }
+            let floor_to_ceiling_search_range =
+                config["floor_to_ceiling_search_range"].as_i64().unwrap_or(12) as i32;
+            let height = value_to_int_provider(&config["height"]);
+            let radius = value_to_int_provider(&config["radius"]);
+            let max_diff = config["max_stalagmite_stalactite_height_diff"].as_i64().unwrap_or(1) as i32;
+            let height_deviation = config["height_deviation"].as_i64().unwrap_or(3) as i32;
+            let layer = value_to_int_provider(&config["speleothem_block_layer_thickness"]);
+            let density = value_to_feature_float_provider(&config["density"]);
+            let wetness = value_to_feature_float_provider(&config["wetness"]);
+            let chance = config["chance_of_speleothem_at_max_distance_from_center"].as_f64().unwrap_or(0.1) as f32;
+            let edge = config["max_distance_from_edge_affecting_chance_of_speleothem"].as_i64().unwrap_or(3) as i32;
+            let bias = config["max_distance_from_center_affecting_height_bias"].as_i64().unwrap_or(8) as i32;
+            quote! {
+                ConfiguredFeature::DripstoneCluster(
+                    crate::generation::feature::features::drip_stone::cluster::DripstoneClusterFeature {
+                        floor_to_ceiling_search_range: #floor_to_ceiling_search_range,
+                        height: #height,
+                        radius: #radius,
+                        max_stalagmite_stalactite_height_diff: #max_diff,
+                        height_deviation: #height_deviation,
+                        speleothem_block_layer_thickness: #layer,
+                        density: #density,
+                        wetness: #wetness,
+                        chance_of_speleothem_at_max_distance_from_center: #chance,
+                        max_distance_from_edge_affecting_chance_of_speleothem: #edge,
+                        max_distance_from_center_affecting_height_bias: #bias,
+                    }
+                )
+            }
         }
         "minecraft:sequence" => {
             quote! { ConfiguredFeature::NoOp }
@@ -1050,7 +1078,30 @@ pub fn value_to_configured_feature(v: &Value) -> TokenStream {
             }
         }
         "minecraft:large_dripstone" => {
-            quote! { ConfiguredFeature::LargeDripstone(crate::generation::feature::features::drip_stone::large::LargeDripstoneFeature {}) }
+            let range = config["floor_to_ceiling_search_range"].as_i64().unwrap_or(30) as i32;
+            let column_radius = value_to_int_provider(&config["column_radius"]);
+            let height_scale = value_to_feature_float_provider(&config["height_scale"]);
+            let ratio = config["max_column_radius_to_cave_height_ratio"].as_f64().unwrap_or(0.33) as f32;
+            let stalactite = value_to_feature_float_provider(&config["stalactite_bluntness"]);
+            let stalagmite = value_to_feature_float_provider(&config["stalagmite_bluntness"]);
+            let wind_speed = value_to_feature_float_provider(&config["wind_speed"]);
+            let min_radius_for_wind = config["min_radius_for_wind"].as_i64().unwrap_or(4) as i32;
+            let min_bluntness_for_wind = config["min_bluntness_for_wind"].as_f64().unwrap_or(0.6) as f32;
+            quote! {
+                ConfiguredFeature::LargeDripstone(
+                    crate::generation::feature::features::drip_stone::large::LargeDripstoneFeature {
+                        floor_to_ceiling_search_range: #range,
+                        column_radius: #column_radius,
+                        height_scale: #height_scale,
+                        max_column_radius_to_cave_height_ratio: #ratio,
+                        stalactite_bluntness: #stalactite,
+                        stalagmite_bluntness: #stalagmite,
+                        wind_speed: #wind_speed,
+                        min_radius_for_wind: #min_radius_for_wind,
+                        min_bluntness_for_wind: #min_bluntness_for_wind,
+                    }
+                )
+            }
         }
         "minecraft:sculk_patch" => {
             let charge_count = config["charge_count"].as_u64().unwrap() as i32;
@@ -2133,5 +2184,38 @@ fn value_to_placement_modifier_cf(v: &Value) -> TokenStream {
             quote! { PlacementModifier::EnvironmentScan(EnvironmentScanPlacementModifier { direction_of_search: #dir, target_condition: #tc, allowed_search_condition: #asc, max_steps: #steps }) }
         }
         _ => quote! { PlacementModifier::Biome(BiomePlacementModifier) },
+    }
+}
+
+// float providers of feature configs (FloatProviders.codec)
+fn value_to_feature_float_provider(v: &Value) -> proc_macro2::TokenStream {
+    if let Some(f) = v.as_f64() {
+        let f = f as f32;
+        return quote! { pumpkin_util::math::float_provider::FloatProvider::Constant(#f) };
+    }
+    let number = |key: &str| v[key].as_f64().unwrap_or(0.0) as f32;
+    match v["type"].as_str().unwrap_or("") {
+        "minecraft:uniform" => {
+            let (min, max) = (number("min_inclusive"), number("max_exclusive"));
+            quote! {
+                pumpkin_util::math::float_provider::FloatProvider::Object(
+                    pumpkin_util::math::float_provider::NormalFloatProvider::Uniform(
+                        pumpkin_util::math::float_provider::UniformFloatProvider::new(#min, #max)
+                    )
+                )
+            }
+        }
+        "minecraft:clamped_normal" => {
+            let (mean, deviation, min, max) =
+                (number("mean"), number("deviation"), number("min"), number("max"));
+            quote! {
+                pumpkin_util::math::float_provider::FloatProvider::Object(
+                    pumpkin_util::math::float_provider::NormalFloatProvider::ClampedNormal(
+                        pumpkin_util::math::float_provider::ClampedNormalFloatProvider::new(#mean, #deviation, #min, #max)
+                    )
+                )
+            }
+        }
+        other => panic!("unsupported float provider {other}"),
     }
 }

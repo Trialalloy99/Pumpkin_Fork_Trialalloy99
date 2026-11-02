@@ -469,7 +469,8 @@ mod tests {
     #[test]
     fn gravity_processor_moves_template_to_the_heightmap() {
         let name = all_template_names()
-            .into_iter()
+            .iter()
+            .copied()
             .find(|name| name.contains("village/plains/streets/"))
             .expect("plains street template");
         let template = get_template(name).expect("template");

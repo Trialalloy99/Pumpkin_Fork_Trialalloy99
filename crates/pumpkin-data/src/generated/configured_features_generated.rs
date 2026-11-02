@@ -1587,7 +1587,42 @@ fn build_configured_features()
     map.insert(
         pumpkin_data::configured_feature::ConfiguredFeature::DripstoneCluster,
         ConfiguredFeature::DripstoneCluster(
-            crate::generation::feature::features::drip_stone::cluster::DripstoneClusterFeature {},
+            crate::generation::feature::features::drip_stone::cluster::DripstoneClusterFeature {
+                floor_to_ceiling_search_range: 12i32,
+                height: IntProvider::Object(NormalIntProvider::Uniform(UniformIntProvider {
+                    min_inclusive: 3i32,
+                    max_inclusive: 6i32,
+                })),
+                radius: IntProvider::Object(NormalIntProvider::Uniform(UniformIntProvider {
+                    min_inclusive: 2i32,
+                    max_inclusive: 8i32,
+                })),
+                max_stalagmite_stalactite_height_diff: 1i32,
+                height_deviation: 3i32,
+                speleothem_block_layer_thickness: IntProvider::Object(NormalIntProvider::Uniform(
+                    UniformIntProvider {
+                        min_inclusive: 2i32,
+                        max_inclusive: 4i32,
+                    },
+                )),
+                density: pumpkin_util::math::float_provider::FloatProvider::Object(
+                    pumpkin_util::math::float_provider::NormalFloatProvider::Uniform(
+                        pumpkin_util::math::float_provider::UniformFloatProvider::new(
+                            0.3f32, 0.7f32,
+                        ),
+                    ),
+                ),
+                wetness: pumpkin_util::math::float_provider::FloatProvider::Object(
+                    pumpkin_util::math::float_provider::NormalFloatProvider::ClampedNormal(
+                        pumpkin_util::math::float_provider::ClampedNormalFloatProvider::new(
+                            0.1f32, 0.3f32, 0.1f32, 0.9f32,
+                        ),
+                    ),
+                ),
+                chance_of_speleothem_at_max_distance_from_center: 0.1f32,
+                max_distance_from_edge_affecting_chance_of_speleothem: 3i32,
+                max_distance_from_center_affecting_height_bias: 8i32,
+            },
         ),
     );
     map.insert(
@@ -2718,7 +2753,46 @@ fn build_configured_features()
     map.insert(
         pumpkin_data::configured_feature::ConfiguredFeature::LargeDripstone,
         ConfiguredFeature::LargeDripstone(
-            crate::generation::feature::features::drip_stone::large::LargeDripstoneFeature {},
+            crate::generation::feature::features::drip_stone::large::LargeDripstoneFeature {
+                floor_to_ceiling_search_range: 30i32,
+                column_radius: IntProvider::Object(NormalIntProvider::Clamped(
+                    ClampedIntProvider {
+                        source: Box::new(IntProvider::Object(NormalIntProvider::Uniform(
+                            UniformIntProvider {
+                                min_inclusive: 3i32,
+                                max_inclusive: 19i32,
+                            },
+                        ))),
+                        min_inclusive: 3i32,
+                        max_inclusive: 16i32,
+                    },
+                )),
+                height_scale: pumpkin_util::math::float_provider::FloatProvider::Object(
+                    pumpkin_util::math::float_provider::NormalFloatProvider::Uniform(
+                        pumpkin_util::math::float_provider::UniformFloatProvider::new(0.4f32, 2f32),
+                    ),
+                ),
+                max_column_radius_to_cave_height_ratio: 0.33f32,
+                stalactite_bluntness: pumpkin_util::math::float_provider::FloatProvider::Object(
+                    pumpkin_util::math::float_provider::NormalFloatProvider::Uniform(
+                        pumpkin_util::math::float_provider::UniformFloatProvider::new(
+                            0.3f32, 0.9f32,
+                        ),
+                    ),
+                ),
+                stalagmite_bluntness: pumpkin_util::math::float_provider::FloatProvider::Object(
+                    pumpkin_util::math::float_provider::NormalFloatProvider::Uniform(
+                        pumpkin_util::math::float_provider::UniformFloatProvider::new(0.4f32, 1f32),
+                    ),
+                ),
+                wind_speed: pumpkin_util::math::float_provider::FloatProvider::Object(
+                    pumpkin_util::math::float_provider::NormalFloatProvider::Uniform(
+                        pumpkin_util::math::float_provider::UniformFloatProvider::new(0f32, 0.3f32),
+                    ),
+                ),
+                min_radius_for_wind: 4i32,
+                min_bluntness_for_wind: 0.6f32,
+            },
         ),
     );
     map.insert(
@@ -4342,7 +4416,36 @@ fn build_configured_features()
     map.insert(
         pumpkin_data::configured_feature::ConfiguredFeature::SulfurSpikeCluster,
         ConfiguredFeature::DripstoneCluster(
-            crate::generation::feature::features::drip_stone::cluster::DripstoneClusterFeature {},
+            crate::generation::feature::features::drip_stone::cluster::DripstoneClusterFeature {
+                floor_to_ceiling_search_range: 12i32,
+                height: IntProvider::Object(NormalIntProvider::Uniform(UniformIntProvider {
+                    min_inclusive: 1i32,
+                    max_inclusive: 4i32,
+                })),
+                radius: IntProvider::Object(NormalIntProvider::Uniform(UniformIntProvider {
+                    min_inclusive: 2i32,
+                    max_inclusive: 8i32,
+                })),
+                max_stalagmite_stalactite_height_diff: 1i32,
+                height_deviation: 3i32,
+                speleothem_block_layer_thickness: IntProvider::Object(NormalIntProvider::Uniform(
+                    UniformIntProvider {
+                        min_inclusive: 2i32,
+                        max_inclusive: 4i32,
+                    },
+                )),
+                density: pumpkin_util::math::float_provider::FloatProvider::Object(
+                    pumpkin_util::math::float_provider::NormalFloatProvider::Uniform(
+                        pumpkin_util::math::float_provider::UniformFloatProvider::new(
+                            0.3f32, 0.7f32,
+                        ),
+                    ),
+                ),
+                wetness: pumpkin_util::math::float_provider::FloatProvider::Constant(0f32),
+                chance_of_speleothem_at_max_distance_from_center: 0.1f32,
+                max_distance_from_edge_affecting_chance_of_speleothem: 3i32,
+                max_distance_from_center_affecting_height_bias: 8i32,
+            },
         ),
     );
     map.insert(
