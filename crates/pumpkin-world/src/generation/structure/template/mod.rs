@@ -61,6 +61,11 @@ pub trait BlockPlacer {
     fn get_block_state(&self, pos: &Vector3<i32>) -> BlockStateId;
     fn set_block_state(&mut self, pos: &Vector3<i32>, state: &BlockState);
     fn add_block_entity(&mut self, nbt: NbtCompound);
+
+    // gravity processor: Level.getHeight(heightmap, x, z)
+    fn height_at(&self, _heightmap: pumpkin_util::HeightMap, _x: i32, _z: i32) -> Option<i32> {
+        None
+    }
 }
 
 /// Places a template at a world origin with an un-rotated XZ offset.
@@ -158,21 +163,16 @@ pub fn place_template_with_options(
         let local_pos = rotation.transform_pos(block.pos, template.size);
 
         let wx = world_x + local_pos.x;
-        let wy = origin.y + local_pos.y;
+        let mut wy = origin.y + local_pos.y;
         let wz = world_z + local_pos.z;
 
         if let Some(bbox) = chunk_box
-            && (wx < bbox.min.x
-                || wx > bbox.max.x
-                || wy < bbox.min.y
-                || wy > bbox.max.y
-                || wz < bbox.min.z
-                || wz > bbox.max.z)
+            && (wx < bbox.min.x || wx > bbox.max.x || wz < bbox.min.z || wz > bbox.max.z)
         {
             continue;
         }
 
-        let world_pos = Vector3::new(wx, wy, wz);
+        let mut world_pos = Vector3::new(wx, wy, wz);
 
         if apply_waterlogging
             && placer.get_block_state(&world_pos).to_block_id() == pumpkin_data::Block::WATER.id
@@ -195,6 +195,14 @@ pub fn place_template_with_options(
         let mut rng =
             LegacyRand::from_seed(hash_block_pos(world_pos.x, world_pos.y, world_pos.z) as u64);
         for processor in processors {
+            // gravity: block moves to the heightmap column (GravityProcessor.processBlock)
+            if let processor::StructureProcessor::Gravity { heightmap, offset } = processor {
+                if let Some(height) = placer.height_at(heightmap.to_height_map(), wx, wz) {
+                    wy = height + offset + local_pos.y;
+                    world_pos = Vector3::new(wx, wy, wz);
+                }
+                continue;
+            }
             let Some(processed_state) = processor.process_with_context(
                 placer,
                 world_pos,
@@ -210,6 +218,11 @@ pub fn place_template_with_options(
             state = processed_state;
         }
         if !should_place {
+            continue;
+        }
+        if let Some(bbox) = chunk_box
+            && (wy < bbox.min.y || wy > bbox.max.y)
+        {
             continue;
         }
         // Legacy pool elements ignore air after jigsaw replacement and custom processors.
@@ -432,5 +445,52 @@ mod tests {
         }
 
         assert!(placed_templates > 0);
+    }
+
+    struct HeightPlacer(Vec<i32>);
+
+    impl BlockPlacer for HeightPlacer {
+        fn get_block_state(&self, _pos: &Vector3<i32>) -> BlockStateId {
+            Block::AIR.default_state.id
+        }
+
+        fn set_block_state(&mut self, pos: &Vector3<i32>, _state: &BlockState) {
+            self.0.push(pos.y);
+        }
+
+        fn add_block_entity(&mut self, _nbt: NbtCompound) {}
+
+        fn height_at(&self, _heightmap: pumpkin_util::HeightMap, _x: i32, _z: i32) -> Option<i32> {
+            Some(70)
+        }
+    }
+
+    // gravity: terrain matching puts the lowest layer at height + offset (GravityProcessor)
+    #[test]
+    fn gravity_processor_moves_template_to_the_heightmap() {
+        let name = all_template_names()
+            .into_iter()
+            .find(|name| name.contains("village/plains/streets/"))
+            .expect("plains street template");
+        let template = get_template(name).expect("template");
+        let mut placer = HeightPlacer(Vec::new());
+        place_template(
+            &mut placer,
+            &template,
+            Vector3::new(0, 10, 0),
+            (0, 0),
+            Rotation::None,
+            false,
+            false,
+            &[processor::StructureProcessor::Gravity {
+                heightmap: processor::HeightmapType::WorldSurfaceWg,
+                offset: -1,
+            }],
+            None,
+        );
+        let min = *placer.0.iter().min().expect("blocks placed");
+        let max = *placer.0.iter().max().expect("blocks placed");
+        assert_eq!(min, 69);
+        assert!(max < 69 + template.size.y);
     }
 }

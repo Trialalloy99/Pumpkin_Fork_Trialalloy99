@@ -1892,6 +1892,10 @@ impl BlockPlacer for ProtoChunk {
     fn add_block_entity(&mut self, nbt: NbtCompound) {
         self.add_block_entity(nbt);
     }
+
+    fn height_at(&self, heightmap: HeightMap, x: i32, z: i32) -> Option<i32> {
+        Some(self.get_top_y(&heightmap, x, z))
+    }
 }
 
 impl GenerationCache for ProtoChunk {

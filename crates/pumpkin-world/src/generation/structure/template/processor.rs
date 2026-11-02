@@ -152,6 +152,20 @@ pub enum HeightmapType {
     MotionBlockingNoLeaves,
 }
 
+impl HeightmapType {
+    #[must_use]
+    pub const fn to_height_map(self) -> pumpkin_util::HeightMap {
+        match self {
+            Self::WorldSurfaceWg => pumpkin_util::HeightMap::WorldSurfaceWg,
+            Self::WorldSurface => pumpkin_util::HeightMap::WorldSurface,
+            Self::OceanFloorWg => pumpkin_util::HeightMap::OceanFloorWg,
+            Self::OceanFloor => pumpkin_util::HeightMap::OceanFloor,
+            Self::MotionBlocking => pumpkin_util::HeightMap::MotionBlocking,
+            Self::MotionBlockingNoLeaves => pumpkin_util::HeightMap::MotionBlockingNoLeaves,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct ProcessorRule {
     pub position_predicate: PosRuleTest,

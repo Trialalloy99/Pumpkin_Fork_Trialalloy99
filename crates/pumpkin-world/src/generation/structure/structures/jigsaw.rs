@@ -843,6 +843,7 @@ impl StructurePieceBase for PoolElementStructurePiece {
                     }
                     ProcessorListRef::Empty => Arc::from([]),
                 };
+                let processors = with_projection_processors(processors, self.projection);
                 crate::generation::structure::template::place_template(
                     chunk,
                     &template,
@@ -878,6 +879,23 @@ impl StructurePieceBase for PoolElementStructurePiece {
     }
 }
 
+// jigsaw: terrain matching appends GravityProcessor(WORLD_SURFACE_WG, -1) (Projection.getProcessors)
+fn with_projection_processors(
+    processors: Arc<[crate::generation::structure::template::processor::StructureProcessor]>,
+    projection: JigsawProjection,
+) -> Arc<[crate::generation::structure::template::processor::StructureProcessor]> {
+    use crate::generation::structure::template::processor::{HeightmapType, StructureProcessor};
+    if projection != JigsawProjection::TerrainMatching {
+        return processors;
+    }
+    let mut list = processors.to_vec();
+    list.push(StructureProcessor::Gravity {
+        heightmap: HeightmapType::WorldSurfaceWg,
+        offset: -1,
+    });
+    list.into()
+}
+
 pub fn place_pool_element_templates(
     piece: &PoolElementStructurePiece,
     placer: &mut impl BlockPlacer,
@@ -904,6 +922,7 @@ pub fn place_pool_element_templates(
                 }
                 ProcessorListRef::Empty => Arc::from([]),
             };
+            let processors = with_projection_processors(processors, piece.projection);
             crate::generation::structure::template::place_template_with_options(
                 placer,
                 &template,
