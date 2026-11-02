@@ -53,24 +53,6 @@ pub(crate) fn stop_vertical_movement_after_fall(entity: &dyn EntityBase) {
     entity.velocity.store(velocity);
 }
 
-pub(crate) fn bounce_entity_after_fall(entity: &dyn EntityBase, bounce_multiplier: f64) {
-    let base_entity = entity.get_entity();
-    let mut velocity = base_entity.velocity.load();
-
-    if base_entity.is_sneaking() {
-        velocity.y = 0.0;
-    } else if velocity.y < 0.0 {
-        let entity_factor = if entity.get_living_entity().is_some() {
-            1.0
-        } else {
-            0.8
-        };
-        velocity.y = -velocity.y * bounce_multiplier * entity_factor;
-    }
-
-    base_entity.velocity.store(velocity);
-}
-
 pub trait BlockBehaviour: Send + Sync {
     fn is_valid_bonemeal_target(&self, _args: BonemealArgs<'_>) -> bool {
         false

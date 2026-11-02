@@ -1529,7 +1529,7 @@ impl LivingEntity {
             .has_tag(&tag::EntityType::MINECRAFT_FALL_DAMAGE_IMMUNE)
     }
 
-    fn get_effective_gravity(&self, caller: &dyn EntityBase) -> f64 {
+    pub(crate) fn get_effective_gravity(&self, caller: &dyn EntityBase) -> f64 {
         let final_gravity = if self.entity.has_no_gravity() {
             0.0
         } else {

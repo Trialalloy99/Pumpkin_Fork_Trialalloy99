@@ -2701,7 +2701,104 @@ impl Entity {
         if self.is_removed() {
             return;
         }
+        self.restitute_movement_after_collisions(
+            caller,
+            motion,
+            final_move,
+            effect_block,
+            effect_state,
+        );
         self.emit_movement(caller, final_move, &effect_pos, effect_state);
+    }
+
+    /// Vanilla `Entity.restituteMovementAfterCollisions`: only runs when something bounces,
+    /// other collisions keep the clipped movement stored by `move_entity`.
+    fn restitute_movement_after_collisions(
+        &self,
+        caller: &dyn EntityBase,
+        motion: Vector3<f64>,
+        movement: Vector3<f64>,
+        effect_block: &'static Block,
+        effect_state: &'static BlockState,
+    ) {
+        // vanilla Mth.equal epsilon
+        let differs = |a: f64, b: f64| (b - a).abs() >= 1.0E-5;
+        let x_collision = differs(motion.x, movement.x);
+        let z_collision = differs(motion.z, movement.z);
+        let vertical_collision = motion.y != movement.y;
+        if !(x_collision || z_collision || (motion.y.abs() > 0.0 && vertical_collision)) {
+            return;
+        }
+        let living = caller.get_living_entity();
+        let suppressing_bounce = self.is_sneaking();
+        let entity_bounciness = living.map_or(0.0, |living| {
+            living.get_attribute_value(&pumpkin_data::attributes::Attributes::BOUNCINESS)
+        });
+        let mut restitution = if suppressing_bounce {
+            0.0
+        } else {
+            entity_bounciness
+        };
+        let gravity = living.map_or_else(
+            || caller.get_gravity(),
+            |living| living.get_effective_gravity(caller),
+        );
+        let mut after_bounce = motion;
+        if x_collision {
+            after_bounce.x = -motion.x * restitution;
+        }
+        if z_collision {
+            after_bounce.z = -motion.z * restitution;
+        }
+        let mut bounced = restitution > 0.0 && (x_collision || z_collision);
+        if vertical_collision {
+            if motion.y < 0.0 {
+                restitution = if -motion.y > gravity
+                    && !suppressing_bounce
+                    && !effect_block.has_tag(&tag::Block::MINECRAFT_SUPPRESSES_BOUNCE)
+                {
+                    // vanilla getBlockBounciness: blocks bounce non-living entities less
+                    let block_bounciness = f64::from(effect_block.bounce_restitution)
+                        * if living.is_some() { 1.0 } else { f64::from(0.8_f32) };
+                    restitution.max(block_bounciness)
+                } else {
+                    0.0
+                };
+            }
+            if restitution > 0.0 {
+                let portion_with_movement = movement.y / motion.y;
+                let gravity_compensation = portion_with_movement * gravity;
+                let air_drag = f64::from(Self::get_air_drag(caller));
+                let effective_drag = 1.0 + (air_drag - 1.0) * portion_with_movement;
+                after_bounce.y = (gravity_compensation - motion.y) * effective_drag * restitution;
+                bounced = true;
+            } else {
+                after_bounce.y = 0.0;
+            }
+        }
+        if !bounced {
+            return;
+        }
+        let _ = effect_state;
+        self.emit_own_game_event(caller, GameEvent::Bounce);
+        self.velocity_dirty.store(true, Ordering::Relaxed);
+        let block_speed_factor = f64::from(caller.get_block_speed_factor());
+        self.velocity.store(Vector3::new(
+            after_bounce.x * block_speed_factor,
+            after_bounce.y,
+            after_bounce.z * block_speed_factor,
+        ));
+    }
+
+    /// Vanilla `Entity.getAirDrag` / `LivingEntity.getAirDrag`.
+    fn get_air_drag(caller: &dyn EntityBase) -> f32 {
+        caller.get_living_entity().map_or(0.98, |living| {
+            LivingEntity::compute_modified_friction(
+                if caller.is_flutterer() { 0.91 } else { 0.98 },
+                living.get_attribute_value(&pumpkin_data::attributes::Attributes::AIR_DRAG_MODIFIER)
+                    as f32,
+            ) as f32
+        })
     }
 
     /// The emission part of vanilla `Entity.move` for movement the client already resolved,
@@ -4432,7 +4529,7 @@ impl Entity {
     }
 
     // leash: movement others see, client-reported for players (Entity.getKnownMovement)
-    fn known_movement(entity: &dyn EntityBase) -> Vector3<f64> {
+    pub(crate) fn known_movement(entity: &dyn EntityBase) -> Vector3<f64> {
         if entity.get_player().is_some() {
             entity.get_entity().movement.load()
         } else if entity
