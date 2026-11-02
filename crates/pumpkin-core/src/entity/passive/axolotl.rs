@@ -139,8 +139,6 @@ const AXOLOTL_HUNTS: &[Hunt] = &[
 
 const TEMPT_ITEMS: &[&Item] = &[&Item::TROPICAL_FISH_BUCKET];
 
-
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(i32)]
 pub enum AxolotlVariant {

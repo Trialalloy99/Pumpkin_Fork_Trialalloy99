@@ -2342,9 +2342,12 @@ impl<T: Mob + Send + 'static> EntityBase for T {
 
     fn can_be_seen_as_enemy(&self) -> bool {
         self.mob_can_be_seen_as_enemy()
-            && self
-                .get_living_entity()
-                .is_some_and(|living| !living.entity.invulnerable.load(std::sync::atomic::Ordering::Relaxed))
+            && self.get_living_entity().is_some_and(|living| {
+                !living
+                    .entity
+                    .invulnerable
+                    .load(std::sync::atomic::Ordering::Relaxed)
+            })
             && self.can_be_seen_by_anyone()
     }
 
