@@ -4,7 +4,9 @@ use std::sync::{
 };
 
 use pumpkin_data::structures::StructureSet;
+use pumpkin_data::tag::{self, Taggable};
 use pumpkin_data::{
+    Block,
     damage::DamageType,
     effect::StatusEffect,
     entity::EntityType,
@@ -384,15 +386,53 @@ impl Goal for DolphinSwimWithPlayerGoal {
 // dolphin: DolphinJumpGoal leaps out of water (Dolphin.DolphinJumpGoal)
 struct DolphinJumpGoal {
     interval: i32,
+    breached: bool,
 }
 
+// dolphin: DolphinJumpGoal.STEPS_TO_CHECK
+const JUMP_STEPS_TO_CHECK: [i32; 6] = [0, 1, 4, 5, 6, 7];
+
 impl DolphinJumpGoal {
-    const fn new(interval: i32) -> Self {
-        Self { interval }
+    fn new(interval: i32) -> Self {
+        Self {
+            interval: to_goal_ticks(interval),
+            breached: false,
+        }
     }
 
     fn dolphin(mob: &dyn Mob) -> Option<&DolphinEntity> {
         mob.cast_any().downcast_ref::<DolphinEntity>()
+    }
+
+    // dolphin: DolphinJumpGoal.waterIsClear
+    fn water_is_clear(
+        dolphin: &DolphinEntity,
+        pos: BlockPos,
+        step_x: i32,
+        step_z: i32,
+        step: i32,
+    ) -> bool {
+        let world = dolphin.get_entity().world.load();
+        let next = pos.offset(Vector3::new(step_x * step, 0, step_z * step));
+        let (block, state) = world.get_block_and_state(&next);
+        let water = block == &Block::WATER || state.is_waterlogged();
+        water && !block.has_tag(&tag::Block::MINECRAFT_BLOCKS_DOLPHIN_JUMP)
+    }
+
+    // dolphin: DolphinJumpGoal.surfaceIsClear
+    fn surface_is_clear(
+        dolphin: &DolphinEntity,
+        pos: BlockPos,
+        step_x: i32,
+        step_z: i32,
+        step: i32,
+    ) -> bool {
+        let world = dolphin.get_entity().world.load();
+        (1..=2).all(|up| {
+            world
+                .get_block_state(&pos.offset(Vector3::new(step_x * step, up, step_z * step)))
+                .is_air()
+        })
     }
 }
 
@@ -405,24 +445,14 @@ impl Goal for DolphinJumpGoal {
             return false;
         }
         let entity = dolphin.get_entity();
-        entity.is_in_water()
-    }
-
-    fn start(&mut self, mob: &dyn Mob) {
-        let Some(dolphin) = Self::dolphin(mob) else {
-            return;
-        };
-        let entity = dolphin.get_entity();
-        let yaw_rad = f64::from(entity.yaw.load()).to_radians();
-        let fwd_x = -yaw_rad.sin() * 0.6;
-        let fwd_z = yaw_rad.cos() * 0.6;
-        let mut vel = entity.velocity.load();
-        vel.x += fwd_x;
-        vel.y = 0.7;
-        vel.z += fwd_z;
-        entity.velocity.store(vel);
-        entity.velocity_dirty.store(true, Relaxed);
-        dolphin.play_entity_sound(Sound::EntityDolphinJump, 1.0, 1.0);
+        let motion = entity
+            .get_horizontal_facing()
+            .to_offset();
+        let pos = entity.block_pos.load();
+        JUMP_STEPS_TO_CHECK.iter().all(|&step| {
+            Self::water_is_clear(dolphin, pos, motion.x, motion.z, step)
+                && Self::surface_is_clear(dolphin, pos, motion.x, motion.z, step)
+        })
     }
 
     fn should_continue(&mut self, mob: &dyn Mob) -> bool {
@@ -430,7 +460,68 @@ impl Goal for DolphinJumpGoal {
             return false;
         };
         let entity = dolphin.get_entity();
-        !entity.on_ground.load(Relaxed) && entity.velocity.load().y.abs() > 0.03
+        let yd = entity.velocity.load().y;
+        let pitch = entity.pitch.load();
+        (yd * yd >= 0.03 || pitch == 0.0 || pitch.abs() >= 10.0 || !entity.is_in_water())
+            && !entity.on_ground.load(Relaxed)
+    }
+
+    fn can_stop(&self) -> bool {
+        false
+    }
+
+    fn start(&mut self, mob: &dyn Mob) {
+        let Some(dolphin) = Self::dolphin(mob) else {
+            return;
+        };
+        let entity = dolphin.get_entity();
+        let motion = entity
+            .get_horizontal_facing()
+            .to_offset();
+        let mut velocity = entity.velocity.load();
+        velocity.x += f64::from(motion.x) * 0.6;
+        velocity.y += 0.7;
+        velocity.z += f64::from(motion.z) * 0.6;
+        entity.velocity.store(velocity);
+        entity.velocity_dirty.store(true, Relaxed);
+        self.breached = false;
+        dolphin.mob_entity.steered().navigator().stop();
+    }
+
+    fn stop(&mut self, mob: &dyn Mob) {
+        if let Some(dolphin) = Self::dolphin(mob) {
+            dolphin.get_entity().pitch.store(0.0);
+        }
+    }
+
+    fn tick(&mut self, mob: &dyn Mob) {
+        let Some(dolphin) = Self::dolphin(mob) else {
+            return;
+        };
+        let entity = dolphin.get_entity();
+        let already_breached = self.breached;
+        if !already_breached {
+            let world = entity.world.load();
+            let (block, state) = world.get_block_and_state(&entity.block_pos.load());
+            self.breached = block == &Block::WATER || state.is_waterlogged();
+        }
+        if self.breached && !already_breached {
+            dolphin.play_entity_sound(Sound::EntityDolphinJump, 1.0, 1.0);
+        }
+        let movement = entity.velocity.load();
+        if movement.y * movement.y < 0.03 && entity.pitch.load() != 0.0 {
+            let pitch = entity.pitch.load();
+            entity.pitch.store(pitch + (0.0 - pitch) * 0.2);
+        } else if movement.length() > 1.0E-5 {
+            let rotation = (-movement.y)
+                .atan2(movement.horizontal_length())
+                .to_degrees();
+            entity.pitch.store(rotation as f32);
+        }
+    }
+
+    fn controls(&self) -> Controls {
+        Controls::MOVE | Controls::JUMP
     }
 }
 
