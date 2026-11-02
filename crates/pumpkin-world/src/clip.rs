@@ -358,7 +358,15 @@ pub fn traverse_blocks<T>(
     to: Vector3<f64>,
     mut visit: impl FnMut(&BlockPos) -> Option<T>,
 ) -> Option<T> {
-    if from == to {
+    // non-finite coordinates would never advance the voxel walk
+    if from == to
+        || !(from.x.is_finite()
+            && from.y.is_finite()
+            && from.z.is_finite()
+            && to.x.is_finite()
+            && to.y.is_finite()
+            && to.z.is_finite())
+    {
         return None;
     }
 
