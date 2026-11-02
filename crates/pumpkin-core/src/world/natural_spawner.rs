@@ -853,7 +853,7 @@ pub fn spawn_category_for_position(
     for _ in 0..3 {
         let mut x = pos.0.x;
         let mut z = pos.0.z;
-        let mut current_spawner: Option<&'static Spawner> = None;
+        let mut current_spawner: Option<SpawnChoice> = None;
         let mut max = (rng().random::<f32>() * 4.0).ceil() as i32;
         let mut group_size = 0;
         let mut group_data = None;
@@ -1013,15 +1013,44 @@ pub fn is_right_distance_to_player_and_spawn_point(
                 .contains_block(pos.0.x, pos.0.z))
 }
 
-#[must_use]
-pub fn can_spawn_mob_at(
-    world: &World,
-    category: &'static MobCategory,
-    spawner_type: &'static str,
-    pos: &BlockPos,
-) -> bool {
+// spawn: mob list at a position, structure override first (NaturalSpawner.mobsAt)
+enum MobsAt {
+    Structure(&'static [pumpkin_data::structures::SpawnEntry]),
+    Biome(&'static [Spawner]),
+}
+
+#[derive(Clone, Copy)]
+pub struct SpawnChoice {
+    pub r#type: &'static str,
+    pub min_count: i32,
+    pub max_count: i32,
+}
+
+const fn category_name(category: &'static MobCategory) -> &'static str {
+    match category.id {
+        id if id == MobCategory::MONSTER.id => "monster",
+        id if id == MobCategory::CREATURE.id => "creature",
+        id if id == MobCategory::AMBIENT.id => "ambient",
+        id if id == MobCategory::AXOLOTLS.id => "axolotls",
+        id if id == MobCategory::UNDERGROUND_WATER_CREATURE.id => "underground_water_creature",
+        id if id == MobCategory::WATER_CREATURE.id => "water_creature",
+        id if id == MobCategory::WATER_AMBIENT.id => "water_ambient",
+        _ => "misc",
+    }
+}
+
+fn mobs_at(world: &World, category: &'static MobCategory, pos: &BlockPos) -> MobsAt {
+    if let Some(spawns) =
+        pumpkin_world::generation::generator::structure_finder::structure_spawns_at(
+            &world.level.world_gen(),
+            pos,
+            category_name(category),
+        )
+    {
+        return MobsAt::Structure(spawns);
+    }
     let biome = world.level.get_rough_biome(pos);
-    let spawners = match category.id {
+    MobsAt::Biome(match category.id {
         id if id == MobCategory::MONSTER.id => biome.spawners.monster,
         id if id == MobCategory::CREATURE.id => biome.spawners.creature,
         id if id == MobCategory::AMBIENT.id => biome.spawners.ambient,
@@ -1031,16 +1060,25 @@ pub fn can_spawn_mob_at(
         }
         id if id == MobCategory::WATER_CREATURE.id => biome.spawners.water_creature,
         id if id == MobCategory::WATER_AMBIENT.id => biome.spawners.water_ambient,
-        id if id == MobCategory::MISC.id => biome.spawners.misc,
         _ => biome.spawners.misc,
-    };
+    })
+}
+
+#[must_use]
+pub fn can_spawn_mob_at(
+    world: &World,
+    category: &'static MobCategory,
+    spawner_type: &'static str,
+    pos: &BlockPos,
+) -> bool {
     let target = spawner_type
         .strip_prefix("minecraft:")
         .unwrap_or(spawner_type);
-    spawners.iter().any(|s| {
-        let name = s.r#type.strip_prefix("minecraft:").unwrap_or(s.r#type);
-        name == target
-    })
+    let matches = |name: &str| name.strip_prefix("minecraft:").unwrap_or(name) == target;
+    match mobs_at(world, category, pos) {
+        MobsAt::Structure(spawns) => spawns.iter().any(|s| matches(s.entity_type)),
+        MobsAt::Biome(spawns) => spawns.iter().any(|s| matches(s.r#type)),
+    }
 }
 
 #[must_use]
@@ -1048,28 +1086,38 @@ pub fn get_random_spawn_mob_at(
     world: &Arc<World>,
     category: &'static MobCategory,
     block_pos: &BlockPos,
-) -> Option<&'static Spawner> {
+) -> Option<SpawnChoice> {
     let biome = world.level.get_rough_biome(block_pos);
     if category == &MobCategory::WATER_AMBIENT
         && biome.has_tag(&MINECRAFT_REDUCE_WATER_AMBIENT_SPAWNS)
         && rng().random::<f32>() < 0.98f32
     {
-        None
-    } else {
-        let spawners = match category.id {
-            id if id == MobCategory::MONSTER.id => biome.spawners.monster,
-            id if id == MobCategory::CREATURE.id => biome.spawners.creature,
-            id if id == MobCategory::AMBIENT.id => biome.spawners.ambient,
-            id if id == MobCategory::AXOLOTLS.id => biome.spawners.axolotls,
-            id if id == MobCategory::UNDERGROUND_WATER_CREATURE.id => {
-                biome.spawners.underground_water_creature
+        return None;
+    }
+    match mobs_at(world, category, block_pos) {
+        MobsAt::Structure(spawns) => {
+            let total: i32 = spawns.iter().map(|spawn| spawn.weight as i32).sum();
+            if total <= 0 {
+                return None;
             }
-            id if id == MobCategory::WATER_CREATURE.id => biome.spawners.water_creature,
-            id if id == MobCategory::WATER_AMBIENT.id => biome.spawners.water_ambient,
-            id if id == MobCategory::MISC.id => biome.spawners.misc,
-            _ => biome.spawners.misc,
-        };
-        choose_weighted(spawners)
+            let mut roll = rng().random_range(0..total);
+            spawns
+                .iter()
+                .find(|spawn| {
+                    roll -= spawn.weight as i32;
+                    roll < 0
+                })
+                .map(|spawn| SpawnChoice {
+                    r#type: spawn.entity_type,
+                    min_count: spawn.min_count as i32,
+                    max_count: spawn.max_count as i32,
+                })
+        }
+        MobsAt::Biome(spawners) => choose_weighted(spawners).map(|spawner| SpawnChoice {
+            r#type: spawner.r#type,
+            min_count: spawner.min_count,
+            max_count: spawner.max_count,
+        }),
     }
 }
 

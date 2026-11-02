@@ -328,3 +328,160 @@ fn find_nearest_random_spread_at_radius(
 
     best
 }
+
+// spawn: sets with a structure that overrides spawns (StructureSpawnOverride)
+fn spawn_override_sets() -> &'static [usize] {
+    static SETS: std::sync::OnceLock<Vec<usize>> = std::sync::OnceLock::new();
+    SETS.get_or_init(|| {
+        StructureSet::ALL
+            .iter()
+            .enumerate()
+            .filter(|(_, set)| {
+                matches!(
+                    set.placement.placement_type,
+                    StructurePlacementType::RandomSpread(_)
+                ) && set.structures.iter().any(|entry| {
+                    !pumpkin_data::structures::Structure::get(&entry.structure)
+                        .spawn_overrides
+                        .is_empty()
+                })
+            })
+            .map(|(index, _)| index)
+            .collect()
+    })
+}
+
+/// Spawn list of the structure at `pos` for `category`, `None` when no structure overrides it
+/// (vanilla `ChunkGenerator.getMobsAt` structure part).
+#[must_use]
+#[expect(clippy::too_many_lines)]
+pub fn structure_spawns_at(
+    generator: &WorldGenerator,
+    pos: &BlockPos,
+    category: &str,
+) -> Option<&'static [pumpkin_data::structures::SpawnEntry]> {
+    use crate::{
+        biome::BiomeSupplier,
+        generation::{
+            noise::router::multi_noise_sampler::MultiNoiseSampler,
+            structure::{
+                height_sampler::NoiseHeightSampler,
+                lazily_generate_structure,
+                placement::should_generate_structure,
+                structures::{StructureGeneratorContext, create_chunk_random},
+            },
+        },
+    };
+    use pumpkin_data::structures::{BoundingBoxType, Structure};
+
+    let WorldGenerator::Noise(generator) = generator else {
+        return None;
+    };
+    let seed = generator.random_config.seed as i64;
+    let global_cache = &generator.global_structure_cache;
+    let (pos_chunk_x, pos_chunk_z) = (pos.0.x >> 4, pos.0.z >> 4);
+
+    for &set_index in spawn_override_sets() {
+        if !generator.enabled_structure_sets.contains(&set_index) {
+            continue;
+        }
+        let set = &StructureSet::ALL[set_index];
+        let StructurePlacementType::RandomSpread(spread) = &set.placement.placement_type else {
+            continue;
+        };
+        let min_rx = floor_div(pos_chunk_x - 8, spread.spacing);
+        let max_rx = floor_div(pos_chunk_x + 8, spread.spacing);
+        let min_rz = floor_div(pos_chunk_z - 8, spread.spacing);
+        let max_rz = floor_div(pos_chunk_z + 8, spread.spacing);
+        for rx in min_rx..=max_rx {
+            for rz in min_rz..=max_rz {
+                let (chunk_x, chunk_z) =
+                    get_structure_chunk_in_region(spread, seed, rx, rz, set.placement.salt);
+                if (chunk_x - pos_chunk_x).abs() > 8
+                    || (chunk_z - pos_chunk_z).abs() > 8
+                    || !should_generate_structure(
+                        &set.placement,
+                        &generator.structure_calculator,
+                        chunk_x,
+                        chunk_z,
+                        global_cache,
+                    )
+                {
+                    continue;
+                }
+                let entries = if set.structures.len() == 1 {
+                    set.structures.to_vec()
+                } else {
+                    crate::generation::proto_chunk::ProtoChunk::weighted_structure_order(
+                        set.structures,
+                        generator.random_config.seed,
+                        chunk_x,
+                        chunk_z,
+                    )
+                };
+                for entry in entries {
+                    let key = entry.structure;
+                    let start =
+                        global_cache.get_or_compute_structure_start(key, chunk_x, chunk_z, || {
+                            let settings = generator.settings;
+                            let mut height_sampler = NoiseHeightSampler::new(generator);
+                            let mut biome_sampler =
+                                MultiNoiseSampler::generate(&generator.base_router.multi_noise);
+                            let biome_supplier: &dyn BiomeSupplier = &generator.biome_supplier;
+                            let context = StructureGeneratorContext {
+                                seed,
+                                chunk_x,
+                                chunk_z,
+                                random: create_chunk_random(seed, chunk_x, chunk_z),
+                                sea_level: settings.sea_level,
+                                min_y: (settings.shape.min_y as i32).max(generator.dimension.min_y),
+                                height: settings
+                                    .shape
+                                    .height
+                                    .min(generator.dimension.height as u16),
+                                height_sampler: Some(&mut height_sampler),
+                                structure_key: Some(key),
+                            };
+                            lazily_generate_structure(
+                                &key,
+                                Structure::get(&key),
+                                context,
+                                biome_supplier,
+                                &mut biome_sampler,
+                            )
+                        });
+                    let Some(start) = start else {
+                        continue;
+                    };
+                    let structure = Structure::get(&key);
+                    if let Some(spawn_override) = structure
+                        .spawn_overrides
+                        .iter()
+                        .find(|spawn_override| spawn_override.category == category)
+                    {
+                        let inside = match spawn_override.bounding_box {
+                            BoundingBoxType::Full => start.get_bounding_box().contains_pos(&pos.0),
+                            BoundingBoxType::Piece => start
+                                .collector
+                                .lock()
+                                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                                .pieces
+                                .iter()
+                                .any(|piece| {
+                                    piece
+                                        .get_structure_piece()
+                                        .bounding_box
+                                        .contains_pos(&pos.0)
+                                }),
+                        };
+                        if inside {
+                            return Some(spawn_override.spawns);
+                        }
+                    }
+                    break;
+                }
+            }
+        }
+    }
+    None
+}
