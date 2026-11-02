@@ -590,6 +590,14 @@ impl Server {
         info.thundering = weather.thundering;
         info.thunder_time = weather.thunder_time;
         drop(weather);
+        {
+            let spawner = world
+                .wandering_trader_spawner
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            info.wandering_trader_spawn_delay = spawner.spawn_delay;
+            info.wandering_trader_spawn_chance = spawner.spawn_chance;
+        }
         self.level_info.store(Arc::new(info));
     }
 

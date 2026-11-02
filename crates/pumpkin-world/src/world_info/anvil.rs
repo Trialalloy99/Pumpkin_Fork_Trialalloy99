@@ -424,6 +424,16 @@ impl WorldInfoReader for AnvilLevelInfo {
             level_data.thunder_time = weather.thunder_time;
         }
 
+        // wandering_trader.dat
+        if minecraft_data_dir(level_folder)
+            .join("wandering_trader.dat")
+            .exists()
+        {
+            let wandering_trader = read_wandering_trader(level_folder);
+            level_data.wandering_trader_spawn_delay = wandering_trader.spawn_delay;
+            level_data.wandering_trader_spawn_chance = wandering_trader.spawn_chance;
+        }
+
         Ok(level_data)
     }
 }
@@ -506,8 +516,10 @@ impl WorldInfoWriter for AnvilLevelInfo {
             error!("Failed to write weather.dat: {e}");
         }
 
-        // wandering_trader.dat (stub / load-save)
+        // wandering_trader.dat
         let mut wandering_trader = read_wandering_trader(level_folder);
+        wandering_trader.spawn_delay = info.wandering_trader_spawn_delay;
+        wandering_trader.spawn_chance = info.wandering_trader_spawn_chance;
         wandering_trader.data_version = data_version;
         if let Err(e) = write_wandering_trader(level_folder, &wandering_trader) {
             error!("Failed to write wandering_trader.dat: {e}");
@@ -928,6 +940,8 @@ mod test {
             rain_time: 0,
             thundering: false,
             thunder_time: 0,
+            wandering_trader_spawn_delay: 24_000,
+            wandering_trader_spawn_chance: 25,
             difficulty: Difficulty::Normal,
             difficulty_locked: false,
             game_rules: GameRuleRegistry {
