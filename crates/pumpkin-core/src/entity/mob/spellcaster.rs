@@ -1,5 +1,5 @@
-use std::sync::Weak;
 use std::sync::atomic::{AtomicI32, AtomicU8, Ordering};
+use std::sync::{Arc, Weak};
 
 use pumpkin_data::sound::Sound;
 use pumpkin_data::tracked_data;
@@ -57,6 +57,11 @@ impl SpellcasterData {
 pub trait SpellcasterIllager: Mob {
     fn spellcaster_data(&self) -> &SpellcasterData;
     fn casting_sound(&self) -> Sound;
+
+    // evoker: look at the wololo sheep while casting without a target (Evoker.EvokerCastingSpellGoal)
+    fn casting_look_target(&self) -> Option<Arc<dyn EntityBase>> {
+        None
+    }
 }
 
 // spellcaster: stand still while casting (SpellcasterCastingSpellGoal)
@@ -92,7 +97,12 @@ impl<T: SpellcasterIllager + 'static> Goal for SpellcasterCastingSpellGoal<T> {
 
     fn tick(&mut self, mob: &dyn Mob) {
         let mob_entity = mob.get_mob_entity();
-        if let Some(target) = mob_entity.get_target() {
+        let target = mob_entity.get_target().or_else(|| {
+            self.caster
+                .upgrade()
+                .and_then(|caster| caster.casting_look_target())
+        });
+        if let Some(target) = target {
             mob_entity
                 .look_control
                 .lock()
@@ -116,6 +126,17 @@ pub trait Spell: Send + Sync {
         true
     }
     fn on_start(&mut self, _mob: &dyn Mob) {}
+    fn on_stop(&mut self, _mob: &dyn Mob) {}
+    // wololo: overrides the target check of SpellcasterUseSpellGoal
+    fn requires_target(&self) -> bool {
+        true
+    }
+    fn cast_warmup(&self) -> i32 {
+        DEFAULT_CAST_WARMUP
+    }
+    fn can_continue(&mut self, _mob: &dyn Mob) -> bool {
+        true
+    }
     fn perform(&mut self, mob: &dyn Mob);
 }
 
@@ -152,14 +173,22 @@ impl<T: SpellcasterIllager + 'static, S: Spell> Goal for SpellcasterUseSpellGoal
         let Some(caster) = self.caster.upgrade() else {
             return false;
         };
-        target_alive(mob)
+        (!self.spell.requires_target() || target_alive(mob))
             && !caster.spellcaster_data().is_casting()
             && mob.get_entity().tick_count.load(Ordering::Relaxed) >= self.next_attack_tick
             && self.spell.can_use(mob)
     }
 
     fn should_continue(&mut self, mob: &dyn Mob) -> bool {
-        target_alive(mob) && self.warmup_delay > 0
+        if self.spell.requires_target() {
+            target_alive(mob) && self.warmup_delay > 0
+        } else {
+            self.warmup_delay > 0 && self.spell.can_continue(mob)
+        }
+    }
+
+    fn stop(&mut self, mob: &dyn Mob) {
+        self.spell.on_stop(mob);
     }
 
     fn start(&mut self, mob: &dyn Mob) {
@@ -167,7 +196,7 @@ impl<T: SpellcasterIllager + 'static, S: Spell> Goal for SpellcasterUseSpellGoal
             return;
         };
         let data = caster.spellcaster_data();
-        self.warmup_delay = self.get_tick_count(DEFAULT_CAST_WARMUP);
+        self.warmup_delay = self.get_tick_count(self.spell.cast_warmup());
         data.casting_ticks
             .store(self.spell.casting_time(), Ordering::Relaxed);
         self.next_attack_tick =

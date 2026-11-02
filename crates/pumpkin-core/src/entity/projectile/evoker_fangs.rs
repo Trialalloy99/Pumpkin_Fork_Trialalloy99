@@ -20,8 +20,9 @@ pub struct EvokerFangsEntity {
 
 impl EvokerFangsEntity {
     #[must_use]
+    // fangs: yaw given in radians (EvokerFangs constructor)
     pub fn new(entity: Entity, warmup_ticks: u32, yaw: f32, owner: Option<&Entity>) -> Self {
-        entity.set_rotation(yaw, 0.0);
+        entity.set_rotation(yaw * (180.0 / std::f32::consts::PI), 0.0);
         Self {
             entity,
             warmup_delay_ticks: AtomicI32::new(warmup_ticks as i32),
@@ -65,7 +66,13 @@ impl EntityBase for EvokerFangsEntity {
 
                 for cand in candidates {
                     let cand_ent = cand.get_entity();
-                    if self.owner.matches(cand_ent) {
+                    if self.owner.matches(cand_ent) || !cand_ent.is_alive() {
+                        continue;
+                    }
+                    // fangs: allies of the owner are spared (EvokerFangs.dealDamageTo)
+                    if let Some(owner) = &owner
+                        && owner.is_allied_to(cand.as_ref())
+                    {
                         continue;
                     }
 
