@@ -693,6 +693,9 @@ fn check_chunk_generation_spawn_rules(
     if id == EntityType::FROG.id {
         return tagged(&BlockTag::MINECRAFT_FROGS_SPAWNABLE_ON);
     }
+    if id == EntityType::AXOLOTL.id {
+        return tagged(&BlockTag::MINECRAFT_AXOLOTLS_SPAWNABLE_ON);
+    }
     if id == EntityType::GOAT.id {
         return tagged(&BlockTag::MINECRAFT_GOATS_SPAWNABLE_ON);
     }

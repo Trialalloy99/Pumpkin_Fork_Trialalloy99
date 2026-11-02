@@ -656,7 +656,8 @@ impl Goal for LayEggGoal {
                 0.3,
                 0.9 + rand::random::<f32>() * 0.2,
             );
-            let egg_pos = self.inner.get_target_pos();
+            // turtle: egg is placed above the sand block (TurtleLayEggGoal.tick, blockPos.above())
+            let egg_pos = self.inner.get_target_pos().up();
             let mut props = TurtleEggLikeProperties::default(&Block::TURTLE_EGG);
             props.eggs = rand::random_range(1..=4);
             world.set_block_state(

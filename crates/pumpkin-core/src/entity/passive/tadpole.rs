@@ -81,8 +81,7 @@ impl TadpoleEntity {
             age_locked: AtomicBool::new(false),
             age_lock_particle_timer: AtomicI32::new(0),
         };
-        // tadpole: Tadpole.fromBucket is always true
-        tadpole.fish_data.from_bucket.store(true, Ordering::Relaxed);
+        // tadpole: default fromBucket is false (Tadpole.java)
         let mob_arc = Arc::new(tadpole);
         let mob_weak: std::sync::Weak<dyn Mob> = {
             let mob_arc: Arc<dyn Mob> = mob_arc.clone();
@@ -300,7 +299,11 @@ impl Bucketable for TadpoleEntity {
         true
     }
 
-    fn set_from_bucket(&self, _from_bucket: bool) {}
+    fn set_from_bucket(&self, from_bucket: bool) {
+        self.fish_data
+            .from_bucket
+            .store(from_bucket, Ordering::Relaxed);
+    }
 
     fn bucket_item(&self) -> &'static Item {
         &Item::TADPOLE_BUCKET
