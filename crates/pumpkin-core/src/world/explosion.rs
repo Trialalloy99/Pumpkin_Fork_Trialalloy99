@@ -483,7 +483,14 @@ impl Explosion {
             };
             let direction = (dir_pos - self.pos).normalize();
 
-            let knockback_power = (1.0 - distance) * exposure * knockback_multiplier;
+            // explosion: LivingEntity EXPLOSION_KNOCKBACK_RESISTANCE dampens the push
+            let knockback_resistance = entity_base.get_living_entity().map_or(0.0, |living| {
+                living.get_attribute_value(
+                    &pumpkin_data::attributes::Attributes::EXPLOSION_KNOCKBACK_RESISTANCE,
+                )
+            });
+            let knockback_power =
+                (1.0 - distance) * exposure * knockback_multiplier * (1.0 - knockback_resistance);
             let knockback = direction * knockback_power;
             // Vanilla `ServerExplosion.hurtEntities`: creative flyers get no knockback.
             if entity_base

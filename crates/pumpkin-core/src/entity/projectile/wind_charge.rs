@@ -174,6 +174,14 @@ impl EntityBase for WindChargeEntity {
                 owner.as_deref(),
             );
         }
-        self.create_explosion(hit_pos);
+        // wind charge: block hits explode 0.25 along the face normal (AbstractWindCharge.onHitBlock)
+        let explosion_pos = match hit {
+            ProjectileHit::Block { face, .. } => {
+                let offset = face.to_offset().to_f64();
+                hit_pos.add_raw(offset.x * 0.25, offset.y * 0.25, offset.z * 0.25)
+            }
+            ProjectileHit::Entity { .. } => hit_pos,
+        };
+        self.create_explosion(explosion_pos);
     }
 }

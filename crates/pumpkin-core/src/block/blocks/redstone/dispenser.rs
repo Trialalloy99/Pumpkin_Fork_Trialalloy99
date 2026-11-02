@@ -46,13 +46,14 @@ use crate::plugin::api::events::entity::creature_spawn::CreatureSpawnReason;
 use crate::world::World;
 
 use crate::block::entities::dispenser::DispenserBlockEntity;
+use crate::entity::mob::sulfur_cube::SulfurCubeEntity;
 use pumpkin_data::block_properties::{
     BeeNestLikeProperties, BlockProperties, EndRodLikeProperties, Facing,
     PoweredRailLikeProperties, RailLikeProperties, RespawnAnchorLikeProperties,
     SkeletonSkullLikeProperties,
 };
 use pumpkin_data::data_component::DataComponent;
-use pumpkin_data::data_component_impl::{EquippableImpl, IDSet, PotionContentsImpl};
+use pumpkin_data::data_component_impl::{EquipmentSlot, EquippableImpl, IDSet, PotionContentsImpl};
 use pumpkin_data::entity::{EntityType, entity_from_egg};
 use pumpkin_data::fluid::Fluid;
 use pumpkin_data::game_event::GameEvent;
@@ -1263,17 +1264,21 @@ impl DispenserBlock {
 
     fn dispense_equipment(ctx: &DispenseContext<'_>, item: &mut ItemStack) -> bool {
         let (slot, allowed_entities, equip_sound) = {
-            let Some(equippable) = item.get_data_component::<EquippableImpl>() else {
-                return false;
-            };
-            if !equippable.dispensable {
+            if let Some(equippable) = item.get_data_component::<EquippableImpl>() {
+                if !equippable.dispensable {
+                    return false;
+                }
+                (
+                    equippable.slot,
+                    equippable.allowed_entities.clone(),
+                    Some(equippable.equip_sound.clone()),
+                )
+            } else if SulfurCubeEntity::is_swallowable_item(item) {
+                // sulfur cube: swallowable blocks go into the body slot (DispenserBlock.getDispenseMethod)
+                (&EquipmentSlot::BODY, None, None)
+            } else {
                 return false;
             }
-            (
-                equippable.slot,
-                equippable.allowed_entities.clone(),
-                equippable.equip_sound.clone(),
-            )
         };
 
         let target_box = BoundingBox::from_block(&Self::target_position(ctx));
@@ -1298,6 +1303,11 @@ impl DispenserBlock {
                 || entity
                     .get_mob()
                     .is_some_and(|mob| !mob.can_dispenser_equip_into_slot(slot))
+                || (equip_sound.is_none()
+                    && entity
+                        .cast_any()
+                        .downcast_ref::<SulfurCubeEntity>()
+                        .is_none_or(SulfurCubeEntity::is_baby_cube))
             {
                 continue;
             }
@@ -1315,11 +1325,20 @@ impl DispenserBlock {
             drop(equipment);
 
             living.send_equipment_changes(&[(slot.clone(), stack)]);
-            ctx.world.play_sound_event(
-                &equip_sound,
-                SoundCategory::Blocks,
-                &entity.get_entity().pos.load(),
-            );
+            if let Some(equip_sound) = &equip_sound {
+                ctx.world.play_sound_event(
+                    equip_sound,
+                    SoundCategory::Blocks,
+                    &entity.get_entity().pos.load(),
+                );
+            }
+            // dispenser: EquipmentDispenseItemBehavior setGuaranteedDrop, setPersistenceRequired
+            if let Some(mob) = entity.get_mob() {
+                mob.get_mob_entity().set_guaranteed_drop(slot);
+                mob.get_mob_entity()
+                    .persistence_required
+                    .store(true, std::sync::atomic::Ordering::Relaxed);
+            }
 
             return true;
         }

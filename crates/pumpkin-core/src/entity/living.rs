@@ -109,6 +109,8 @@ pub struct LivingEntity {
     pub equipment_slots: Arc<FxHashMap<usize, EquipmentSlot>>,
 
     pub jumping: AtomicBool,
+    // living: shouldDiscardFriction (Breeze long jump)
+    pub discard_friction: AtomicBool,
 
     pub jumping_cooldown: AtomicU8,
 
@@ -302,6 +304,10 @@ impl LivingEntity {
     }
 
     pub(crate) fn get_pitch(&self) -> f32 {
+        // happy ghast: getVoicePitch is fixed
+        if self.entity.entity_type == &EntityType::HAPPY_GHAST {
+            return 1.0;
+        }
         let mut rng = rand::rng();
         if self.is_baby() {
             (rng.random::<f32>() - rng.random::<f32>()) * 0.2 + 1.5
@@ -351,6 +357,7 @@ impl LivingEntity {
             equipment_drop_chances: Arc::new(std::sync::Mutex::new(FxHashMap::default())),
             equipment_slots: Arc::new(build_equipment_slots()),
             jumping: AtomicBool::new(false),
+            discard_friction: AtomicBool::new(false),
             jumping_cooldown: AtomicU8::new(0),
             climbing: AtomicBool::new(false),
             climbing_pos: AtomicCell::new(None),
@@ -1526,7 +1533,7 @@ impl LivingEntity {
             .has_tag(&tag::EntityType::MINECRAFT_FALL_DAMAGE_IMMUNE)
     }
 
-    fn get_effective_gravity(&self, caller: &dyn EntityBase) -> f64 {
+    pub(crate) fn get_effective_gravity(&self, caller: &dyn EntityBase) -> f64 {
         let final_gravity = if self.entity.has_no_gravity() {
             0.0
         } else {
@@ -1866,6 +1873,12 @@ impl LivingEntity {
 
         // If entity has no drag: store velo and return
 
+        // living: travelInAir discardFriction
+        if self.discard_friction.load(Relaxed) {
+            self.entity.velocity.store(velo);
+            return;
+        }
+
         velo.x *= friction;
 
         velo.z *= friction;
@@ -1882,12 +1895,28 @@ impl LivingEntity {
     }
 
     pub(crate) fn travel_flying(&self, caller: &dyn EntityBase) {
+        self.travel_flying_with(
+            caller,
+            f64::from(0.02f32),
+            f64::from(0.02f32),
+            f64::from(self.get_speed()),
+        );
+    }
+
+    // living: LivingEntity.travelFlying(input, waterSpeed, lavaSpeed, airSpeed)
+    pub(crate) fn travel_flying_with(
+        &self,
+        caller: &dyn EntityBase,
+        water_speed: f64,
+        lava_speed: f64,
+        air_speed: f64,
+    ) {
         let (speed, drag) = if self.entity.is_in_water() {
-            (f64::from(0.02f32), f64::from(0.8f32))
+            (water_speed, f64::from(0.8f32))
         } else if self.entity.touching_lava.load(Relaxed) {
-            (f64::from(0.02f32), 0.5)
+            (lava_speed, 0.5)
         } else {
-            (f64::from(self.get_speed()), f64::from(0.91f32))
+            (air_speed, f64::from(0.91f32))
         };
         self.entity
             .update_velocity_from_input(self.movement_input.load(), speed);
@@ -1983,6 +2012,9 @@ impl LivingEntity {
 
             self.entity.velocity.store(velo);
             self.jump_out_of_fluid(old_y);
+        }
+        if let Some(mob) = caller.get_mob() {
+            mob.after_travel_in_fluid(water);
         }
     }
 
@@ -2113,6 +2145,9 @@ impl LivingEntity {
 
         if self.entity.entity_type == &EntityType::BREEZE {
             eye_height
+        } else if self.entity.entity_type == &EntityType::SULFUR_CUBE {
+            // sulfur cube: getFluidJumpThreshold
+            f64::from(self.entity.entity_dimension.load().height) * 0.2
         } else if eye_height < 0.4 {
             0.0
         } else {
@@ -3739,8 +3774,16 @@ impl LivingEntity {
                 let dx = source_pos.x - target_pos.x;
                 let dz = source_pos.z - target_pos.z;
                 let resistance = self.get_attribute_value(&Attributes::KNOCKBACK_RESISTANCE);
-                self.entity
-                    .apply_knockback(knockback_after_resistance(0.4, resistance), dx, dz);
+                let overridden = caller.get_mob().is_some_and(|mob| {
+                    mob.knockback_override(0.4, dx, dz, damage_amount, cause.or(Some(source)))
+                });
+                if !overridden {
+                    self.entity.apply_knockback(
+                        knockback_after_resistance(0.4, resistance),
+                        dx,
+                        dz,
+                    );
+                }
             }
         }
 

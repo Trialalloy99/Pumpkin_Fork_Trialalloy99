@@ -37,11 +37,13 @@ use crate::entity::ageable::{AgeableData, AgeableMob};
 use crate::entity::ai::behavior::fleeing::{self, Flee};
 use crate::entity::ai::goal::escape_danger::EscapeDangerGoal;
 use crate::entity::ai::goal::look_at_entity::LookAtEntityGoal;
+use crate::entity::ai::goal::move_towards_restriction::MoveTowardsRestrictionGoal;
 use crate::entity::ai::goal::swim::SwimGoal;
 use crate::entity::ai::goal::trade_with_player::TradeWithPlayerGoal;
 use crate::entity::ai::goal::wander_around::WanderAroundGoal;
 use crate::entity::ai::goal::{Controls, Goal};
 use crate::entity::ai::pathfinder::NavigatorGoal;
+use crate::entity::ai::pathfinder::node::PathType;
 use crate::entity::ai::target_match::TargetMatch;
 use crate::entity::experience_orb::ExperienceOrbEntity;
 use crate::entity::mob::{Mob, MobEntity};
@@ -50,6 +52,10 @@ use crate::entity::{Entity, EntityBase};
 use crate::world::World;
 
 const DEFAULT_DESPAWN_DELAY: i32 = 0;
+// wandering trader: Potions.INVISIBILITY, 3 minutes
+const INVISIBILITY_DURATION: i32 = 3600;
+// wandering trader: AbstractVillager fire path maluses
+const FIRE_IN_NEIGHBOR_MALUS: f32 = 16.0;
 
 fn create_invisibility_potion() -> ItemStack {
     let mut stack = ItemStack::new(1, &Item::POTION);
@@ -146,7 +152,8 @@ pub struct WanderingTraderEntity {
     pub trading_player: std::sync::Mutex<Option<(Uuid, u8)>>,
     pub is_trading: AtomicBool,
     pub trade_sound_cooldown: AtomicI32,
-    pub ambient_sound_timer: AtomicI32,
+    // wandering trader: AbstractVillager inventory, 8 slots
+    pub inventory: std::sync::Mutex<Vec<ItemStack>>,
     pub ageable_data: AgeableData,
     self_weak: std::sync::Mutex<Option<Weak<Self>>>,
 }
@@ -155,7 +162,13 @@ impl WanderingTraderEntity {
     #[allow(clippy::too_many_lines)]
     #[must_use]
     pub fn new(entity: Entity) -> Arc<Self> {
-        let mob_entity = MobEntity::new(entity);
+        let mut mob_entity = MobEntity::new(entity);
+        let navigator = mob_entity
+            .navigator
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        navigator.set_pathfinding_malus(PathType::DangerFire, FIRE_IN_NEIGHBOR_MALUS);
+        navigator.set_pathfinding_malus(PathType::DamageFire, -1.0);
         let trader = Self {
             mob_entity,
             despawn_delay: AtomicI32::new(DEFAULT_DESPAWN_DELAY),
@@ -165,7 +178,7 @@ impl WanderingTraderEntity {
             trading_player: std::sync::Mutex::new(None),
             is_trading: AtomicBool::new(false),
             trade_sound_cooldown: AtomicI32::new(0),
-            ambient_sound_timer: AtomicI32::new(120),
+            inventory: std::sync::Mutex::new(Vec::new()),
             ageable_data: AgeableData::default(),
             self_weak: std::sync::Mutex::new(None),
         };
@@ -215,7 +228,7 @@ impl WanderingTraderEntity {
             goal_selector.add_goal(4, Box::new(MoveTowardsRestrictionGoal::new(0.35)));
 
             // Priority 8: WaterAvoidingRandomStrollGoal (WanderAroundGoal)
-            goal_selector.add_goal(8, Box::new(WanderAroundGoal::new(0.35)));
+            goal_selector.add_goal(8, Box::new(WanderAroundGoal::water_avoiding(0.35)));
 
             // Priority 9: InteractGoal (Player.class, 3.0F, 1.0F)
             goal_selector.add_goal(
@@ -230,10 +243,7 @@ impl WanderingTraderEntity {
             );
 
             // Priority 10: LookAtPlayerGoal (Mob.class, 8.0F)
-            goal_selector.add_goal(
-                10,
-                LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 8.0),
-            );
+            goal_selector.add_goal(10, LookAtEntityGoal::any_mob(mob_weak, 8.0, 0.02));
         };
 
         mob_arc
@@ -651,6 +661,22 @@ impl Mob for WanderingTraderEntity {
             );
         }
 
+        let items: Vec<pumpkin_nbt::tag::NbtTag> = self
+            .inventory
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .filter(|item| !item.is_empty())
+            .map(|item| {
+                let mut item_nbt = NbtCompound::new();
+                item.write_item_stack(&mut item_nbt);
+                pumpkin_nbt::tag::NbtTag::Compound(item_nbt)
+            })
+            .collect();
+        if !items.is_empty() {
+            nbt.put_list("Inventory", items);
+        }
+
         let offers = self
             .offers
             .lock()
@@ -762,6 +788,21 @@ impl Mob for WanderingTraderEntity {
             }
         }
 
+        if let Some(items) = nbt.get_list("Inventory") {
+            let mut inventory = self
+                .inventory
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            inventory.clear();
+            inventory.extend(
+                items
+                    .iter()
+                    .filter_map(|tag| tag.extract_compound())
+                    .filter_map(ItemStack::read_item_stack)
+                    .take(8),
+            );
+        }
+
         let current_age = self.get_age();
         if current_age < 0 {
             self.set_age(0);
@@ -815,6 +856,20 @@ impl Mob for WanderingTraderEntity {
         true
     }
 
+    // wandering trader: getAmbientSound
+    fn get_ambient_sound(&self) -> Option<Sound> {
+        Some(if self.is_trading.load(Ordering::Relaxed) {
+            Sound::EntityWanderingTraderTrade
+        } else {
+            Sound::EntityWanderingTraderAmbient
+        })
+    }
+
+    // wandering trader: AbstractVillager.canBeLeashed
+    fn can_be_leashed(&self) -> bool {
+        false
+    }
+
     fn mob_tick(&self, _caller: &dyn EntityBase) {
         // Despawn delay handling (vanilla aiStep / maybeDespawn)
         if !self.is_trading.load(Ordering::Relaxed) {
@@ -834,28 +889,6 @@ impl Mob for WanderingTraderEntity {
         if cooldown > 0 {
             self.trade_sound_cooldown
                 .store(cooldown - 1, Ordering::Relaxed);
-        }
-
-        // Ambient sound handling
-        if self.ambient_sound_timer.fetch_sub(1, Ordering::Relaxed) <= 0 {
-            let mut rng = rand::rng();
-            self.ambient_sound_timer
-                .store(rng.random_range(80..=160), Ordering::Relaxed);
-            let sound = if self.is_trading.load(Ordering::Relaxed) {
-                Sound::EntityWanderingTraderTrade
-            } else {
-                Sound::EntityWanderingTraderAmbient
-            };
-            self.mob_entity
-                .living_entity
-                .entity
-                .world
-                .load()
-                .play_sound(
-                    sound,
-                    SoundCategory::Neutral,
-                    &self.mob_entity.living_entity.entity.pos.load(),
-                );
         }
     }
 }
@@ -1003,9 +1036,9 @@ impl Goal for WanderToPositionGoal {
         if is_idle {
             let entity_pos = trader.mob_entity.living_entity.entity.pos.load();
             let center = Vector3::new(
-                wander_pos.0.x as f64 + 0.5,
-                wander_pos.0.y as f64 + 0.5,
-                wander_pos.0.z as f64 + 0.5,
+                f64::from(wander_pos.0.x),
+                f64::from(wander_pos.0.y),
+                f64::from(wander_pos.0.z),
             );
             let target_pos = if Self::is_too_far_away(&wander_pos, &entity_pos, 10.0) {
                 let dx = center.x - entity_pos.x;
@@ -1041,50 +1074,6 @@ impl Goal for WanderToPositionGoal {
     }
 }
 
-pub struct MoveTowardsRestrictionGoal {
-    speed: f64,
-}
-
-impl MoveTowardsRestrictionGoal {
-    #[must_use]
-    pub const fn new(speed: f64) -> Self {
-        Self { speed }
-    }
-}
-
-impl Goal for MoveTowardsRestrictionGoal {
-    fn can_start(&mut self, mob: &dyn Mob) -> bool {
-        let mob_entity = mob.get_mob_entity();
-        mob_entity.has_position_target() && !mob_entity.is_in_position_target_range()
-    }
-
-    fn should_continue(&mut self, mob: &dyn Mob) -> bool {
-        let mob_entity = mob.get_mob_entity();
-        !mob_entity.steered().navigator().is_idle()
-            && mob_entity.has_position_target()
-            && !mob_entity.is_in_position_target_range()
-    }
-
-    fn start(&mut self, mob: &dyn Mob) {
-        let mob_entity = mob.get_mob_entity();
-        let target = mob_entity.position_target.load();
-        let entity_pos = mob_entity.living_entity.entity.pos.load();
-        let dest = Vector3::new(
-            target.0.x as f64 + 0.5,
-            target.0.y as f64,
-            target.0.z as f64 + 0.5,
-        );
-        mob_entity
-            .steered()
-            .navigator()
-            .set_progress(NavigatorGoal::new(entity_pos, dest, self.speed));
-    }
-
-    fn controls(&self) -> Controls {
-        Controls::MOVE
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum PotionGoalType {
     Invisibility,
@@ -1112,9 +1101,7 @@ impl Goal for WanderingTraderUseItemGoal {
         let Some(trader) = self.trader.upgrade() else {
             return false;
         };
-        if !trader.mob_entity.living_entity.entity.is_alive()
-            || trader.is_trading.load(Ordering::Relaxed)
-        {
+        if !trader.mob_entity.living_entity.entity.is_alive() {
             return false;
         }
         let world = trader.mob_entity.living_entity.entity.world.load();
@@ -1140,9 +1127,7 @@ impl Goal for WanderingTraderUseItemGoal {
         let Some(trader) = self.trader.upgrade() else {
             return false;
         };
-        self.timer > 0
-            && trader.mob_entity.living_entity.entity.is_alive()
-            && !trader.is_trading.load(Ordering::Relaxed)
+        self.timer > 0 && trader.mob_entity.living_entity.entity.is_alive()
     }
 
     fn start(&mut self, _mob: &dyn Mob) {
@@ -1193,7 +1178,7 @@ impl Goal for WanderingTraderUseItemGoal {
                 Some(PotionGoalType::Invisibility) => {
                     trader.mob_entity.living_entity.add_effect(Effect {
                         effect_type: &StatusEffect::INVISIBILITY,
-                        duration: 6000,
+                        duration: INVISIBILITY_DURATION,
                         amplifier: 0,
                         ambient: false,
                         show_particles: true,

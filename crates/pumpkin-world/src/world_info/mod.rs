@@ -111,6 +111,19 @@ pub struct LevelData {
     pub thundering: bool,
     #[serde(skip_serializing, default)]
     pub thunder_time: i32,
+    /// Wandering trader spawner state, persisted to `data/minecraft/wandering_trader.dat`.
+    #[serde(skip_serializing, default = "default_wandering_trader_spawn_delay")]
+    pub wandering_trader_spawn_delay: i32,
+    #[serde(skip_serializing, default = "default_wandering_trader_spawn_chance")]
+    pub wandering_trader_spawn_chance: i32,
+}
+
+const fn default_wandering_trader_spawn_delay() -> i32 {
+    24_000
+}
+
+const fn default_wandering_trader_spawn_chance() -> i32 {
+    25
 }
 
 const DEFAULT_BORDER_DAMAGE_PER_BLOCK: f64 = 0.2;
@@ -575,6 +588,8 @@ impl LevelData {
             rain_time: 0,
             thundering: false,
             thunder_time: 0,
+            wandering_trader_spawn_delay: default_wandering_trader_spawn_delay(),
+            wandering_trader_spawn_chance: default_wandering_trader_spawn_chance(),
         }
     }
 

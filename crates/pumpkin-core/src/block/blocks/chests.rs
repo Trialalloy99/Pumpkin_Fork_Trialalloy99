@@ -130,6 +130,69 @@ fn placed_chest_impl<E: BlockEntity + 'static>(
     }
 }
 
+/// Vanilla `ChestBlock.isChestBlockedAt`, for mobs that reach into chests.
+pub(crate) fn is_chest_blocked_at(world: &World, block_pos: &BlockPos) -> bool {
+    is_chest_blocked(world, block_pos)
+}
+
+/// Vanilla `ChestBlock.getContainer(..., false)` for mobs: both halves of a double chest, `None`
+/// while a half is blocked. Pending loot tables are unpacked without a player, like `unpackLootTable(null)`.
+pub(crate) fn get_chest_container(
+    world: &Arc<World>,
+    position: &BlockPos,
+) -> Option<Arc<dyn Inventory>> {
+    let state = world.get_block_state_id(position);
+    let chest_props = ChestLikeProperties::from_state_id(state);
+    let connected_towards = match chest_props.r#type {
+        ChestType::Single => None,
+        ChestType::Left => Some(chest_props.facing.rotate_clockwise()),
+        ChestType::Right => Some(chest_props.facing.rotate_counter_clockwise()),
+    };
+    if is_chest_blocked(world, position) {
+        return None;
+    }
+    let unpack = |entity: &Arc<dyn BlockEntity>, pos: &BlockPos| {
+        if let Some((loot_key, seed)) = entity.take_loot_table()
+            && let Some(table) = get_loot_table(&loot_key)
+            && let Some(inv) = entity.clone().get_inventory()
+        {
+            fill_chest_inventory_handle(
+                &inv,
+                &crate::world::loot::LootTableHandle::Static(table),
+                seed,
+                &LootContextParameters {
+                    world: Some(world),
+                    position: Some(pos.to_f64()),
+                    ..Default::default()
+                },
+            );
+            inv.mark_dirty();
+        }
+    };
+    let first_chest = world.get_block_entity(position)?;
+    unpack(&first_chest, position);
+    let first_inventory = first_chest.get_inventory()?;
+    let Some(direction) = connected_towards else {
+        return Some(first_inventory);
+    };
+    let neighbor_pos = position.offset(direction.to_offset());
+    if is_chest_blocked(world, &neighbor_pos) {
+        return None;
+    }
+    let Some(second_chest) = world.get_block_entity(&neighbor_pos) else {
+        return Some(first_inventory);
+    };
+    unpack(&second_chest, &neighbor_pos);
+    let Some(second_inventory) = second_chest.get_inventory() else {
+        return Some(first_inventory);
+    };
+    Some(if matches!(chest_props.r#type, ChestType::Right) {
+        DoubleInventory::new(first_inventory, second_inventory)
+    } else {
+        DoubleInventory::new(second_inventory, first_inventory)
+    })
+}
+
 /// Computes the comparator output for a chest, combining both halves for double chests.
 fn get_chest_comparator_output(args: &GetComparatorOutputArgs<'_>) -> Option<u8> {
     let state = args.world.get_block_state_id(args.position);

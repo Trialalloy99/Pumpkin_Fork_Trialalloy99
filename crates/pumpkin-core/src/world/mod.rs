@@ -25,6 +25,7 @@ pub mod brightness;
 mod cat_spawner;
 pub mod chunker;
 mod entity_index;
+mod wandering_trader_spawner;
 pub(crate) use entity_index::EntityIndex;
 pub mod entity_islands;
 pub mod explosion;
@@ -252,6 +253,8 @@ pub struct World {
     pub min_y: i32,
     /// The world's weather, including rain and thunder levels.
     pub weather: std::sync::Mutex<Weather>,
+    /// Wandering trader spawner timers (`WanderingTraderSpawner`).
+    pub wandering_trader_spawner: std::sync::Mutex<wandering_trader_spawner::SpawnerState>,
     /// Block Behaviour
     pub block_registry: Arc<BlockRegistry>,
     pub server: Weak<Server>,
@@ -394,6 +397,13 @@ impl World {
             let _ = level.rt_handle.set(server_arc.runtime.clone());
         }
 
+        let (wandering_trader_delay, wandering_trader_chance) = {
+            let info = level_info.load();
+            (
+                info.wandering_trader_spawn_delay,
+                info.wandering_trader_spawn_chance,
+            )
+        };
         // world: restore clock and weather from the save (ServerLevel.<init>, prepareWeather)
         let (level_time, weather) = {
             let info = level_info.load();
@@ -437,6 +447,12 @@ impl World {
             level_time: std::sync::Mutex::new(level_time),
             dimension,
             weather: std::sync::Mutex::new(weather),
+            wandering_trader_spawner: std::sync::Mutex::new(
+                wandering_trader_spawner::SpawnerState::new(
+                    wandering_trader_delay,
+                    wandering_trader_chance,
+                ),
+            ),
             block_registry,
             sea_level: generation_settings.sea_level,
             min_y: i32::from(generation_settings.shape.min_y),
@@ -2268,6 +2284,7 @@ impl World {
         if spawn_mobs {
             self.tick_cat_spawner();
         }
+        self.tick_wandering_trader_spawner();
 
         let spawn_list = Arc::new(natural_spawner::get_filtered_spawning_categories(
             &spawn_state,

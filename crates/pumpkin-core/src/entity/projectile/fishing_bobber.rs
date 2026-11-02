@@ -1,4 +1,4 @@
-use crate::entity::projectile::calculate_ray_intersection;
+use crate::entity::projectile::entity_ray_intersection;
 use crate::entity::projectile::owner::ProjectileOwner;
 use crate::world::World;
 use pumpkin_data::Block;
@@ -320,7 +320,7 @@ impl FishingBobberEntity {
                     state.hook_state = HookState::Bobbing;
                     return;
                 }
-                self.check_collision(&world, entity);
+                self.check_collision(&world, entity, caller);
             }
             HookState::HookedInEntity => {
                 if self.hooked_entity_id.load(Ordering::Relaxed) != NO_HOOKED_ENTITY {
@@ -398,7 +398,7 @@ impl FishingBobberEntity {
     }
 
     // fishing hook: hit entity or shorten the move to the hit block (FishingHook.checkCollision)
-    fn check_collision(&self, world: &Arc<World>, entity: &Entity) {
+    fn check_collision(&self, world: &Arc<World>, entity: &Entity, caller: &dyn EntityBase) {
         let start = entity.pos.load();
         let velocity = entity.velocity.load();
         let end = start.add(&velocity);
@@ -432,7 +432,7 @@ impl FishingBobberEntity {
                 continue;
             }
             let hitbox = candidate_entity.bounding_box.load().expand(0.3, 0.3, 0.3);
-            if let Some(t) = calculate_ray_intersection(&start, &reach, &hitbox)
+            if let Some(t) = entity_ray_intersection(&start, &reach, &hitbox, candidate.as_ref())
                 && closest.as_ref().is_none_or(|(best, _)| t < *best)
             {
                 closest = Some((t, candidate));
@@ -440,6 +440,10 @@ impl FishingBobberEntity {
         }
 
         if let Some((_, hooked)) = closest {
+            // projectile: Projectile.hitTargetOrDeflectSelf
+            if crate::entity::projectile_deflection::try_deflect(caller, hooked.as_ref()) {
+                return;
+            }
             self.set_hooked_entity(Some(hooked.get_entity()));
         } else if !block_hit.is_miss {
             entity.velocity.store(reach);

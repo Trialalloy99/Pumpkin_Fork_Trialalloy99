@@ -91,7 +91,7 @@ impl BreedGoal {
         }
     }
 
-    fn breed(mob: &dyn Mob, mate: &dyn EntityBase) {
+    pub(crate) fn breed(mob: &dyn Mob, mate: &dyn EntityBase) {
         // turtle: egg instead of a baby (TurtleBreedGoal.breed)
         if mob.custom_breed(mate) {
             return;

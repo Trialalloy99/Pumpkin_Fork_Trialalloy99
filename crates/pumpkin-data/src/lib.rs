@@ -334,6 +334,11 @@ pub mod context_provider;
 #[path = "generated/instrument.rs"]
 pub mod instrument;
 
+#[cfg(feature = "sulfur_cube_archetype")]
+#[rustfmt::skip]
+#[path = "generated/sulfur_cube_archetype.rs"]
+pub mod sulfur_cube_archetype;
+
 #[cfg(feature = "wolf_variant")]
 #[rustfmt::skip]
 #[path = "generated/wolf_variant.rs"]

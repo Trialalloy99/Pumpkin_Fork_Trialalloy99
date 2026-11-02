@@ -150,6 +150,25 @@ impl Mob for GhastEntity {
     }
 }
 
+// ghast: Ghast.faceMovementDirection
+pub fn face_movement_direction(mob: &dyn Mob) {
+    let mob_entity = mob.get_mob_entity();
+    let entity = &mob_entity.living_entity.entity;
+    if let Some(target) = mob_entity.get_target() {
+        let (pos, target_pos) = (entity.pos.load(), target.get_entity().pos.load());
+        if pos.squared_distance_to_vec(&target_pos) < 4096.0 {
+            let yaw = (-f64::atan2(target_pos.x - pos.x, target_pos.z - pos.z).to_degrees()) as f32;
+            entity.yaw.store(yaw);
+            entity.body_yaw.store(yaw);
+        }
+    } else {
+        let velocity = entity.velocity.load();
+        let yaw = (-f64::atan2(velocity.x, velocity.z).to_degrees()) as f32;
+        entity.yaw.store(yaw);
+        entity.body_yaw.store(yaw);
+    }
+}
+
 pub struct GhastLookGoal {
     goal_control: Controls,
 }

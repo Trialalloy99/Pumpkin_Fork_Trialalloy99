@@ -310,6 +310,24 @@ pub trait EntityBase: Send + Sync + std::any::Any {
         None
     }
 
+    /// Vanilla `Entity.isInvulnerableToPiercingWeapon`.
+    fn is_invulnerable_to_piercing_weapon(&self) -> bool {
+        self.get_entity().invulnerable.load(Relaxed)
+    }
+
+    /// Vanilla `Entity.canBePickedFromInside`: whether a ray starting inside the box hits it.
+    fn can_be_picked_from_inside(&self) -> bool {
+        true
+    }
+
+    /// Vanilla `Entity.deflection`: how this entity deflects a projectile that hits it.
+    fn projectile_deflection(
+        &self,
+        _projectile: &dyn EntityBase,
+    ) -> projectile_deflection::ProjectileDeflectionType {
+        projectile_deflection::ProjectileDeflectionType::None
+    }
+
     /// Who shot or threw this, for projectiles.
     fn get_projectile_owner(&self) -> Option<&projectile::owner::ProjectileOwner> {
         None
@@ -1188,6 +1206,8 @@ pub struct Entity {
     pub vertical_collision: AtomicBool,
     /// Indicates whether the entity is on the ground (may not always be accurate).
     pub on_ground: AtomicBool,
+    /// Vanilla `Projectile.lastDeflectedBy`: entity id of the last deflector, 0 for none.
+    pub last_deflected_by: std::sync::atomic::AtomicI32,
     /// Indicates whether the entity is touching water
     pub touching_water: AtomicBool,
     /// Indicates the fluid height
@@ -1255,6 +1275,8 @@ pub struct Entity {
     pub portal_cooldown: AtomicU32,
 
     pub portal_manager: std::sync::Mutex<Option<PortalProcessor>>,
+    /// Vanilla `canUsePortal` false, e.g. a heart bound creaking.
+    pub cannot_use_portal: AtomicBool,
     /// Custom name for the entity
     pub custom_name: ArcSwap<Option<TextComponent>>,
     /// Indicates whether the entity's custom name is visible
@@ -1448,6 +1470,7 @@ impl Entity {
             entity_uuid,
             entity_type,
             on_ground: AtomicBool::new(false),
+            last_deflected_by: std::sync::atomic::AtomicI32::new(0),
             touching_water: AtomicBool::new(false),
             water_height: AtomicCell::new(0.0),
             touching_lava: AtomicBool::new(false),
@@ -1514,6 +1537,7 @@ impl Entity {
             last_biome_update_pos: AtomicCell::new(BlockPos::new(floor_x, floor_y, floor_z)),
             portal_cooldown: AtomicU32::new(0),
             portal_manager: std::sync::Mutex::new(None),
+            cannot_use_portal: AtomicBool::new(false),
             custom_name: ArcSwap::new(Arc::new(None)),
             custom_name_visible: AtomicBool::new(false),
             blocks_building: false,
@@ -2690,7 +2714,108 @@ impl Entity {
         if self.is_removed() {
             return;
         }
+        self.restitute_movement_after_collisions(
+            caller,
+            motion,
+            final_move,
+            effect_block,
+            effect_state,
+        );
         self.emit_movement(caller, final_move, &effect_pos, effect_state);
+    }
+
+    /// Vanilla `Entity.restituteMovementAfterCollisions`: only runs when something bounces,
+    /// other collisions keep the clipped movement stored by `move_entity`.
+    fn restitute_movement_after_collisions(
+        &self,
+        caller: &dyn EntityBase,
+        motion: Vector3<f64>,
+        movement: Vector3<f64>,
+        effect_block: &'static Block,
+        effect_state: &'static BlockState,
+    ) {
+        // vanilla Mth.equal epsilon
+        let differs = |a: f64, b: f64| (b - a).abs() >= 1.0E-5;
+        let x_collision = differs(motion.x, movement.x);
+        let z_collision = differs(motion.z, movement.z);
+        let vertical_collision = motion.y != movement.y;
+        if !(x_collision || z_collision || (motion.y.abs() > 0.0 && vertical_collision)) {
+            return;
+        }
+        let living = caller.get_living_entity();
+        let suppressing_bounce = self.is_sneaking();
+        let entity_bounciness = living.map_or(0.0, |living| {
+            living.get_attribute_value(&pumpkin_data::attributes::Attributes::BOUNCINESS)
+        });
+        let mut restitution = if suppressing_bounce {
+            0.0
+        } else {
+            entity_bounciness
+        };
+        let gravity = living.map_or_else(
+            || caller.get_gravity(),
+            |living| living.get_effective_gravity(caller),
+        );
+        let mut after_bounce = motion;
+        if x_collision {
+            after_bounce.x = -motion.x * restitution;
+        }
+        if z_collision {
+            after_bounce.z = -motion.z * restitution;
+        }
+        let mut bounced = restitution > 0.0 && (x_collision || z_collision);
+        if vertical_collision {
+            if motion.y < 0.0 {
+                restitution = if -motion.y > gravity
+                    && !suppressing_bounce
+                    && !effect_block.has_tag(&tag::Block::MINECRAFT_SUPPRESSES_BOUNCE)
+                {
+                    // vanilla getBlockBounciness: blocks bounce non-living entities less
+                    let block_bounciness = f64::from(effect_block.bounce_restitution)
+                        * if living.is_some() {
+                            1.0
+                        } else {
+                            f64::from(0.8f32)
+                        };
+                    restitution.max(block_bounciness)
+                } else {
+                    0.0
+                };
+            }
+            if restitution > 0.0 {
+                let portion_with_movement = movement.y / motion.y;
+                let gravity_compensation = portion_with_movement * gravity;
+                let air_drag = f64::from(Self::get_air_drag(caller));
+                let effective_drag = 1.0 + (air_drag - 1.0) * portion_with_movement;
+                after_bounce.y = (gravity_compensation - motion.y) * effective_drag * restitution;
+                bounced = true;
+            } else {
+                after_bounce.y = 0.0;
+            }
+        }
+        if !bounced {
+            return;
+        }
+        let _ = effect_state;
+        self.emit_own_game_event(caller, GameEvent::Bounce);
+        self.velocity_dirty.store(true, Ordering::Relaxed);
+        let block_speed_factor = f64::from(caller.get_block_speed_factor());
+        self.velocity.store(Vector3::new(
+            after_bounce.x * block_speed_factor,
+            after_bounce.y,
+            after_bounce.z * block_speed_factor,
+        ));
+    }
+
+    /// Vanilla `Entity.getAirDrag` / `LivingEntity.getAirDrag`.
+    fn get_air_drag(caller: &dyn EntityBase) -> f32 {
+        caller.get_living_entity().map_or(0.98, |living| {
+            LivingEntity::compute_modified_friction(
+                if caller.is_flutterer() { 0.91 } else { 0.98 },
+                living.get_attribute_value(&pumpkin_data::attributes::Attributes::AIR_DRAG_MODIFIER)
+                    as f32,
+            ) as f32
+        })
     }
 
     /// The emission part of vanilla `Entity.move` for movement the client already resolved,
@@ -3063,6 +3188,9 @@ impl Entity {
     }
 
     pub fn try_use_portal(&self, portal_world: Arc<World>, pos: BlockPos) {
+        if self.cannot_use_portal.load(Ordering::Relaxed) {
+            return;
+        }
         let mut portal_event =
             crate::plugin::api::events::entity::entity_portal::EntityPortalEvent::new(
                 self.entity_id,
@@ -3194,6 +3322,10 @@ impl Entity {
         let Some(living) = caller.get_living_entity() else {
             return true;
         };
+
+        if caller.get_mob().is_some_and(|mob| !mob.mob_can_freeze()) {
+            return false;
+        }
 
         if let Ok(equipment) = living.entity_equipment.try_lock() {
             for (slot, stack) in &equipment.equipment {
@@ -4152,6 +4284,26 @@ impl Entity {
     pub const LEASH_SNAP_DISTANCE: f64 = 12.0;
     pub const LEASH_ELASTIC_DISTANCE: f64 = 6.0;
 
+    // leash: Leashable.leashSnapDistance, happy ghast overrides
+    #[must_use]
+    pub fn leash_snap_distance(&self) -> f64 {
+        if self.entity_type == &EntityType::HAPPY_GHAST {
+            16.0
+        } else {
+            Self::LEASH_SNAP_DISTANCE
+        }
+    }
+
+    // leash: Leashable.leashElasticDistance, happy ghast overrides
+    #[must_use]
+    pub fn leash_elastic_distance(&self) -> f64 {
+        if self.entity_type == &EntityType::HAPPY_GHAST {
+            10.0
+        } else {
+            Self::LEASH_ELASTIC_DISTANCE
+        }
+    }
+
     pub fn leash_to(&self, holder: Arc<dyn EntityBase>) {
         let holder_entity_id = holder.get_entity().entity_id;
         let world = self.world.load();
@@ -4350,7 +4502,7 @@ impl Entity {
     }
 
     // leash: spring pull with torque, snaps past 12 blocks (Leashable.tickLeash)
-    pub fn tick_leash(&self) {
+    pub fn tick_leash(&self) -> bool {
         let delayed = *self
             .delayed_leash
             .lock()
@@ -4361,12 +4513,12 @@ impl Entity {
 
         let holder = {
             let Ok(guard) = self.leashed_to.try_lock() else {
-                return;
+                return false;
             };
             guard.clone()
         };
         let Some(holder) = holder else {
-            return;
+            return false;
         };
         let holder_entity = holder.get_entity();
         let world = self.world.load();
@@ -4377,17 +4529,27 @@ impl Entity {
             } else {
                 self.unleash();
             }
-            return;
+            return false;
         }
         if holder_entity.world.load().uuid != world.uuid {
-            return;
+            return false;
+        }
+        // leash: Leashable.whenLeashedTo, happy ghast holder
+        if Self::supports_quad_leash(self.entity_type)
+            && let Some(ghast) = holder.get_mob().and_then(|mob| {
+                mob.cast_any()
+                    .downcast_ref::<crate::entity::passive::happy_ghast::HappyGhastEntity>()
+            })
+        {
+            ghast.notify_leash_holder();
         }
 
+        let mut pulled = false;
         let center = |b: BoundingBox| (b.min + b.max) * 0.5;
         let distance = center(self.bounding_box.load())
             .squared_distance_to_vec(&center(holder_entity.bounding_box.load()))
             .sqrt();
-        if distance > Self::LEASH_SNAP_DISTANCE {
+        if distance > self.leash_snap_distance() {
             world.play_sound(
                 pumpkin_data::sound::Sound::ItemLeadBreak,
                 pumpkin_data::sound::SoundCategory::Neutral,
@@ -4395,11 +4557,11 @@ impl Entity {
             );
             self.drop_leash();
         } else if distance
-            > Self::LEASH_ELASTIC_DISTANCE
+            > self.leash_elastic_distance()
                 - f64::from(holder_entity.width())
                 - f64::from(self.width())
         {
-            self.check_elastic_leash(&holder);
+            pulled = self.check_elastic_leash(&holder);
         }
 
         let momentum = self.leash_angular_momentum.load();
@@ -4407,6 +4569,7 @@ impl Entity {
         self.set_rotation((f64::from(yaw) - momentum) as f32, self.pitch.load());
         self.leash_angular_momentum
             .store(momentum * f64::from(self.leash_angular_friction()));
+        pulled
     }
 
     // leash: unleash and drop the lead item (Leashable.dropLeash)
@@ -4421,7 +4584,7 @@ impl Entity {
     }
 
     // leash: movement others see, client-reported for players (Entity.getKnownMovement)
-    fn known_movement(entity: &dyn EntityBase) -> Vector3<f64> {
+    pub(crate) fn known_movement(entity: &dyn EntityBase) -> Vector3<f64> {
         if entity.get_player().is_some() {
             entity.get_entity().movement.load()
         } else if entity
@@ -4435,7 +4598,7 @@ impl Entity {
     }
 
     // leash: damped spring between the attachment points (Leashable.checkElasticInteractions)
-    fn check_elastic_leash(&self, holder: &Arc<dyn EntityBase>) {
+    fn check_elastic_leash(&self, holder: &Arc<dyn EntityBase>) -> bool {
         const AXIS_SPECIFIC_ELASTICITY: Vector3<f64> = Vector3::new(0.8, 0.2, 0.8);
         const TORSIONAL_ELASTICITY: f64 = 10.0;
         const STIFFNESS: f64 = 0.11;
@@ -4495,11 +4658,11 @@ impl Entity {
                     holder_entity.yaw.load(),
                 );
             let distance = attach.squared_distance_to_vec(&pivot).sqrt();
-            if distance < Self::LEASH_ELASTIC_DISTANCE {
+            if distance < self.leash_elastic_distance() {
                 continue;
             }
             let mut displacement =
-                (pivot - attach).normalize() * (distance - Self::LEASH_ELASTIC_DISTANCE);
+                (pivot - attach).normalize() * (distance - self.leash_elastic_distance());
             let point_torque = lever.z * displacement.x - lever.x * displacement.z;
             if own_movement.x * displacement.x
                 + own_movement.y * displacement.y
@@ -4513,7 +4676,7 @@ impl Entity {
             any = true;
         }
         if !any {
-            return;
+            return false;
         }
         if quad {
             force = force * 0.25;
@@ -4531,11 +4694,13 @@ impl Entity {
         ) + relative * STIFFNESS;
         self.velocity.store(own_movement + push);
         self.velocity_dirty.store(true, Relaxed);
+        true
     }
 
     // leash: boats, rafts and happy ghasts take four ropes (supportQuadLeash)
     fn supports_quad_leash(entity_type: &EntityType) -> bool {
         entity_type == &EntityType::HAPPY_GHAST
+            || entity_type == &EntityType::SNIFFER
             || entity_type.resource_name.ends_with("_boat")
             || entity_type.resource_name.ends_with("_raft")
     }
@@ -5652,7 +5817,7 @@ pub(crate) fn leash_interact(
                         .pos
                         .load()
                         .squared_distance_to_vec(&entity.pos.load())
-                        <= Entity::LEASH_SNAP_DISTANCE * Entity::LEASH_SNAP_DISTANCE
+                        <= other_entity.leash_snap_distance() * other_entity.leash_snap_distance()
                 {
                     other_entity.attach_leash(this_arc.clone());
                     any = true;
@@ -5729,7 +5894,7 @@ pub(crate) fn leash_interact(
         let distance = center(entity.bounding_box.load())
             .squared_distance_to_vec(&center(player.get_entity().bounding_box.load()))
             .sqrt();
-        if distance <= Entity::LEASH_SNAP_DISTANCE {
+        if distance <= entity.leash_snap_distance() {
             if entity.is_leashed() {
                 entity.drop_leash();
             }

@@ -32,6 +32,8 @@ pub struct Block {
     pub velocity_multiplier: f32,
     /// How much this block affects an entity's jump height (e.g., Honey Blocks).
     pub jump_velocity_multiplier: f32,
+    /// Restitution of an entity landing on this block (Vanilla `getBounceRestitution`).
+    pub bounce_restitution: f32,
     /// The ID of the item form of this block, used for inventory and drops.
     pub item_id: u16,
     /// The initial state of the block when placed without extra data.

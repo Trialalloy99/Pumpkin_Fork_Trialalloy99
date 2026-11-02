@@ -6,6 +6,7 @@ use std::sync::Arc;
 pub mod body_rotation_control;
 pub mod fish_move_control;
 pub mod flying_move_control;
+pub mod ghast_move_control;
 pub mod jump_control;
 pub mod look_control;
 pub mod move_control;
@@ -35,6 +36,14 @@ pub trait MoveControlTrait: Control {
     fn speed_modifier(&self) -> f64 {
         0.0
     }
+
+    // move control: MoveControl.getWantedX/Y/Z
+    fn wanted_position(&self) -> Option<Vector3<f64>> {
+        None
+    }
+
+    // move control: MoveControl.setWait
+    fn set_wait(&mut self) {}
 }
 
 pub trait LookControlTrait: Control {

@@ -50,9 +50,11 @@ use uuid::Uuid;
 pub mod bat;
 pub mod blaze;
 pub mod breeze;
+pub mod breeze_ai;
 pub mod cave_spider;
 pub mod conversion;
 pub mod creaking;
+pub mod creaking_ai;
 pub mod creeper;
 pub mod crossbow_attack_mob;
 pub mod enderman;
@@ -83,6 +85,8 @@ pub mod slime;
 pub mod spawn;
 pub mod spellcaster;
 pub mod spider;
+pub mod sulfur_cube;
+pub mod sulfur_cube_ai;
 pub mod sun_burn;
 pub mod vex;
 pub mod vindicator;
@@ -188,6 +192,20 @@ impl MobEntity {
         self.living_entity
             .movement_input
             .store(Vector3::new(input.x, input.y, f64::from(speed)));
+    }
+
+    // mob: Mob.stopInPlace
+    pub fn stop_in_place(&self) {
+        self.steered().navigator().stop();
+        self.living_entity.set_speed(0.0);
+        self.living_entity
+            .movement_input
+            .store(Vector3::new(0.0, 0.0, 0.0));
+        self.living_entity
+            .entity
+            .velocity
+            .store(Vector3::new(0.0, 0.0, 0.0));
+        self.living_entity.entity.leash_angular_momentum.store(0.0);
     }
 
     const CONTROL_FLAGS_UPDATE_INTERVAL: i32 = 5;
@@ -509,6 +527,26 @@ impl MobEntity {
         previous
     }
 
+    /// Vanilla `Mob.dropPreservedEquipment`: slots with a preserved drop chance fall to the ground.
+    pub fn drop_preserved_equipment(&self) {
+        let slots: Vec<EquipmentSlot> = self
+            .living_entity
+            .entity_equipment
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .equipment
+            .iter()
+            .filter(|(_, stack)| !stack.is_empty())
+            .map(|(slot, _)| slot.clone())
+            .collect();
+        for slot in slots {
+            if self.drop_chance(&slot) > 1.0 {
+                let stack = self.set_item_slot(&slot, ItemStack::EMPTY.clone());
+                self.living_entity.entity.spawn_at_location(stack);
+            }
+        }
+    }
+
     // mob: read main hand without cloning
     pub fn with_main_hand<R>(&self, f: impl FnOnce(&ItemStack) -> R) -> R {
         let equipment = self
@@ -667,6 +705,18 @@ impl MobEntity {
         };
         self.process_brain_memory_clear();
         result
+    }
+
+    /// Reads another mob's brain without waiting, `None` while that brain is busy (it may be ticking in
+    /// parallel and holding its own lock).
+    pub fn try_with_brain<R>(
+        &self,
+        mob: &dyn Mob,
+        callback: impl FnOnce(&mut Brain) -> R,
+    ) -> Option<R> {
+        let mut slot = self.brain.try_lock().ok()?;
+        let brain = slot.get_or_insert_with(|| mob.make_brain(&PackedMemories::empty()));
+        Some(callback(brain))
     }
 
     /// Installs an already built brain, such as one restored from saved memories.
@@ -1469,6 +1519,29 @@ pub trait Mob: EntityBase + Send + Sync {
     /// Per-mob tick hook called each tick before AI runs. Override for mob-specific logic.
     fn mob_tick(&self, _caller: &dyn EntityBase) {}
 
+    // freeze: LivingEntity.canFreeze override (Sulfur Cube)
+    fn mob_can_freeze(&self) -> bool {
+        true
+    }
+
+    // spear: Entity.isInvulnerableToPiercingWeapon (Sulfur Cube)
+    fn mob_invulnerable_to_piercing_weapon(&self) -> bool {
+        self.get_entity().invulnerable.load(Relaxed)
+    }
+
+    // projectile: Entity.canBePickedFromInside (Sulfur Cube)
+    fn mob_can_be_picked_from_inside(&self) -> bool {
+        true
+    }
+
+    // projectile deflection: Entity.deflection (Breeze)
+    fn projectile_deflection(
+        &self,
+        _projectile: &dyn EntityBase,
+    ) -> crate::entity::projectile_deflection::ProjectileDeflectionType {
+        crate::entity::projectile_deflection::ProjectileDeflectionType::None
+    }
+
     fn mob_is_pushed_by_fluids(&self) -> bool {
         true
     }
@@ -1508,6 +1581,14 @@ pub trait Mob: EntityBase + Send + Sync {
 
     fn before_mob_ai_step(&self) {}
 
+    // mob: Entity.canBeCollidedWith (happy ghast)
+    fn mob_is_collidable(&self, _other: Option<&dyn EntityBase>) -> bool {
+        true
+    }
+
+    // mob: Leashable.onElasticLeashPull
+    fn on_elastic_leash_pull(&self) {}
+
     fn mob_ai_step(&self) {}
 
     // mob: own jump control, true = handled (Rabbit.RabbitJumpControl.tick)
@@ -1541,7 +1622,16 @@ pub trait Mob: EntityBase + Send + Sync {
         false
     }
 
-    /// Generic `Mob.aiStep` looting; mobs with their own pickup (piglin, allay) opt out.
+    // mob: wantsToPickUp for sensors that already hold the brain
+    fn wants_to_pick_up_in_brain(
+        &self,
+        stack: &ItemStack,
+        _brain: &crate::entity::ai::brain::BrainState,
+    ) -> bool {
+        self.wants_to_pick_up(stack)
+    }
+
+    /// Generic `Mob.aiStep` looting; mobs with their own pickup (allay) opt out.
     fn uses_mob_looting(&self) -> bool {
         true
     }
@@ -1587,6 +1677,9 @@ pub trait Mob: EntityBase + Send + Sync {
     fn keeps_equipped_item(&self, _current: &ItemStack) -> bool {
         false
     }
+
+    /// End of vanilla `travelInFluid`, e.g. the buoyancy of a sulfur cube.
+    fn after_travel_in_fluid(&self, _water: bool) {}
 
     /// Vanilla `Mob.getPreferredWeaponType`.
     fn preferred_weapon_type(&self) -> Option<&'static pumpkin_data::tag::Tag> {
@@ -1659,6 +1752,30 @@ pub trait Mob: EntityBase + Send + Sync {
         _cause: Option<&dyn EntityBase>,
     ) -> bool {
         self.pre_damage(damage_type, source)
+    }
+
+    /// Vanilla `hurtServer` override that ends the hit early; `Some(result)` skips the damage.
+    fn damage_override(
+        &self,
+        _amount: f32,
+        _damage_type: DamageType,
+        _position: Option<Vector3<f64>>,
+        _source: Option<&dyn EntityBase>,
+        _cause: Option<&dyn EntityBase>,
+    ) -> Option<bool> {
+        None
+    }
+
+    /// Vanilla `LivingEntity.knockback` override for a hit; `true` replaces the default push.
+    fn knockback_override(
+        &self,
+        _power: f64,
+        _dx: f64,
+        _dz: f64,
+        _damage: f32,
+        _attacker: Option<&dyn EntityBase>,
+    ) -> bool {
+        false
     }
 
     /// Vanilla `hurtArmor`: equipment durability loss from a hit that armor applies to.
@@ -2332,6 +2449,21 @@ pub trait Mob: EntityBase + Send + Sync {
     }
 }
 impl<T: Mob + Send + 'static> EntityBase for T {
+    fn is_invulnerable_to_piercing_weapon(&self) -> bool {
+        self.mob_invulnerable_to_piercing_weapon()
+    }
+
+    fn can_be_picked_from_inside(&self) -> bool {
+        self.mob_can_be_picked_from_inside()
+    }
+
+    fn projectile_deflection(
+        &self,
+        projectile: &dyn EntityBase,
+    ) -> crate::entity::projectile_deflection::ProjectileDeflectionType {
+        Mob::projectile_deflection(self, projectile)
+    }
+
     fn is_pushed_by_fluids(&self) -> bool {
         self.mob_is_pushed_by_fluids()
     }
@@ -2430,7 +2562,9 @@ impl<T: Mob + Send + 'static> EntityBase for T {
     fn tick(&self, caller: &dyn EntityBase, server: &Server) {
         let mob_entity = self.get_mob_entity();
         mob_entity.process_navigation_updates();
-        mob_entity.living_entity.entity.tick_leash();
+        if mob_entity.living_entity.entity.tick_leash() {
+            self.on_elastic_leash_pull();
+        }
         sun_burn::tick(self);
         looting::tick_looting(self);
         // path max fall distance follows target + health (Mob.getMaxFallDistance)
@@ -2478,8 +2612,8 @@ impl<T: Mob + Send + 'static> EntityBase for T {
         }
     }
 
-    fn is_collidable(&self, _entity: Option<Box<dyn EntityBase>>) -> bool {
-        true
+    fn is_collidable(&self, entity: Option<Box<dyn EntityBase>>) -> bool {
+        self.mob_is_collidable(entity.as_deref())
     }
 
     fn can_hit(&self) -> bool {
@@ -2498,6 +2632,9 @@ impl<T: Mob + Send + 'static> EntityBase for T {
         // pre_damage hook: allows mobs to dodge/cancel damage (e.g. enderman projectile dodge)
         if !self.pre_damage_with_context(damage_type, source, cause) {
             return false;
+        }
+        if let Some(result) = self.damage_override(amount, damage_type, position, source, cause) {
+            return result;
         }
         // Mob-specific damage modifier (e.g. shulker armor when closed).
         let amount = self.modify_incoming_damage(amount, damage_type);

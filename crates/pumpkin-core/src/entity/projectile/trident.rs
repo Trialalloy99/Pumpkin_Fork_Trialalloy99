@@ -18,7 +18,7 @@ use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 
 use super::arrow::ArrowPickup;
-use super::{ProjectileHit, calculate_ray_intersection};
+use super::{ProjectileHit, calculate_ray_intersection, entity_ray_intersection};
 
 pub struct TridentEntity {
     pub entity: Entity,
@@ -366,7 +366,7 @@ impl EntityBase for TridentEntity {
             }
 
             let ebb = cand.get_entity().bounding_box.load().expand(0.3, 0.3, 0.3);
-            if let Some(t) = calculate_ray_intersection(&start_pos, &velocity, &ebb)
+            if let Some(t) = entity_ray_intersection(&start_pos, &velocity, &ebb, cand.as_ref())
                 && t < closest_t
             {
                 closest_t = t;
@@ -380,10 +380,16 @@ impl EntityBase for TridentEntity {
         }
 
         // Handle hit
-        if let Some(h) = hit
-            && !self.has_hit.swap(true, Ordering::SeqCst)
-        {
-            caller.on_hit(h);
+        if let Some(h) = hit {
+            // projectile: Projectile.hitTargetOrDeflectSelf
+            if let ProjectileHit::Entity { entity: target, .. } = &h
+                && crate::entity::projectile_deflection::try_deflect(caller, target.as_ref())
+            {
+                return;
+            }
+            if !self.has_hit.swap(true, Ordering::SeqCst) {
+                caller.on_hit(h);
+            }
         }
 
         if !self.in_ground.load(Ordering::Relaxed) && !entity.is_removed() {

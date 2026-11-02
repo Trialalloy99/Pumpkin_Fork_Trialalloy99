@@ -60,6 +60,7 @@ mod frog_variant;
 mod game_event;
 mod game_rules;
 mod instrument;
+mod sulfur_cube_archetype;
 mod item;
 mod jukebox_song;
 pub mod loot_table;
@@ -213,6 +214,7 @@ pub fn main() {
         (decorated_pot_pattern::build, "decorated_pot_pattern.rs"),
         (frog_variant::build, "frog_variant.rs"),
         (instrument::build, "instrument.rs"),
+        (sulfur_cube_archetype::build, "sulfur_cube_archetype.rs"),
         (trim_material::build, "trim_material.rs"),
         (trim_pattern::build, "trim_pattern.rs"),
         (wolf_variant::build, "wolf_variant.rs"),
