@@ -20,7 +20,7 @@ fn is_adult(entity: &dyn EntityBase) -> bool {
         .has_tag(&tag::EntityType::MINECRAFT_FOLLOWABLE_FRIENDLY_MOBS)
         && !entity
             .get_living_entity()
-            .is_some_and(|living| living.is_baby())
+            .is_some_and(crate::entity::living::LivingEntity::is_baby)
 }
 
 impl Sensor for AdultSensorAnyType {

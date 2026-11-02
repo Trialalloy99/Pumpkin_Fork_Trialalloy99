@@ -38,6 +38,16 @@ use crate::entity::{
 
 mod ai;
 
+// ghast: Direction.values() offsets
+const DIRECTIONS: [(i32, i32, i32); 6] = [
+    (0, -1, 0),
+    (0, 1, 0),
+    (0, 0, -1),
+    (0, 0, 1),
+    (-1, 0, 0),
+    (1, 0, 0),
+];
+
 const BABY_SCALE: f32 = 0.2375;
 const BABY_EYE_HEIGHT: f32 = 0.46875;
 const SMALL_RESTRICTION_RADIUS: i32 = 32;
@@ -133,16 +143,15 @@ impl HappyGhastEntity {
         *mob.look_control
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Box::<LookControl>::default();
-        {
-            let mut navigator = mob
-                .navigator
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            *navigator = Navigator::flying();
-            navigator.set_can_open_doors(false);
-            navigator.set_can_float(true);
-            navigator.set_required_path_length(48.0);
-        }
+        let mut navigator = mob
+            .navigator
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        *navigator = Navigator::flying();
+        navigator.set_can_open_doors(false);
+        navigator.set_can_float(true);
+        navigator.set_required_path_length(48.0);
+        drop(navigator);
         self.set_server_still_timeout(0);
         mob.goals_selector.clear(self);
     }
@@ -511,14 +520,6 @@ impl RandomFloatAroundGoal {
         if !world.get_block_state(&pos).is_air() {
             return false;
         }
-        const DIRECTIONS: [(i32, i32, i32); 6] = [
-            (0, -1, 0),
-            (0, 1, 0),
-            (0, 0, -1),
-            (0, 0, 1),
-            (-1, 0, 0),
-            (1, 0, 0),
-        ];
         DIRECTIONS.iter().any(|(dx, dy, dz)| {
             (1..distance_to_blocks).any(|i| {
                 let offset = BlockPos::new(pos.0.x + dx * i, pos.0.y + dy * i, pos.0.z + dz * i);
@@ -782,6 +783,19 @@ impl Mob for HappyGhastEntity {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .set_wait();
+    }
+
+    // happy ghast: canBeCollidedWith
+    fn mob_is_collidable(&self, other: Option<&dyn EntityBase>) -> bool {
+        if self.is_baby() || !self.get_entity().is_alive() {
+            return false;
+        }
+        if self.get_entity().has_passengers()
+            && other.is_some_and(|other| other.get_entity().entity_type == &EntityType::HAPPY_GHAST)
+        {
+            return true;
+        }
+        self.is_on_still_timeout()
     }
 
     fn mob_tick(&self, _caller: &dyn EntityBase) {

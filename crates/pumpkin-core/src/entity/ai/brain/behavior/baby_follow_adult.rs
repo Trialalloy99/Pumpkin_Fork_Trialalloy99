@@ -9,17 +9,14 @@ use crate::entity::player::Player;
 
 // brain: BabyFollowAdult.create
 #[must_use]
-pub fn create<T: Clone + Send + Sync + 'static>(
+pub fn create<T: Clone + Send + Sync + 'static + crate::entity::ai::brain::memory::MemoryValue>(
     follow_min: i32,
     follow_max: i32,
     speed_modifier: f32,
     nearest_visible_type: MemoryModuleType<T>,
     target_eye: bool,
     as_entity: fn(&T) -> Arc<dyn EntityBase>,
-) -> OneShot
-where
-    T: crate::entity::ai::brain::memory::MemoryValue,
-{
+) -> OneShot {
     OneShot::new(
         "BabyFollowAdult",
         vec![

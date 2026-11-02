@@ -1581,6 +1581,11 @@ pub trait Mob: EntityBase + Send + Sync {
 
     fn before_mob_ai_step(&self) {}
 
+    // mob: Entity.canBeCollidedWith (happy ghast)
+    fn mob_is_collidable(&self, _other: Option<&dyn EntityBase>) -> bool {
+        true
+    }
+
     // mob: Leashable.onElasticLeashPull
     fn on_elastic_leash_pull(&self) {}
 
@@ -2607,8 +2612,8 @@ impl<T: Mob + Send + 'static> EntityBase for T {
         }
     }
 
-    fn is_collidable(&self, _entity: Option<Box<dyn EntityBase>>) -> bool {
-        true
+    fn is_collidable(&self, entity: Option<Box<dyn EntityBase>>) -> bool {
+        self.mob_is_collidable(entity.as_deref())
     }
 
     fn can_hit(&self) -> bool {
