@@ -61,6 +61,7 @@ default = [
     "painting_variant",
     "context_provider",
     "instrument",
+    "sulfur_cube_archetype",
     "wolf_variant",
     "cat_variant",
     "frog_variant",
@@ -92,6 +93,7 @@ wolf_sound_variant = ["sound"]
 zombie_nautilus_variant = ["tag"]
 enchantment_provider = ["enchantment", "item", "tag"]
 instrument = ["sound"]
+sulfur_cube_archetype = ["sound", "tag", "attributes", "damage"]
 wolf_variant = []
 cat_variant = []
 frog_variant = []
