@@ -150,16 +150,7 @@ impl ThrownItemEntity {
         let mut velocity = entity.velocity.load();
         velocity.y -= self.get_gravity();
 
-        // wind charge: getInertia / getLiquidInertia 1.0 (AbstractWindCharge)
-        let inertia = if entity.entity_type == &EntityType::WIND_CHARGE
-            || entity.entity_type == &EntityType::BREEZE_WIND_CHARGE
-        {
-            1.0
-        } else if entity.touching_water.load(Ordering::Relaxed) {
-            0.8
-        } else {
-            0.99
-        };
+        let inertia = Self::inertia(entity);
         velocity = velocity.multiply(inertia, inertia, inertia);
 
         // Store velocity
@@ -228,7 +219,7 @@ impl ThrownItemEntity {
             }
 
             let ebb = cand.get_entity().bounding_box.load().expand(0.3, 0.3, 0.3);
-            if let Some(t) = calculate_ray_intersection(&start_pos, &delta, &ebb)
+            if let Some(t) = entity_ray_intersection(&start_pos, &delta, &ebb, cand.as_ref())
                 && t < closest_t
             {
                 closest_t = t;
@@ -272,6 +263,19 @@ impl ThrownItemEntity {
             // Just trigger hit effects and remove
             caller.on_hit(h);
             entity.remove();
+        }
+    }
+
+    /// Vanilla `getInertia` / `getLiquidInertia`; wind charges keep all their speed (`AbstractWindCharge`).
+    fn inertia(entity: &Entity) -> f64 {
+        if entity.entity_type == &EntityType::WIND_CHARGE
+            || entity.entity_type == &EntityType::BREEZE_WIND_CHARGE
+        {
+            1.0
+        } else if entity.touching_water.load(Ordering::Relaxed) {
+            0.8
+        } else {
+            0.99
         }
     }
 
@@ -319,6 +323,26 @@ impl ThrownItemEntity {
     const fn get_gravity(&self) -> f64 {
         self.gravity
     }
+}
+
+/// Vanilla `ProjectileUtil.getEntityHitResult`: a ray starting inside the box only hits entities
+/// that `canBePickedFromInside`.
+pub(crate) fn entity_ray_intersection(
+    start: &Vector3<f64>,
+    dir: &Vector3<f64>,
+    bb: &BoundingBox,
+    target: &dyn EntityBase,
+) -> Option<f64> {
+    let inside = start.x >= bb.min.x
+        && start.x < bb.max.x
+        && start.y >= bb.min.y
+        && start.y < bb.max.y
+        && start.z >= bb.min.z
+        && start.z < bb.max.z;
+    if inside && !target.can_be_picked_from_inside() {
+        return None;
+    }
+    calculate_ray_intersection(start, dir, bb)
 }
 
 /// Ray intersection algorithm for AABBs, returning a t value

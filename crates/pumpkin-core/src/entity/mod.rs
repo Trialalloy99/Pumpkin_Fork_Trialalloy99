@@ -310,6 +310,16 @@ pub trait EntityBase: Send + Sync + std::any::Any {
         None
     }
 
+    /// Vanilla `Entity.isInvulnerableToPiercingWeapon`.
+    fn is_invulnerable_to_piercing_weapon(&self) -> bool {
+        self.get_entity().invulnerable.load(Relaxed)
+    }
+
+    /// Vanilla `Entity.canBePickedFromInside`: whether a ray starting inside the box hits it.
+    fn can_be_picked_from_inside(&self) -> bool {
+        true
+    }
+
     /// Vanilla `Entity.deflection`: how this entity deflects a projectile that hits it.
     fn projectile_deflection(
         &self,
@@ -2759,7 +2769,11 @@ impl Entity {
                 {
                     // vanilla getBlockBounciness: blocks bounce non-living entities less
                     let block_bounciness = f64::from(effect_block.bounce_restitution)
-                        * if living.is_some() { 1.0 } else { f64::from(0.8_f32) };
+                        * if living.is_some() {
+                            1.0
+                        } else {
+                            f64::from(0.8f32)
+                        };
                     restitution.max(block_bounciness)
                 } else {
                     0.0
@@ -3302,6 +3316,10 @@ impl Entity {
         let Some(living) = caller.get_living_entity() else {
             return true;
         };
+
+        if caller.get_mob().is_some_and(|mob| !mob.mob_can_freeze()) {
+            return false;
+        }
 
         if let Ok(equipment) = living.entity_equipment.try_lock() {
             for (slot, stack) in &equipment.equipment {

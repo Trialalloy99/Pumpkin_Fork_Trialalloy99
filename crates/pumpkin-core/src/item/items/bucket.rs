@@ -273,6 +273,12 @@ fn apply_mob_bucket_components(
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .put(&EquipmentSlot::BODY, sulfur_content.item.clone());
     }
+    if let Some(cube) = mob
+        .cast_any()
+        .downcast_ref::<crate::entity::mob::sulfur_cube::SulfurCubeEntity>()
+    {
+        cube.set_from_bucket(true);
+    }
     if let Some(mob_trait) = mob.get_mob() {
         mob_trait
             .get_mob_entity()
@@ -507,7 +513,14 @@ impl ItemBehaviour for EmptyBucketItem {
     fn use_on_entity(&self, item: &mut ItemStack, player: &Player, entity: Arc<dyn EntityBase>) {
         let ent = entity.get_entity();
         let entity_type = ent.entity_type;
-        if entity_type == &EntityType::SULFUR_CUBE && ent.age.load(Ordering::Relaxed) >= 0 {
+        // sulfur cube: mobInteract passes on a primed cube, so no bucket pickup
+        if entity_type == &EntityType::SULFUR_CUBE
+            && ent.age.load(Ordering::Relaxed) >= 0
+            && !entity
+                .cast_any()
+                .downcast_ref::<crate::entity::mob::sulfur_cube::SulfurCubeEntity>()
+                .is_some_and(crate::entity::mob::sulfur_cube::SulfurCubeEntity::is_primed)
+        {
             let world = ent.world.load();
             world.play_sound(
                 Sound::ItemBucketFillSulfurCube,

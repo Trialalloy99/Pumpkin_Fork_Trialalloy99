@@ -1993,6 +1993,9 @@ impl LivingEntity {
             self.entity.velocity.store(velo);
             self.jump_out_of_fluid(old_y);
         }
+        if let Some(mob) = caller.get_mob() {
+            mob.after_travel_in_fluid(water);
+        }
     }
 
     fn jump_out_of_fluid(&self, old_y: f64) {
@@ -2122,6 +2125,9 @@ impl LivingEntity {
 
         if self.entity.entity_type == &EntityType::BREEZE {
             eye_height
+        } else if self.entity.entity_type == &EntityType::SULFUR_CUBE {
+            // sulfur cube: getFluidJumpThreshold
+            f64::from(self.entity.entity_dimension.load().height) * 0.2
         } else if eye_height < 0.4 {
             0.0
         } else {
@@ -3748,8 +3754,16 @@ impl LivingEntity {
                 let dx = source_pos.x - target_pos.x;
                 let dz = source_pos.z - target_pos.z;
                 let resistance = self.get_attribute_value(&Attributes::KNOCKBACK_RESISTANCE);
-                self.entity
-                    .apply_knockback(knockback_after_resistance(0.4, resistance), dx, dz);
+                let overridden = caller.get_mob().is_some_and(|mob| {
+                    mob.knockback_override(0.4, dx, dz, damage_amount, cause.or(Some(source)))
+                });
+                if !overridden {
+                    self.entity.apply_knockback(
+                        knockback_after_resistance(0.4, resistance),
+                        dx,
+                        dz,
+                    );
+                }
             }
         }
 

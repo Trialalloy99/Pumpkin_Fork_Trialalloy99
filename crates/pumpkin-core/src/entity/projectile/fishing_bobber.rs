@@ -1,4 +1,4 @@
-use crate::entity::projectile::calculate_ray_intersection;
+use crate::entity::projectile::entity_ray_intersection;
 use crate::entity::projectile::owner::ProjectileOwner;
 use crate::world::World;
 use pumpkin_data::Block;
@@ -432,7 +432,7 @@ impl FishingBobberEntity {
                 continue;
             }
             let hitbox = candidate_entity.bounding_box.load().expand(0.3, 0.3, 0.3);
-            if let Some(t) = calculate_ray_intersection(&start, &reach, &hitbox)
+            if let Some(t) = entity_ray_intersection(&start, &reach, &hitbox, candidate.as_ref())
                 && closest.as_ref().is_none_or(|(best, _)| t < *best)
             {
                 closest = Some((t, candidate));

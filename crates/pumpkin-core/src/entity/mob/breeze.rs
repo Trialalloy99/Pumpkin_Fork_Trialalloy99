@@ -35,14 +35,16 @@ pub struct BreezeEntity {
 impl BreezeEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
         let mob_entity = MobEntity::new(entity);
-        {
-            let mut navigator = mob_entity
+        // breeze: setPathfindingMalus ON_TOP_OF_TRAPDOOR, FIRE
+        for (path_type, malus) in [
+            (PathType::DangerTrapdoor, -1.0),
+            (PathType::DamageFire, -1.0),
+        ] {
+            mob_entity
                 .navigator
                 .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            // breeze: setPathfindingMalus ON_TOP_OF_TRAPDOOR, FIRE
-            navigator.set_pathfinding_malus(PathType::DangerTrapdoor, -1.0);
-            navigator.set_pathfinding_malus(PathType::DamageFire, -1.0);
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .set_pathfinding_malus(path_type, malus);
         }
         Arc::new(Self { mob_entity })
     }
@@ -61,7 +63,7 @@ impl BreezeEntity {
         let entity = self.get_entity();
         entity.pos.load().y
             + f64::from(entity.entity_dimension.load().height) / 2.0
-            + f64::from(0.3_f32)
+            + f64::from(0.3f32)
     }
 
     // breeze: getTargetFromBrain

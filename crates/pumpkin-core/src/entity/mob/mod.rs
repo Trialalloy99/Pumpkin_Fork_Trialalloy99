@@ -84,6 +84,8 @@ pub mod slime;
 pub mod spawn;
 pub mod spellcaster;
 pub mod spider;
+pub mod sulfur_cube;
+pub mod sulfur_cube_ai;
 pub mod sun_burn;
 pub mod vex;
 pub mod vindicator;
@@ -1470,6 +1472,21 @@ pub trait Mob: EntityBase + Send + Sync {
     /// Per-mob tick hook called each tick before AI runs. Override for mob-specific logic.
     fn mob_tick(&self, _caller: &dyn EntityBase) {}
 
+    // freeze: LivingEntity.canFreeze override (Sulfur Cube)
+    fn mob_can_freeze(&self) -> bool {
+        true
+    }
+
+    // spear: Entity.isInvulnerableToPiercingWeapon (Sulfur Cube)
+    fn mob_invulnerable_to_piercing_weapon(&self) -> bool {
+        self.get_entity().invulnerable.load(Relaxed)
+    }
+
+    // projectile: Entity.canBePickedFromInside (Sulfur Cube)
+    fn mob_can_be_picked_from_inside(&self) -> bool {
+        true
+    }
+
     // projectile deflection: Entity.deflection (Breeze)
     fn projectile_deflection(
         &self,
@@ -1597,6 +1614,9 @@ pub trait Mob: EntityBase + Send + Sync {
         false
     }
 
+    /// End of vanilla `travelInFluid`, e.g. the buoyancy of a sulfur cube.
+    fn after_travel_in_fluid(&self, _water: bool) {}
+
     /// Vanilla `Mob.getPreferredWeaponType`.
     fn preferred_weapon_type(&self) -> Option<&'static pumpkin_data::tag::Tag> {
         None
@@ -1668,6 +1688,30 @@ pub trait Mob: EntityBase + Send + Sync {
         _cause: Option<&dyn EntityBase>,
     ) -> bool {
         self.pre_damage(damage_type, source)
+    }
+
+    /// Vanilla `hurtServer` override that ends the hit early; `Some(result)` skips the damage.
+    fn damage_override(
+        &self,
+        _amount: f32,
+        _damage_type: DamageType,
+        _position: Option<Vector3<f64>>,
+        _source: Option<&dyn EntityBase>,
+        _cause: Option<&dyn EntityBase>,
+    ) -> Option<bool> {
+        None
+    }
+
+    /// Vanilla `LivingEntity.knockback` override for a hit; `true` replaces the default push.
+    fn knockback_override(
+        &self,
+        _power: f64,
+        _dx: f64,
+        _dz: f64,
+        _damage: f32,
+        _attacker: Option<&dyn EntityBase>,
+    ) -> bool {
+        false
     }
 
     /// Vanilla `hurtArmor`: equipment durability loss from a hit that armor applies to.
@@ -2341,6 +2385,14 @@ pub trait Mob: EntityBase + Send + Sync {
     }
 }
 impl<T: Mob + Send + 'static> EntityBase for T {
+    fn is_invulnerable_to_piercing_weapon(&self) -> bool {
+        self.mob_invulnerable_to_piercing_weapon()
+    }
+
+    fn can_be_picked_from_inside(&self) -> bool {
+        self.mob_can_be_picked_from_inside()
+    }
+
     fn projectile_deflection(
         &self,
         projectile: &dyn EntityBase,
@@ -2514,6 +2566,9 @@ impl<T: Mob + Send + 'static> EntityBase for T {
         // pre_damage hook: allows mobs to dodge/cancel damage (e.g. enderman projectile dodge)
         if !self.pre_damage_with_context(damage_type, source, cause) {
             return false;
+        }
+        if let Some(result) = self.damage_override(amount, damage_type, position, source, cause) {
+            return result;
         }
         // Mob-specific damage modifier (e.g. shulker armor when closed).
         let amount = self.modify_incoming_damage(amount, damage_type);

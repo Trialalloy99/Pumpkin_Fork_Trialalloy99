@@ -67,9 +67,9 @@ pub fn calculate_jump_vector_for_angle(
     }
     Some(
         Vector3::new(v0r * cosxz_ang, v0y, v0r * sinxz_ang).multiply(
-            f64::from(0.95_f32),
-            f64::from(0.95_f32),
-            f64::from(0.95_f32),
+            f64::from(0.95f32),
+            f64::from(0.95f32),
+            f64::from(0.95f32),
         ),
     )
 }
@@ -85,7 +85,7 @@ fn is_clear_transition(
     let min_dimension = f64::from(dimensions.width.min(dimensions.height));
     let checks = (direction.length() / min_dimension).ceil() as i32;
     let normalized = direction.normalize();
-    let step = min_dimension * f64::from(0.9_f32);
+    let step = min_dimension * f64::from(0.9f32);
     let mut next = position1;
     for i in 0..checks {
         next = if i == checks - 1 {

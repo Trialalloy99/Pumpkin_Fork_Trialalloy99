@@ -16,8 +16,8 @@ pub fn tick_looting(mob: &dyn Mob) {
     let mob_entity = mob.get_mob_entity();
     let living = &mob_entity.living_entity;
     let entity = &living.entity;
-    if !mob_entity.can_pick_up_loot()
-        || !mob.uses_mob_looting()
+    if !mob.uses_mob_looting()
+        || !mob.can_pick_up_loot(None)
         || !entity.is_alive()
         || living.dead.load(std::sync::atomic::Ordering::Relaxed)
     {

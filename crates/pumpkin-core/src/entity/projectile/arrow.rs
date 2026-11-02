@@ -3,7 +3,9 @@ use std::sync::Arc;
 use std::sync::RwLock;
 use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU32, AtomicU64, Ordering};
 
-use crate::entity::projectile::{ProjectileHit, calculate_ray_intersection};
+use crate::entity::projectile::{
+    ProjectileHit, calculate_ray_intersection, entity_ray_intersection,
+};
 use crate::{
     entity::{Entity, EntityBase, living::LivingEntity, player::Player},
     server::Server,
@@ -723,7 +725,7 @@ impl EntityBase for ArrowEntity {
             }
 
             let ebb = cand.get_entity().bounding_box.load().expand(0.3, 0.3, 0.3);
-            if let Some(t) = calculate_ray_intersection(&start_pos, &velocity, &ebb)
+            if let Some(t) = entity_ray_intersection(&start_pos, &velocity, &ebb, cand.as_ref())
                 && t < closest_t
             {
                 closest_t = t;

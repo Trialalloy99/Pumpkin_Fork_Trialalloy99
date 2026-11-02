@@ -512,7 +512,7 @@ impl LongJump {
             return false;
         }
         // breeze: isInFluidDeeperThan(getFluidJumpThreshold, ENTITY_FLOATABLE), isInLava
-        if f64::from(entity.water_height.load()) > entity.get_eye_height()
+        if entity.water_height.load() > entity.get_eye_height()
             || entity.touching_lava.load(Ordering::Relaxed)
         {
             return false;
@@ -616,7 +616,7 @@ impl LongJump {
             };
             if let Some(jump_boost) = living.get_effect(&StatusEffect::JUMP_BOOST) {
                 // living: getJumpBoostPower
-                let power = f64::from(0.1_f32 * (jump_boost.amplifier + 1) as f32);
+                let power = f64::from(0.1f32 * (jump_boost.amplifier + 1) as f32);
                 return Some(vector.add_raw(0.0, vector.normalize().y * power, 0.0));
             }
             return Some(vector);
