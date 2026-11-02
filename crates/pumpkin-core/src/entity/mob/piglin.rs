@@ -71,22 +71,20 @@ impl PiglinEntity {
 
     pub fn new(entity: Entity) -> Arc<Self> {
         let mut mob_entity = MobEntity::new(entity);
-        {
-            // piglin: AbstractPiglin pathfinding maluses and door opening
-            let navigator = mob_entity
-                .navigator
-                .get_mut()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            navigator.set_pathfinding_malus(
-                crate::entity::ai::pathfinder::node::PathType::DangerFire,
-                FIRE_IN_NEIGHBOR_MALUS,
-            );
-            navigator.set_pathfinding_malus(
-                crate::entity::ai::pathfinder::node::PathType::DamageFire,
-                -1.0,
-            );
-            navigator.set_can_open_doors(true);
-        }
+        // piglin: AbstractPiglin pathfinding maluses and door opening
+        let navigator = mob_entity
+            .navigator
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        navigator.set_pathfinding_malus(
+            crate::entity::ai::pathfinder::node::PathType::DangerFire,
+            FIRE_IN_NEIGHBOR_MALUS,
+        );
+        navigator.set_pathfinding_malus(
+            crate::entity::ai::pathfinder::node::PathType::DamageFire,
+            -1.0,
+        );
+        navigator.set_can_open_doors(true);
         let piglin = Self {
             mob_entity,
             immune_to_zombification: AtomicBool::new(false),

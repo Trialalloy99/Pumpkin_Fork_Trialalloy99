@@ -53,6 +53,14 @@ impl CrossbowAttack {
         }
     }
 
+    // crossbow: CrossbowItem.getChargeDuration, Quick Charge shortens it
+    fn charge_duration(mob: &dyn crate::entity::mob::Mob) -> i32 {
+        let level = mob.get_mob_entity().with_main_hand(|stack| {
+            stack.get_enchantment_level(&pumpkin_data::Enchantment::QUICK_CHARGE)
+        });
+        (CHARGE_DURATION - 5 * level).max(0)
+    }
+
     fn can_attack(tick: &BrainTick<'_>) -> Option<Arc<dyn EntityBase>> {
         let target = tick.state.get(types::ATTACK_TARGET).cloned()?;
         let distance_sq = tick
@@ -129,7 +137,7 @@ impl Behavior for CrossbowAttack {
                         &pos,
                     );
                 }
-                if self.charge_ticks >= CHARGE_DURATION {
+                if self.charge_ticks >= Self::charge_duration(mob) {
                     living.clear_active_hand();
                     self.state = CrossbowState::Charged;
                     self.attack_delay = 20 + mob.get_random().random_range(0..20);

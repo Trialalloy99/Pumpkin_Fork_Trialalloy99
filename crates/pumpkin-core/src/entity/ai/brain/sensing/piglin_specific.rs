@@ -101,7 +101,9 @@ impl Sensor for PiglinSpecificSensor {
                         } else if !is_baby {
                             visible_adult_hoglin_count += 1;
                             if huntable_hoglin.is_none()
-                                && entity.get_mob().is_some_and(|mob| mob.can_be_hunted())
+                                && entity
+                                    .get_mob()
+                                    .is_some_and(crate::entity::mob::Mob::can_be_hunted)
                             {
                                 huntable_hoglin = Some(entity.clone());
                             }

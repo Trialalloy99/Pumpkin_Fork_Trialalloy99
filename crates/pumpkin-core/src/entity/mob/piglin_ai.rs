@@ -215,7 +215,7 @@ impl PiglinAi {
                 Box::new(Self::start_admiring_item_if_seen()),
                 Box::new(start_celebrating_if_target_dead::create(
                     Self::CELEBRATION_TIME,
-                    |tick, killed| Self::wants_to_dance(tick, killed),
+                    Self::wants_to_dance,
                 )),
                 Box::new(stop_being_angry_if_target_dead::create()),
             ],
@@ -1384,7 +1384,7 @@ impl PiglinAi {
             .cloned()
             .unwrap_or_default();
         let target_is_hoglin = target.get_entity().entity_type == &EntityType::HOGLIN;
-        let hoglin_huntable = target.get_mob().is_none_or(|mob| mob.can_be_hunted());
+        let hoglin_huntable = target.get_mob().is_none_or(Mob::can_be_hunted);
         for other in adults {
             if other.get_entity().entity_type == &EntityType::PIGLIN_BRUTE {
                 if let Some(mob) = other.get_mob() {
