@@ -127,7 +127,7 @@ pub fn find_nearest_structure_start(
     generator: &WorldGenerator,
 ) -> Option<(BlockPos, pumpkin_data::structures::StructureKeys)> {
     use crate::{
-        biome::{BiomeSupplier, MultiNoiseBiomeSupplier},
+        biome::BiomeSupplier,
         generation::{
             noise::router::multi_noise_sampler::MultiNoiseSampler,
             structure::{
@@ -188,8 +188,9 @@ pub fn find_nearest_structure_start(
                             let mut biome_sampler = MultiNoiseSampler::generate(
                                 &noise_generator.base_router.multi_noise,
                             );
+                            // locate: the dimension's own biome source, the start cache is shared with chunk generation
                             let biome_supplier: &dyn BiomeSupplier =
-                                &MultiNoiseBiomeSupplier::OVERWORLD;
+                                &noise_generator.biome_supplier;
                             let context = StructureGeneratorContext {
                                 seed: world_seed,
                                 chunk_x,

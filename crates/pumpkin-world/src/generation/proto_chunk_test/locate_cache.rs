@@ -84,3 +84,23 @@ fn structure_spawn_override_applies_inside_swamp_hut_pieces() {
     let outside = BlockPos::new(bb.min.x - 40, inside.0.y, bb.min.z - 40);
     assert!(structure_spawns_at(&world_gen, &outside, "monster").is_none());
 }
+
+// locate: structures are validated with the dimension's own biome source (end cities only in end highlands/midlands)
+#[test]
+fn locate_finds_end_city_in_the_end() {
+    let world_gen = get_world_gen(
+        Seed(12345),
+        Dimension::THE_END,
+        false,
+        Vec::new(),
+        String::new(),
+    );
+    let found = find_nearest_structure_start(
+        BlockPos::new(0, 64, 0),
+        &StructureSet::END_CITIES,
+        &[StructureKeys::EndCity],
+        12,
+        &world_gen,
+    );
+    assert!(found.is_some());
+}
