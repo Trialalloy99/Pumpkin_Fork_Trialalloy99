@@ -2576,6 +2576,15 @@ impl<T: Mob + Send + 'static> EntityBase for T {
     #[allow(clippy::too_many_lines)]
     fn tick(&self, caller: &dyn EntityBase, server: &Server) {
         let mob_entity = self.get_mob_entity();
+        // non-finite position would hang raycasts, skip the tick and name the mob
+        let pos = mob_entity.living_entity.entity.pos.load();
+        if !(pos.x.is_finite() && pos.y.is_finite() && pos.z.is_finite()) {
+            tracing::error!(
+                "{} has a non-finite position {pos:?}",
+                mob_entity.living_entity.entity.entity_type.resource_name
+            );
+            return;
+        }
         mob_entity.process_navigation_updates();
         if mob_entity.living_entity.entity.tick_leash() {
             self.on_elastic_leash_pull();

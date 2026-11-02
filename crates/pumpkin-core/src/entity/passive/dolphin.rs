@@ -445,9 +445,7 @@ impl Goal for DolphinJumpGoal {
             return false;
         }
         let entity = dolphin.get_entity();
-        let motion = entity
-            .get_horizontal_facing()
-            .to_offset();
+        let motion = entity.get_horizontal_facing().to_offset();
         let pos = entity.block_pos.load();
         JUMP_STEPS_TO_CHECK.iter().all(|&step| {
             Self::water_is_clear(dolphin, pos, motion.x, motion.z, step)
@@ -475,9 +473,7 @@ impl Goal for DolphinJumpGoal {
             return;
         };
         let entity = dolphin.get_entity();
-        let motion = entity
-            .get_horizontal_facing()
-            .to_offset();
+        let motion = entity.get_horizontal_facing().to_offset();
         let mut velocity = entity.velocity.load();
         velocity.x += f64::from(motion.x) * 0.6;
         velocity.y += 0.7;
