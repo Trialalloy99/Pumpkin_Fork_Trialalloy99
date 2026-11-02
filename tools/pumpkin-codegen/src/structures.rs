@@ -110,15 +110,24 @@ pub struct SpawnOverrideStruct {
 pub struct SpawnEntryStruct {
     #[serde(rename = "type")]
     pub entity_type: String,
-    #[serde(default = "default_spawn_count", rename = "minCount")]
-    pub min_count: u32,
-    #[serde(default = "default_spawn_count", rename = "maxCount")]
-    pub max_count: u32,
+    pub count: serde_json::Value,
     pub weight: u32,
 }
 
-fn default_spawn_count() -> u32 {
-    1
+impl SpawnEntryStruct {
+    // count: constant or uniform int provider (StructureSpawnOverride SpawnerData)
+    fn count_range(&self) -> (u32, u32) {
+        match &self.count {
+            serde_json::Value::Number(n) => {
+                let n = n.as_u64().expect("spawn count") as u32;
+                (n, n)
+            }
+            value => (
+                value["min_inclusive"].as_u64().expect("min_inclusive") as u32,
+                value["max_inclusive"].as_u64().expect("max_inclusive") as u32,
+            ),
+        }
+    }
 }
 
 /// Deserialized structure entry specifying its valid biomes and generation step.
@@ -411,8 +420,7 @@ impl ToTokens for StructureStruct {
                     .iter()
                     .map(|entry| {
                         let et = &entry.entity_type;
-                        let min = entry.min_count;
-                        let max = entry.max_count;
+                        let (min, max) = entry.count_range();
                         let weight = entry.weight;
                         quote!(SpawnEntry {
                             entity_type: #et,
