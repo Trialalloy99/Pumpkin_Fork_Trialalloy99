@@ -504,7 +504,12 @@ impl MoveControlTrait for DrownedMoveControl {
         let mut yd = self.base.wanted_y - pos.y;
         let zd = self.base.wanted_z - pos.z;
         let dd = (xd * xd + yd * yd + zd * zd).sqrt();
-        yd /= dd;
+        // drowned: dd == 0 would turn yd into NaN
+        if dd > 0.0 {
+            yd /= dd;
+        } else {
+            yd = 0.0;
+        }
         let y_rot_d = (zd.atan2(xd).to_degrees() as f32) - 90.0;
         let yaw = MoveControl::rotlerp(entity.yaw.load(), y_rot_d, 90.0);
         entity.yaw.store(yaw);
