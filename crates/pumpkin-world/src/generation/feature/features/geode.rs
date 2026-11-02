@@ -88,6 +88,27 @@ impl GeodeFeature {
             .is_some_and(|props| props.to_props().iter().any(|p| p.key() == property))
     }
 
+    // geode: block list or #tag to ids (HolderSet<Block>)
+    fn block_ids(wrapper: &BlockWrapper) -> HashSet<BlockId> {
+        let names: &[String] = match wrapper {
+            BlockWrapper::Single(name) => std::slice::from_ref(name),
+            BlockWrapper::Multi(names) => names,
+        };
+        let mut ids = HashSet::new();
+        for name in names {
+            if let Some(tag) = name.strip_prefix('#') {
+                if let Some(tag_ids) =
+                    pumpkin_data::tag::get_tag_ids(pumpkin_data::tag::RegistryKey::Block, tag)
+                {
+                    ids.extend(tag_ids.iter().map(|id| BlockId::new_or_air(*id)));
+                }
+            } else if let Some(block) = Block::from_name(name) {
+                ids.insert(block.id);
+            }
+        }
+        ids
+    }
+
     #[allow(clippy::too_many_arguments)]
     #[allow(clippy::too_many_lines)]
     pub fn generate<T: GenerationCache>(
@@ -102,40 +123,14 @@ impl GeodeFeature {
     ) -> bool {
         let origin = pos;
         let num_points = self.distribution_points.get(random);
-        let noise = NormalNoise::create(random, -4, &[1.0]);
+        // geode: noise from a fresh legacy random of the level seed (GeodeFeature.NOISE_PARAMETERS)
+        let mut noise_random = RandomGenerator::Legacy(
+            pumpkin_util::random::legacy_rand::LegacyRand::from_seed(chunk.world_seed() as u64),
+        );
+        let noise = NormalNoise::create(&mut noise_random, -4, &[1.0]);
 
-        // Precompute sets of raw block ids for fast lookups
-        let mut invalid_raw_ids: HashSet<BlockId> = HashSet::new();
-        match &self.invalid_blocks {
-            BlockWrapper::Single(s) => {
-                if let Some(b) = Block::from_name(s.as_str()) {
-                    invalid_raw_ids.insert(b.id);
-                }
-            }
-            BlockWrapper::Multi(v) => {
-                for s in v {
-                    if let Some(b) = Block::from_name(s.as_str()) {
-                        invalid_raw_ids.insert(b.id);
-                    }
-                }
-            }
-        }
-
-        let mut cannot_replace_raw_ids: HashSet<BlockId> = HashSet::new();
-        match &self.cannot_replace {
-            BlockWrapper::Single(s) => {
-                if let Some(b) = Block::from_name(s.as_str()) {
-                    cannot_replace_raw_ids.insert(b.id);
-                }
-            }
-            BlockWrapper::Multi(v) => {
-                for s in v {
-                    if let Some(b) = Block::from_name(s.as_str()) {
-                        cannot_replace_raw_ids.insert(b.id);
-                    }
-                }
-            }
-        }
+        let invalid_raw_ids = Self::block_ids(&self.invalid_blocks);
+        let cannot_replace_raw_ids = Self::block_ids(&self.cannot_replace);
 
         let mut points: Vec<(BlockPos, i32)> = Vec::with_capacity(num_points as usize);
         let mut crack_points: Vec<BlockPos> = Vec::new();

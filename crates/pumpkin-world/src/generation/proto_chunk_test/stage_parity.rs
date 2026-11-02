@@ -750,3 +750,68 @@ fn end_stage_parity_hashes() {
         pumpkin_util::read_data_from_file!("../../../../../assets/tests/end_stage_hashes.json");
     verify_stage_parity(0, &stages);
 }
+
+// geode: vanilla seed 12345 has an amethyst geode over chunk (73, -21), y -28..-13
+#[test]
+fn amethyst_geode_generates_where_vanilla_places_it() {
+    let block_registry = TestBlockRegistry;
+    let (cx, cz) = (73, -21);
+    let world_gen = get_world_gen(
+        Seed(12345),
+        Dimension::OVERWORLD,
+        false,
+        Vec::new(),
+        String::new(),
+    );
+    let WorldGenerator::Noise(generator) = &*world_gen else {
+        unreachable!()
+    };
+    let mut chunks = std::collections::HashMap::new();
+    for nx in (cx - 10)..=(cx + 10) {
+        for nz in (cz - 10)..=(cz + 10) {
+            let mut c = ProtoChunk::new(nx, nz, &world_gen);
+            c.step_to_biomes(generator);
+            c.set_structure_starts(generator);
+            chunks.insert((nx, nz), c);
+        }
+    }
+    for nx in (cx - 2)..=(cx + 2) {
+        for nz in (cz - 2)..=(cz + 2) {
+            let c = chunks.get_mut(&(nx, nz)).unwrap();
+            c.set_structure_references(generator);
+            c.step_to_noise(generator);
+            let sb = surface_biomes(&world_gen, nx, nz);
+            c.step_to_surface(generator, &sb);
+            c.step_to_carvers(generator);
+        }
+    }
+    let mut cache = TestGridCache {
+        center_pos: (cx, cz),
+        chunks,
+    };
+    for nx in (cx - 1)..=(cx + 1) {
+        for nz in (cz - 1)..=(cz + 1) {
+            cache.center_pos = (nx, nz);
+            ProtoChunk::generate_features_and_structure(
+                &mut cache,
+                &block_registry,
+                &generator.random_config,
+            );
+        }
+    }
+    let chunk = cache.chunks.get(&(cx, cz)).unwrap();
+    let amethyst = (36..=51)
+        .flat_map(|y| (0..16).flat_map(move |z| (0..16).map(move |x| (x, y, z))))
+        .filter(|&(x, y, z)| {
+            let id = chunk.get_block_state_raw(x, y, z);
+            [
+                pumpkin_data::Block::AMETHYST_BLOCK,
+                pumpkin_data::Block::CALCITE,
+                pumpkin_data::Block::SMOOTH_BASALT,
+            ]
+            .iter()
+            .any(|block| block.id == pumpkin_data::Block::from_state_id(id).id)
+        })
+        .count();
+    assert!(amethyst > 100, "geode blocks: {amethyst}");
+}

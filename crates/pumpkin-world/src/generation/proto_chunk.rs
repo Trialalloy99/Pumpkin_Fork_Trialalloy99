@@ -71,6 +71,10 @@ pub trait GenerationCache: HeightLimitView + BlockAccessor {
     fn get_center_chunk_mut(&mut self) -> &mut ProtoChunk;
     fn get_center_chunk(&self) -> &ProtoChunk;
 
+    fn world_seed(&self) -> i64 {
+        self.get_center_chunk().world_seed
+    }
+
     fn get_chunk_mut(&mut self, chunk_x: i32, chunk_z: i32) -> Option<&mut ProtoChunk>;
     fn get_chunk(&self, chunk_x: i32, chunk_z: i32) -> Option<&ProtoChunk>;
 
@@ -140,6 +144,8 @@ pub struct ProtoChunk {
     pub z: i32,
     pub default_block: &'static BlockState,
     biome_mixer_seed: i64,
+    // feature: level seed for features that build their own noise (GeodeFeature, level.getSeed)
+    pub(crate) world_seed: i64,
     pub(crate) flat_block_map: Vec<BlockStateId>,
     pub flat_biome_map: Box<[u8]>,
     pub flat_surface_height_map: [i16; CHUNK_AREA],
@@ -239,6 +245,14 @@ impl ProtoChunk {
             super::generator::WorldGenerator::Custom(custom_gen) => custom_gen.biome_mixer_seed(),
         };
 
+        let world_seed = match generator {
+            super::generator::WorldGenerator::Noise(noise_gen) => {
+                noise_gen.random_config.seed as i64
+            }
+            super::generator::WorldGenerator::Flat(flat_gen) => flat_gen.seed as i64,
+            super::generator::WorldGenerator::Custom(_) => 0,
+        };
+
         let default_heightmap = [(bottom_y as i16) - 1; CHUNK_AREA];
         let unprimed_wg_heightmap = [i16::MIN; CHUNK_AREA];
         Self {
@@ -246,6 +260,7 @@ impl ProtoChunk {
             z,
             default_block,
             biome_mixer_seed,
+            world_seed,
             flat_block_map: Vec::new(),
             flat_biome_map: vec![
                 Biome::PLAINS.id;
