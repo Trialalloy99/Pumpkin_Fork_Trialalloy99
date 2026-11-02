@@ -1275,6 +1275,8 @@ pub struct Entity {
     pub portal_cooldown: AtomicU32,
 
     pub portal_manager: std::sync::Mutex<Option<PortalProcessor>>,
+    /// Vanilla `canUsePortal` false, e.g. a heart bound creaking.
+    pub cannot_use_portal: AtomicBool,
     /// Custom name for the entity
     pub custom_name: ArcSwap<Option<TextComponent>>,
     /// Indicates whether the entity's custom name is visible
@@ -1535,6 +1537,7 @@ impl Entity {
             last_biome_update_pos: AtomicCell::new(BlockPos::new(floor_x, floor_y, floor_z)),
             portal_cooldown: AtomicU32::new(0),
             portal_manager: std::sync::Mutex::new(None),
+            cannot_use_portal: AtomicBool::new(false),
             custom_name: ArcSwap::new(Arc::new(None)),
             custom_name_visible: AtomicBool::new(false),
             blocks_building: false,
@@ -3185,6 +3188,9 @@ impl Entity {
     }
 
     pub fn try_use_portal(&self, portal_world: Arc<World>, pos: BlockPos) {
+        if self.cannot_use_portal.load(Ordering::Relaxed) {
+            return;
+        }
         let mut portal_event =
             crate::plugin::api::events::entity::entity_portal::EntityPortalEvent::new(
                 self.entity_id,
