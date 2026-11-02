@@ -79,6 +79,7 @@ Unser Fortschritt steht auf **https://claude.ai/artifact/KAHK4pXmbbEhd9nXiBuobN*
 | 9 (Gemini) | Camel, Camel Husk, Cod, Salmon, Tropical Fish, Pufferfish, Dolphin, Panda, Nautilus, Zombie Nautilus | in `playable` gemergt; Panda und Delfin-Schatzsuche von Claude nachportiert; Test im Spiel steht aus |
 | Redstone (Abschluss) | Druckplatten, Tageslichtsensor, Notenblock und Kolben gegen Vanilla geprüft; Kolben: bewegte Blöcke haben Kollision, Entities werden kollisionsbewusst geschoben, Pushreaction-Ausnahmen, Wasser/Zerstörung beim Landen | in `playable`; Test im Spiel steht aus |
 | Performance | `/recording`, Himmelslicht, Jigsaw-Cache, Mth.floor, Gen-Threads, mimalloc, FxHash-Strukturcache | in `playable`; siehe unten |
+| 10 | Breeze, Wither Skeleton, Creaking, Allay, Copper Golem, Happy Ghast, Sniffer, Wandering Trader, Piglin, Sulfur Cube | Branch `batch-10`; im Tracker auf `done`; Test im Spiel steht aus |
 
 Aus dem Tracker entfernt, weil Vanilla sie auf einem dedizierten Server nicht hat: `/publish` und `/unpublish` (nur Einzelspieler) sowie `/jfr` (Java Flight Recorder, braucht eine JVM).
 
@@ -126,6 +127,14 @@ Batch 7, neu dazugekommen:
 - Wetterzyklus lief nie (Bedingung war umgedreht), jetzt mit Spielregel `advance_weather`.
 - `PiglinAi::anger_nearby_piglins`: Container öffnen (Truhe, Fass, Shulker, Enderkiste, Kisten-Lore/-Boot), Kisten-Fahrzeug zerstören, `guarded_by_piglins` abbauen. Näherung: Pumpkins Piglin hat kein Brain, die Wut setzt das Angriffsziel statt `ANGRY_AT`.
 - Leinen wie Vanilla `Leashable`: Feder-Physik mit Drehmoment (`Entity::tick_leash`, `leash_angular_momentum`), Quad-Leine Boot/Happy Ghast, `crate::entity::leash_interact` (Leine anlegen/lösen, Schere, Sneak-Übertragen) für Mobs und Boote.
+
+Batch 10, neu dazugekommen:
+- Brain-Bausteine in `ai/brain/behavior`: `MeleeAttack`, `SetWalkTargetFromAttackTargetIfTargetOutOfReach`, `InteractWithDoor`, `TransportItemsBetweenContainers`, `FollowTemptation`, `BabyFollowAdult`, `AnimalMakeLove`, `SetEntityLookTarget` (Typ, Predicate, beliebig), `CopyMemoryWithExpiry`, `EraseMemoryIf`, `GoToTargetLocation`, `SetWalkTargetAwayFrom`, `BackUpIfTooClose`, `InteractWith`, `SetLookAndInteract`, `CrossbowAttack`, `SpearApproach/Attack/Retreat`, `StartCelebratingIfTargetDead`, `StopBeingAngryIfTargetDead`. `OneShot::when` ist Vanilla `triggerIf`, `Behavior::stop_timed` meldet, ob die Zeit abgelaufen ist.
+- Sensoren: `TemptingSensor` (`FoodTemptations`), `AdultSensorAnyType`, `PiglinSpecific`. `Mob::wants_to_pick_up_in_brain` lässt Sensoren das Brain mitgeben.
+- Bewegung: `GhastMoveControl` (Happy Ghast), `MoveControlTrait::wanted_position/set_wait`, `MobEntity::stop_in_place`, `LivingEntity::travel_flying_with`, `TemptGoal::for_non_pathfinders`, `Entity::leash_snap_distance/leash_elastic_distance`, `Mob::on_elastic_leash_pull`, `Mob::mob_is_collidable`.
+- Restitution (Blöcke und Entities), Sulfur-Cube-Archetypen per Codegen, Kupfergolem-Bauschema (`carved_pumpkin.rs`), `block/blocks/chests.rs::get_chest_container`.
+- `WanderingTraderSpawner` (`world/wandering_trader_spawner.rs`), Timer in `wandering_trader.dat` über `LevelData`.
+- Näherungen: Brain-Anger-Broadcasts der Piglins nutzen `try_with_brain` (ein gerade tickender Nachbar wird übersprungen). Der Piglin Brute bleibt goal-basiert. Im Kupfergolem fehlt das Aufsetzen einer Mohnblume (kein Equippable im Item-Datensatz). Der Creaking-Heart-Block erzeugt noch keine Creakings.
 
 Performance (Chunk-Laden), neu dazugekommen:
 - `/recording start|stop` (`chunk_system/profiler.rs`): misst jede Generierungsstufe, Disk-IO, Scheduler und Senden; Bericht in `recordings/chunks-*.txt`. Scheduler-Zeiten sind pro Dimension aufsummiert und daher nur grob.
