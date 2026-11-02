@@ -191,8 +191,51 @@ fn fill_mob_bucket_stack(
     give_filled_bucket_stack(stack, player, bucket_stack, true);
 }
 
-fn apply_mob_bucket_components(bucket_stack: &ItemStack, mob: &dyn EntityBase, player: &Player) {
-    crate::item::items::spawn_egg::apply_entity_variant(bucket_stack, mob, Some(player));
+// bucket: spawn the stored mob of a mob bucket (MobBucketItem.checkExtraContent)
+pub(crate) fn spawn_bucket_mob(
+    world: &Arc<World>,
+    item: &Item,
+    place_pos: BlockPos,
+    bucket_stack: &ItemStack,
+    player: Option<&Player>,
+) {
+    let Some((entity_type, _)) = get_mob_for_bucket(item) else {
+        return;
+    };
+    let spawn_coord = Vector3::new(
+        f64::from(place_pos.0.x) + 0.5,
+        f64::from(place_pos.0.y),
+        f64::from(place_pos.0.z) + 0.5,
+    );
+    let mob = from_type(entity_type, spawn_coord, world, Uuid::new_v4());
+    if mob.get_mob().and_then(|mob| mob.as_bucketable()).is_some() {
+        crate::entity::mob::spawn::finalize_spawn(
+            &mob,
+            world,
+            None,
+            crate::entity::mob::spawn::SpawnReason::Bucket,
+        );
+        apply_mob_bucket_components(bucket_stack, mob.as_ref(), player);
+        if world.spawn_creature(
+            mob.clone(),
+            crate::plugin::api::events::entity::creature_spawn::CreatureSpawnReason::Bucket,
+            player.and_then(|player| world.get_player_by_uuid(player.gameprofile.id)),
+        ) && let Some(fish) = mob.get_mob().and_then(|mob| mob.as_fish())
+        {
+            fish.play_ambient_sound();
+        }
+    } else {
+        apply_mob_bucket_components(bucket_stack, mob.as_ref(), player);
+        world.spawn_entity(mob);
+    }
+}
+
+fn apply_mob_bucket_components(
+    bucket_stack: &ItemStack,
+    mob: &dyn EntityBase,
+    player: Option<&Player>,
+) {
+    crate::item::items::spawn_egg::apply_entity_variant(bucket_stack, mob, player);
     if let Some(bucketable) = mob.get_mob().and_then(|mob| mob.as_bucketable()) {
         if let Some(data) = bucket_stack.get_data_component::<BucketEntityDataImpl>()
             && let Some(nbt) = &data.nbt
@@ -562,34 +605,7 @@ impl ItemBehaviour for FilledBucketItem {
         }
 
         let bucket_stack = player.inventory.get_stack_in_hand(hand);
-        if let Some((entity_type, _)) = get_mob_for_bucket(item) {
-            let spawn_coord = Vector3::new(
-                f64::from(place_pos.0.x) + 0.5,
-                f64::from(place_pos.0.y),
-                f64::from(place_pos.0.z) + 0.5,
-            );
-            let mob = from_type(entity_type, spawn_coord, &world, Uuid::new_v4());
-            if mob.get_mob().and_then(|mob| mob.as_bucketable()).is_some() {
-                crate::entity::mob::spawn::finalize_spawn(
-                    &mob,
-                    &world,
-                    None,
-                    crate::entity::mob::spawn::SpawnReason::Bucket,
-                );
-                apply_mob_bucket_components(&bucket_stack, mob.as_ref(), player);
-                if world.spawn_creature(
-                    mob.clone(),
-                    crate::plugin::api::events::entity::creature_spawn::CreatureSpawnReason::Bucket,
-                    world.get_player_by_uuid(player.gameprofile.id),
-                ) && let Some(fish) = mob.get_mob().and_then(|mob| mob.as_fish())
-                {
-                    fish.play_ambient_sound();
-                }
-            } else {
-                apply_mob_bucket_components(&bucket_stack, mob.as_ref(), player);
-                world.spawn_entity(mob);
-            }
-        }
+        spawn_bucket_mob(&world, item, place_pos, &bucket_stack, Some(player));
 
         player.increment_stat(StatisticCategory::Used, i32::from(item.id), 1);
 

@@ -5643,6 +5643,20 @@ impl World {
                 .is_some_and(|entity| entity.drops_for_creative_player())
         {
             flags.remove(BlockFlags::SKIP_DROPS);
+        } else if flags.contains(BlockFlags::SKIP_DROPS)
+            && cause.is_some_and(|p| p.gamemode.load() == pumpkin_util::GameMode::Creative)
+            && pumpkin_data::tag::Taggable::has_tag(
+                broken_block,
+                &pumpkin_data::tag::Block::MINECRAFT_BEEHIVES,
+            )
+            && pumpkin_data::block_properties::BeeNestLikeProperties::from_state_id(
+                broken_block_state.id,
+            )
+            .honey_level
+                > 0
+        {
+            // beehive: creative break keeps a hive that only holds honey (BeehiveBlock.playerWillDestroy)
+            flags.remove(BlockFlags::SKIP_DROPS);
         }
 
         let mut event = BlockBreakEvent::new(

@@ -244,7 +244,7 @@ impl ArmadilloEntity {
     }
 
     // armadillo: brush interaction to drop scute (Armadillo.brushOffScute)
-    pub fn brush_off_scute(&self, player: &Player, item_stack: &mut ItemStack) -> bool {
+    pub fn brush_off_scute(&self, player: Option<&Player>, item_stack: &mut ItemStack) -> bool {
         if self.is_baby() || !self.get_entity().is_alive() {
             return false;
         }
@@ -257,7 +257,7 @@ impl ArmadilloEntity {
         ));
         world.spawn_entity(item_entity);
         world.play_sound(Sound::EntityArmadilloBrush, SoundCategory::Neutral, &pos);
-        if player.gamemode.load() != pumpkin_util::GameMode::Creative {
+        if player.is_none_or(|player| player.gamemode.load() != pumpkin_util::GameMode::Creative) {
             let _ = item_stack.damage_item(16);
         }
         true
@@ -511,7 +511,7 @@ impl Mob for ArmadilloEntity {
     }
 
     fn mob_interact(&self, player: &Arc<Player>, item_stack: &mut ItemStack) -> bool {
-        if item_stack.item == &Item::BRUSH && self.brush_off_scute(player, item_stack) {
+        if item_stack.item == &Item::BRUSH && self.brush_off_scute(Some(player), item_stack) {
             return true;
         }
         if self.is_scared() {

@@ -262,6 +262,10 @@ impl NormalSlot {
 }
 
 impl Slot for NormalSlot {
+    fn can_insert(&self, stack: &ItemStack) -> bool {
+        self.inventory.is_valid_slot_for(self.index, stack)
+    }
+
     fn get_inventory(&self) -> Arc<dyn Inventory> {
         self.inventory.clone()
     }

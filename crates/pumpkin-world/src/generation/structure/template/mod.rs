@@ -104,13 +104,43 @@ pub fn place_template(
     );
 }
 
-#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+#[allow(clippy::too_many_arguments)]
 pub fn place_template_with_options(
     placer: &mut impl BlockPlacer,
     template: &StructureTemplate,
     origin: Vector3<i32>,
     offset: (i32, i32),
     rotation: Rotation,
+    skip_air: bool,
+    apply_waterlogging: bool,
+    processors: &[StructureProcessor],
+    chunk_box: Option<&pumpkin_util::math::block_box::BlockBox>,
+    keep_jigsaws: bool,
+) {
+    place_template_mirrored(
+        placer,
+        template,
+        origin,
+        offset,
+        rotation,
+        Mirror::None,
+        skip_air,
+        apply_waterlogging,
+        processors,
+        chunk_box,
+        keep_jigsaws,
+    );
+}
+
+/// `place_template_with_options` with a mirror applied before the rotation (`StructureTemplate.placeInWorld`).
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+pub fn place_template_mirrored(
+    placer: &mut impl BlockPlacer,
+    template: &StructureTemplate,
+    origin: Vector3<i32>,
+    offset: (i32, i32),
+    rotation: Rotation,
+    mirror: Mirror,
     skip_air: bool,
     apply_waterlogging: bool,
     processors: &[StructureProcessor],
@@ -153,14 +183,21 @@ pub fn place_template_with_options(
         }
 
         // Resolve block state with rotation applied to directional properties
-        let Some(mut state) =
-            BlockStateResolver::resolve(&placed_entry, rotation, Mirror::default())
-        else {
+        let Some(mut state) = BlockStateResolver::resolve(&placed_entry, rotation, mirror) else {
             continue;
         };
 
         // Rotate block position within template bounds
-        let local_pos = rotation.transform_pos(block.pos, template.size);
+        let mirrored_pos = match mirror {
+            Mirror::LeftRight => {
+                Vector3::new(block.pos.x, block.pos.y, template.size.z - 1 - block.pos.z)
+            }
+            Mirror::FrontBack => {
+                Vector3::new(template.size.x - 1 - block.pos.x, block.pos.y, block.pos.z)
+            }
+            Mirror::None => block.pos,
+        };
+        let local_pos = rotation.transform_pos(mirrored_pos, template.size);
 
         let wx = world_x + local_pos.x;
         let mut wy = origin.y + local_pos.y;
@@ -183,7 +220,7 @@ pub fn place_template_with_options(
         {
             *waterlogged = true;
             if let Some(waterlogged_state) =
-                BlockStateResolver::resolve(&placed_entry, rotation, Mirror::default())
+                BlockStateResolver::resolve(&placed_entry, rotation, mirror)
             {
                 state = waterlogged_state;
             }

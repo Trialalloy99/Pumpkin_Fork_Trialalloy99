@@ -166,12 +166,18 @@ impl BlockEntity for ShulkerBoxBlockEntity {
 impl ViewerCountListener for ShulkerBoxBlockEntity {
     fn on_container_open(&self, world: &Arc<World>, position: &BlockPos) {
         Self::play_sound(world, position, 1);
-        // TODO: this.world.emitGameEvent(player, GameEvent.CONTAINER_OPEN, this.pos);
+        world.emit_game_event(
+            pumpkin_data::game_event::GameEvent::ContainerOpen.name(),
+            position.to_centered_f64(),
+        );
     }
 
     fn on_container_close(&self, world: &Arc<World>, position: &BlockPos) {
         Self::play_sound(world, position, 0);
-        // TODO: this.world.emitGameEvent(player, GameEvent.CONTAINER_CLOSE, this.pos);
+        world.emit_game_event(
+            pumpkin_data::game_event::GameEvent::ContainerClose.name(),
+            position.to_centered_f64(),
+        );
     }
 
     fn on_viewer_count_update(&self, world: &Arc<World>, position: &BlockPos, _old: u16, new: u16) {
@@ -193,6 +199,34 @@ impl ShulkerBoxBlockEntity {
             comparator_dirty: AtomicBool::new(false),
             viewers: ViewerCountTracker::new(),
         }
+    }
+
+    #[must_use]
+    pub fn is_closed(&self) -> bool {
+        self.viewers.current.load(Ordering::Relaxed) == 0
+    }
+
+    // shulker: Shulker.getProgressDeltaAabb(1, facing, 0, 0.5) deflated by 1.0E-6
+    #[must_use]
+    pub fn lid_open_box(
+        pos: &BlockPos,
+        facing: pumpkin_data::BlockDirection,
+    ) -> pumpkin_util::math::boundingbox::BoundingBox {
+        let offset = facing.to_offset();
+        let origin = pos.0.to_f64();
+        let axis = |origin: f64, step: i32| match step {
+            1 => (origin + 1.0, origin + 1.5),
+            -1 => (origin - 0.5, origin),
+            _ => (origin, origin + 1.0),
+        };
+        let (min_x, max_x) = axis(origin.x, offset.x);
+        let (min_y, max_y) = axis(origin.y, offset.y);
+        let (min_z, max_z) = axis(origin.z, offset.z);
+        let eps = 1.0E-6;
+        pumpkin_util::math::boundingbox::BoundingBox::new(
+            pumpkin_util::math::vector3::Vector3::new(min_x + eps, min_y + eps, min_z + eps),
+            pumpkin_util::math::vector3::Vector3::new(max_x - eps, max_y - eps, max_z - eps),
+        )
     }
 
     pub fn update_viewers(&self, world: &Arc<World>) {
@@ -263,6 +297,14 @@ impl Inventory for ShulkerBoxBlockEntity {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         items[slot] = stack;
         self.mark_dirty();
+    }
+
+    // shulker: no shulker boxes inside (ShulkerBoxBlockEntity.canPlaceItemThroughFace)
+    fn is_valid_slot_for(&self, _slot: usize, stack: &ItemStack) -> bool {
+        use pumpkin_data::tag::{self, Taggable};
+        !stack
+            .get_item()
+            .has_tag(&tag::Item::MINECRAFT_SHULKER_BOXES)
     }
 
     fn on_open(&self) {

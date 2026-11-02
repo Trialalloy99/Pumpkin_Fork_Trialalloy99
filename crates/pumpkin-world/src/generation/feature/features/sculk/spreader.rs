@@ -178,6 +178,22 @@ impl SculkSpreader {
         &self.cursors
     }
 
+    /// Active cursors, saved with the catalyst block entity.
+    #[must_use]
+    pub fn cursor_list(&self) -> &[ChargeCursor] {
+        &self.cursors
+    }
+
+    #[must_use]
+    pub const fn is_idle(&self) -> bool {
+        self.cursors.is_empty()
+    }
+
+    /// Re-adds a saved cursor without splitting its charge.
+    pub fn restore_cursor(&mut self, cursor: ChargeCursor) {
+        self.add_cursor(cursor);
+    }
+
     /// Main update loop over all active cursors.
     pub fn update_cursors(
         &mut self,

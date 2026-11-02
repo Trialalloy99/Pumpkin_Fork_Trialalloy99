@@ -2385,6 +2385,11 @@ impl LivingEntity {
 
             self.update_death_stats(&*dyn_self, kill_credit.as_deref());
 
+            // sculk catalyst listens for ENTITY_DIE and consumes the experience
+            let experience_consumed = crate::block::blocks::sculk::sculk_catalyst::on_entity_death(
+                &world, &*dyn_self, killer,
+            );
+
             self.make_voice_sound(&*dyn_self, self.death_sound(&*dyn_self));
             world.send_entity_status(&self.entity, EntityStatus::Death, ActorEventID::Death);
             let looting_level;
@@ -2456,6 +2461,7 @@ impl LivingEntity {
 
             // Award experience
             if killer_allows_drops
+                && !experience_consumed
                 && params.killed_by_player.unwrap_or(false)
                 && world.level_info.load().game_rules.mob_drops
                 && dyn_self.should_drop_experience()

@@ -407,11 +407,96 @@ impl DispenserBlock {
         } else if item.item.id == Item::EXPERIENCE_BOTTLE.id {
             // Experience bottles (bottles o' enchanting) are thrown like splash potions
             Self::dispense_experience_bottle(ctx, item);
+        } else if item.item.id == Item::BONE_MEAL.id {
+            Self::dispense_bone_meal(ctx, item);
+        } else if item.item.id == Item::BRUSH.id {
+            Self::dispense_brush(ctx, item);
+        } else if item.item.id == Item::CHEST.id {
+            if !Self::dispense_chest_onto_animal(ctx, item) {
+                Self::drop_item(ctx, item);
+            }
         } else {
-            // TODO: Bone meal, chests onto llamas, brushes onto armadillos
             // Default / Drop
             Self::drop_item(ctx, item);
         }
+    }
+
+    // dispenser: Items.BONE_MEAL behavior (BoneMealItem.growCrop)
+    fn dispense_bone_meal(ctx: &DispenseContext<'_>, item: &mut ItemStack) {
+        let front = Self::target_position(ctx);
+        let (block, state_id) = ctx.world.get_block_and_state_id(&front);
+        if ctx
+            .world
+            .block_registry
+            .bone_meal(block, ctx.world, &front, state_id)
+        {
+            item.decrement(1);
+            ctx.world
+                .sync_world_event(WorldEvent::ParticlesAndSoundPlantGrowth, front, 15);
+            Self::play_dispense_effects(ctx, WorldEvent::SoundDispenserDispense);
+        } else {
+            Self::play_dispense_effects(ctx, WorldEvent::SoundDispenserFail);
+        }
+    }
+
+    // dispenser: Items.BRUSH behavior, brushes scutes off armadillos
+    fn dispense_brush(ctx: &DispenseContext<'_>, item: &mut ItemStack) {
+        let front = Self::target_position(ctx);
+        let area = pumpkin_util::math::boundingbox::BoundingBox::from_block(&front);
+        let brushed = ctx.world.get_entities_at_box(&area).iter().any(|entity| {
+            !entity.get_entity().is_spectator()
+                && entity
+                    .cast_any()
+                    .downcast_ref::<crate::entity::passive::armadillo::ArmadilloEntity>()
+                    .is_some_and(|armadillo| armadillo.brush_off_scute(None, item))
+        });
+        Self::play_dispense_effects(
+            ctx,
+            if brushed {
+                WorldEvent::SoundDispenserDispense
+            } else {
+                WorldEvent::SoundDispenserFail
+            },
+        );
+    }
+
+    // dispenser: Items.CHEST behavior, equips a tamed chested animal
+    fn dispense_chest_onto_animal(ctx: &DispenseContext<'_>, item: &mut ItemStack) -> bool {
+        use crate::entity::passive::{donkey::DonkeyEntity, llama::LlamaEntity};
+        let front = Self::target_position(ctx);
+        let area = pumpkin_util::math::boundingbox::BoundingBox::from_block(&front);
+        for entity in ctx.world.get_entities_at_box(&area) {
+            if !entity.get_entity().is_alive() {
+                continue;
+            }
+            let any = entity.cast_any();
+            let equipped = match (
+                any.downcast_ref::<DonkeyEntity>(),
+                any.downcast_ref::<LlamaEntity>(),
+            ) {
+                (Some(donkey), _) => {
+                    let equip = donkey.is_tame() && !donkey.has_chest();
+                    if equip {
+                        donkey.set_has_chest(true);
+                    }
+                    equip
+                }
+                (_, Some(llama)) => {
+                    let equip = llama.is_tame() && !llama.has_chest();
+                    if equip {
+                        llama.set_has_chest(true);
+                    }
+                    equip
+                }
+                _ => false,
+            };
+            if equipped {
+                item.decrement(1);
+                Self::play_dispense_effects(ctx, WorldEvent::SoundDispenserDispense);
+                return true;
+            }
+        }
+        false
     }
 
     fn projectile_spawn_position(ctx: &DispenseContext<'_>) -> Vector3<f64> {
@@ -821,7 +906,7 @@ impl DispenserBlock {
     fn dispense_filled_bucket(ctx: &DispenseContext<'_>, item: &mut ItemStack) {
         let front = Self::target_position(ctx);
 
-        // TODO: Spawn the stored entity for axolotl/fish/tadpole buckets, like the player path.
+        let bucket_stack = item.clone();
         let emptied = if should_evaporate_in_nether(item.item, ctx.world) {
             play_bucket_evaporation(ctx.world, &front.to_f64());
             true
@@ -835,6 +920,14 @@ impl DispenserBlock {
         };
 
         if emptied {
+            // bucket: spawn the stored mob (MobBucketItem.checkExtraContent)
+            crate::item::items::bucket::spawn_bucket_mob(
+                ctx.world,
+                bucket_stack.item,
+                front,
+                &bucket_stack,
+                None,
+            );
             *item = ItemStack::new(1, &Item::BUCKET);
             Self::play_dispense_effects(ctx, WorldEvent::SoundDispenserDispense);
         } else {

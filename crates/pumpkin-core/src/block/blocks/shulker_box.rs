@@ -11,8 +11,8 @@ use crate::block::{
 };
 
 use crate::block::entities::shulker_box::ShulkerBoxBlockEntity;
-use pumpkin_data::BlockStateId;
 use pumpkin_data::translation;
+use pumpkin_data::{BlockStateId, FacingExt};
 use pumpkin_inventory::Inventory;
 use pumpkin_inventory::generic_container_screen_handler::create_generic_9x3;
 use pumpkin_inventory::player::player_inventory::PlayerInventory;
@@ -71,6 +71,28 @@ impl BlockBehaviour for ShulkerBoxBlock {
     }
 
     fn normal_use(&self, args: NormalUseArgs<'_>) -> BlockActionResult {
+        // shulker: closed lid needs free space in front (ShulkerBoxBlock.canOpen)
+        let state = args.world.get_block_state(args.position);
+        let facing = EndRodLikeProperties::from_state_id(state.id)
+            .facing
+            .to_block_direction();
+        let is_closed = args
+            .world
+            .get_block_entity(args.position)
+            .and_then(|be| {
+                be.as_any()
+                    .downcast_ref::<ShulkerBoxBlockEntity>()
+                    .map(ShulkerBoxBlockEntity::is_closed)
+            })
+            .unwrap_or(true);
+        if is_closed
+            && !args
+                .world
+                .is_space_empty(ShulkerBoxBlockEntity::lid_open_box(args.position, facing))
+        {
+            return BlockActionResult::Success;
+        }
+
         if let Some(factory) = self.get_screen_handler_factory(GetScreenHandlerFactoryArgs {
             server: args.server,
             world: args.world,

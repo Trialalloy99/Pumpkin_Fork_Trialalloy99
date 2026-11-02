@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use crate::block::GetStateForNeighborUpdateArgs;
 use crate::block::entities::beehive::{BeeReleaseStatus, BeehiveBlockEntity};
 use crate::block::registry::BlockActionResult;
 use crate::block::{
@@ -10,13 +11,13 @@ use crate::entity::item::ItemEntity;
 use crate::entity::player::Player;
 use crate::entity::{Entity, EntityBase};
 use crate::world::World;
-use pumpkin_data::Block;
 use pumpkin_data::block_properties::BeeNestLikeProperties;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::game_event::GameEvent;
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::sound::{Sound, SoundCategory};
+use pumpkin_data::{Block, BlockState};
 use pumpkin_data::{BlockDirection, BlockId, BlockStateId};
 use pumpkin_inventory::screen_handler::InventoryPlayer;
 use pumpkin_util::math::position::BlockPos;
@@ -166,6 +167,27 @@ impl BlockBehaviour for BeehiveBlock {
             );
         }
         anger_nearby_bees(args.world, args.position);
+    }
+
+    // beehive: fire next to the hive drives the bees out (BeehiveBlock.updateShape)
+    fn get_state_for_neighbor_update(
+        &self,
+        args: GetStateForNeighborUpdateArgs<'_>,
+    ) -> BlockStateId {
+        if Block::from_state_id(args.neighbor_state_id) == &Block::FIRE
+            && let Some(block_entity) = args.world.get_block_entity(args.position)
+            && let Some(hive) = block_entity.as_any().downcast_ref::<BeehiveBlockEntity>()
+            && let Some(server) = args.world.server.upgrade()
+        {
+            let world = server.get_world_from_dimension(&args.world.dimension);
+            hive.empty_all_living_from_hive(
+                &world,
+                None,
+                BlockState::from_id(args.state_id),
+                BeeReleaseStatus::Emergency,
+            );
+        }
+        args.state_id
     }
 
     fn on_place(&self, args: OnPlaceArgs<'_>) -> BlockStateId {
