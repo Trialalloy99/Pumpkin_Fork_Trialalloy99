@@ -235,10 +235,19 @@ impl FrogEntity {
             return false;
         }
         // frog: AbstractCubeMob size must be 1
-        target
+        if let Some(slime) = target
             .cast_any()
             .downcast_ref::<crate::entity::mob::slime::SlimeEntity>()
-            .is_none_or(|cube| cube.get_size() == 1)
+        {
+            return slime.get_size() == 1;
+        }
+        if let Some(magma) = target
+            .cast_any()
+            .downcast_ref::<crate::entity::mob::magma_cube::MagmaCubeEntity>()
+        {
+            return magma.slime.get_size() == 1;
+        }
+        true
     }
 
     pub fn set_tongue_target(&self, target: Option<&dyn EntityBase>) {
@@ -377,6 +386,11 @@ impl Mob for FrogEntity {
             );
         }
         true
+    }
+
+    // frog: createAttributes, attack damage 10.0 (Frog.createAttributes)
+    fn mob_attack_damage(&self, _base: f32) -> f32 {
+        10.0
     }
 
     // frog: Frog.calculateFallDamage
