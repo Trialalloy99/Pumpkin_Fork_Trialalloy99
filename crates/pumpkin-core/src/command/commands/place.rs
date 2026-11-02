@@ -362,6 +362,15 @@ impl CommandExecutor for PlaceStructureExecutor {
                 (piece_count, placer)
             } else {
                 let random = RandomGenerator::Legacy(LegacyRand::from_seed(seed));
+                // place: terrain height for generators that read it (end city)
+                let mut height_sampler = match &*world_gen {
+                    pumpkin_world::generation::generator::WorldGenerator::Noise(generator) => Some(
+                        pumpkin_world::generation::structure::height_sampler::NoiseHeightSampler::new(
+                            generator,
+                        ),
+                    ),
+                    _ => None,
+                };
 
                 let position = pumpkin_world::generation::structure::generate_structure_position(
                     &key,
@@ -377,7 +386,9 @@ impl CommandExecutor for PlaceStructureExecutor {
                             .shape
                             .height
                             .min(world_gen.dimension().height as u16),
-                        height_sampler: None,
+                        height_sampler: height_sampler
+                            .as_mut()
+                            .map(|sampler| sampler as &mut dyn pumpkin_world::generation::structure::structures::HeightSampler),
                         structure_key: Some(key),
                     },
                 )
