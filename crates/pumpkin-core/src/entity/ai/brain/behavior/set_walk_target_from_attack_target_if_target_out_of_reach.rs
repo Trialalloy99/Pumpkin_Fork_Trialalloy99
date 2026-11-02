@@ -4,6 +4,7 @@ use super::super::memory::position_tracker::EntityTracker;
 use super::super::memory::walk_target::WalkTarget;
 use super::super::memory::{MemoryStatus, types};
 use super::OneShot;
+use super::utils::entity_is_visible;
 
 // brain: SetWalkTargetFromAttackTargetIfTargetOutOfReach.create
 #[must_use]
@@ -23,16 +24,7 @@ pub fn create(speed_modifier: f32) -> OneShot {
             let Some(target) = tick.state.get(types::ATTACK_TARGET).cloned() else {
                 return false;
             };
-            let target_id = target.get_entity().entity_id;
-            let visible = tick
-                .state
-                .get(types::NEAREST_VISIBLE_LIVING_ENTITIES)
-                .is_some_and(|entities| {
-                    entities
-                        .nearby()
-                        .iter()
-                        .any(|entity| entity.get_entity().entity_id == target_id)
-                });
+            let visible = entity_is_visible(&tick.visibility(), target.as_ref());
             // BehaviorUtils.isWithinAttackRange, melee only
             if visible
                 && tick

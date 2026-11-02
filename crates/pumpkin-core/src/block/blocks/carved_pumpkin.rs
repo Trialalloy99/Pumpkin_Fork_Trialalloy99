@@ -1,17 +1,26 @@
 use std::sync::Arc;
 
 use pumpkin_data::{
-    Block, BlockDirection, BlockId, BlockStateId, block_properties::WallTorchLikeProperties,
-    entity::EntityType, world::WorldEvent,
+    Block, BlockDirection, BlockId, BlockStateId,
+    block_properties::{ChestLikeProperties, WallTorchLikeProperties},
+    entity::EntityType,
+    world::WorldEvent,
 };
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_world::world::BlockFlags;
 
 use crate::{
-    block::{BlockBehaviour, BlockMetadata, OnPlaceArgs, PlacedArgs, PlayerPlacedArgs},
+    block::{
+        BlockBehaviour, BlockMetadata, OnPlaceArgs, PlacedArgs, PlayerPlacedArgs,
+        blocks::weathering_copper::WeatherState,
+    },
     entity::{
         Entity, EntityBase,
-        passive::{iron_golem::IronGolemEntity, snow_golem::SnowGolemEntity},
+        passive::{
+            copper_golem::{CopperGolemEntity, WeatherState as CopperWeatherState},
+            iron_golem::IronGolemEntity,
+            snow_golem::SnowGolemEntity,
+        },
     },
     world::World,
 };
@@ -38,7 +47,12 @@ pub fn find_golem_pattern(world: &Arc<World>, pos: &BlockPos) -> Option<GolemPat
     }
 
     if upper != &Block::IRON_BLOCK || lower != &Block::IRON_BLOCK {
-        return None;
+        // carved pumpkin: copperGolemFull, a pumpkin on a copper block
+        return copper_golem_chest(upper).map(|_| GolemPattern {
+            entity_type: &EntityType::COPPER_GOLEM,
+            blocks: vec![*pos, down_pos],
+            base: *pos,
+        });
     }
 
     for dir in [BlockDirection::North, BlockDirection::West] {
@@ -67,7 +81,41 @@ pub fn find_golem_pattern(world: &Arc<World>, pos: &BlockPos) -> Option<GolemPat
     None
 }
 
+// carved pumpkin: BlockTags.COPPER blocks with the weather state and the chest that replaces them
+fn copper_golem_chest(block: &Block) -> Option<(WeatherState, &'static Block)> {
+    Some(match block {
+        b if b == &Block::COPPER_BLOCK => (WeatherState::Unaffected, &Block::COPPER_CHEST),
+        b if b == &Block::EXPOSED_COPPER => (WeatherState::Exposed, &Block::EXPOSED_COPPER_CHEST),
+        b if b == &Block::WEATHERED_COPPER => {
+            (WeatherState::Weathered, &Block::WEATHERED_COPPER_CHEST)
+        }
+        b if b == &Block::OXIDIZED_COPPER => {
+            (WeatherState::Oxidized, &Block::OXIDIZED_COPPER_CHEST)
+        }
+        b if b == &Block::WAXED_COPPER_BLOCK => {
+            (WeatherState::Unaffected, &Block::WAXED_COPPER_CHEST)
+        }
+        b if b == &Block::WAXED_EXPOSED_COPPER => {
+            (WeatherState::Exposed, &Block::WAXED_EXPOSED_COPPER_CHEST)
+        }
+        b if b == &Block::WAXED_WEATHERED_COPPER => (
+            WeatherState::Weathered,
+            &Block::WAXED_WEATHERED_COPPER_CHEST,
+        ),
+        b if b == &Block::WAXED_OXIDIZED_COPPER => {
+            (WeatherState::Oxidized, &Block::WAXED_OXIDIZED_COPPER_CHEST)
+        }
+        _ => return None,
+    })
+}
+
 fn spawn_golem(world: &Arc<World>, pattern: &GolemPattern) {
+    let copper_block = pattern
+        .blocks
+        .get(1)
+        .filter(|_| pattern.entity_type == &EntityType::COPPER_GOLEM)
+        .map(|pos| (*pos, world.get_block(pos)));
+    let pumpkin_state = world.get_block_state_id(&pattern.blocks[0]);
     for &pos in &pattern.blocks {
         let state_id = world.get_block_state_id(&pos);
         world.set_block_state(
@@ -85,15 +133,34 @@ fn spawn_golem(world: &Arc<World>, pattern: &GolemPattern) {
     let mut spawn_pos = pattern.base.to_centered_f64();
     spawn_pos.y = f64::from(pattern.base.0.y) + 0.05;
     let entity = Entity::new(world.clone(), spawn_pos, pattern.entity_type);
-    let golem: Arc<dyn EntityBase> = if pattern.entity_type == &EntityType::SNOW_GOLEM {
-        SnowGolemEntity::new(entity)
-    } else {
-        IronGolemEntity::new(entity)
-    };
+    let (golem, copper_golem): (Arc<dyn EntityBase>, Option<Arc<CopperGolemEntity>>) =
+        if pattern.entity_type == &EntityType::COPPER_GOLEM {
+            let copper_golem = CopperGolemEntity::new(entity);
+            (copper_golem.clone(), Some(copper_golem))
+        } else if pattern.entity_type == &EntityType::SNOW_GOLEM {
+            (SnowGolemEntity::new(entity), None)
+        } else {
+            (IronGolemEntity::new(entity), None)
+        };
     world.spawn_entity(golem);
 
     for &pos in &pattern.blocks {
         world.update_neighbors(&pos, None);
+    }
+
+    // carved pumpkin: replaceCopperBlockWithChest, facing like the pumpkin
+    if let (Some(copper_golem), Some((copper_pos, copper_block))) = (copper_golem, copper_block)
+        && let Some((weather_state, chest)) = copper_golem_chest(copper_block)
+    {
+        let facing = WallTorchLikeProperties::from_state_id(pumpkin_state).facing;
+        let mut chest_props = ChestLikeProperties::default(chest);
+        chest_props.facing = facing;
+        world.set_block_state(
+            &copper_pos,
+            chest_props.to_state_id(chest),
+            BlockFlags::NOTIFY_LISTENERS,
+        );
+        copper_golem.spawn(CopperWeatherState::from_block_state(weather_state));
     }
 }
 

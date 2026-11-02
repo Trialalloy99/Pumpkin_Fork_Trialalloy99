@@ -25,6 +25,23 @@ pub fn stroll(speed_modifier: f32) -> OneShot {
     )
 }
 
+// brain: RandomStroll.stroll(speed, maxHorizontalDistance, maxVerticalDistance)
+#[must_use]
+pub fn stroll_in_range(speed_modifier: f32, max_horizontal: i32, max_vertical: i32) -> OneShot {
+    OneShot::new(
+        "RandomStroll",
+        vec![(types::WALK_TARGET.id(), MemoryStatus::ValueAbsent)],
+        move |tick| {
+            let target = land_random_pos::get_pos(tick.mob, max_horizontal, max_vertical);
+            tick.state.set_optional(
+                types::WALK_TARGET,
+                target.map(|pos| WalkTarget::from_vec(pos, speed_modifier, 0)),
+            );
+            true
+        },
+    )
+}
+
 #[must_use]
 pub fn fly(speed_modifier: f32) -> OneShot {
     OneShot::new(

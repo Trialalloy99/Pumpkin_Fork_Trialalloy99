@@ -5,6 +5,26 @@ use super::{OneShot, utils};
 
 #[must_use]
 pub fn create(max_dist: f32, min_interval: i32, max_interval: i32) -> OneShot {
+    build(None, max_dist, min_interval, max_interval)
+}
+
+// brain: SetEntityLookTargetSometimes.create(EntityType, ...)
+#[must_use]
+pub fn create_for_type(
+    entity_type: &'static pumpkin_data::entity::EntityType,
+    max_dist: f32,
+    min_interval: i32,
+    max_interval: i32,
+) -> OneShot {
+    build(Some(entity_type), max_dist, min_interval, max_interval)
+}
+
+fn build(
+    entity_type: Option<&'static pumpkin_data::entity::EntityType>,
+    max_dist: f32,
+    min_interval: i32,
+    max_interval: i32,
+) -> OneShot {
     let max_dist_sqr = f64::from(max_dist * max_dist);
     let mut ticks_until_next_start = 0;
     OneShot::new(
@@ -23,7 +43,9 @@ pub fn create(max_dist: f32, min_interval: i32, max_interval: i32) -> OneShot {
                 .get(types::NEAREST_VISIBLE_LIVING_ENTITIES)
                 .and_then(|visible| {
                     visible.find_closest(&tick.visibility(), |target| {
-                        target
+                        entity_type.is_none_or(|entity_type| {
+                            target.get_entity().entity_type == entity_type
+                        }) && target
                             .get_entity()
                             .pos
                             .load()

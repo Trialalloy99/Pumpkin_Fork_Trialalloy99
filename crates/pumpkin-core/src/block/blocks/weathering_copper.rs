@@ -1125,6 +1125,27 @@ impl ChangeOverTimeBlock<WeatherState> for CopperGolemStatueBlock {
 impl WeatheringCopper for CopperGolemStatueBlock {}
 
 impl CopperGolemStatueBlock {
+    // statue: CopperGolemStatueBlock.getWeatheringState, waxed statues keep their state
+    fn statue_weather_state(block: &Block) -> Option<WeatherState> {
+        if block == &Block::COPPER_GOLEM_STATUE || block == &Block::WAXED_COPPER_GOLEM_STATUE {
+            Some(WeatherState::Unaffected)
+        } else if block == &Block::EXPOSED_COPPER_GOLEM_STATUE
+            || block == &Block::WAXED_EXPOSED_COPPER_GOLEM_STATUE
+        {
+            Some(WeatherState::Exposed)
+        } else if block == &Block::WEATHERED_COPPER_GOLEM_STATUE
+            || block == &Block::WAXED_WEATHERED_COPPER_GOLEM_STATUE
+        {
+            Some(WeatherState::Weathered)
+        } else if block == &Block::OXIDIZED_COPPER_GOLEM_STATUE
+            || block == &Block::WAXED_OXIDIZED_COPPER_GOLEM_STATUE
+        {
+            Some(WeatherState::Oxidized)
+        } else {
+            None
+        }
+    }
+
     const fn next_pose(pose: CopperGolemPose) -> CopperGolemPose {
         match pose {
             CopperGolemPose::Standing => CopperGolemPose::Sitting,
@@ -1190,7 +1211,7 @@ impl BlockBehaviour for CopperGolemStatueBlock {
 
     fn use_with_item(&self, args: UseWithItemArgs<'_>) -> BlockActionResult {
         if args.item_stack.item.has_tag(&tag::Item::MINECRAFT_AXES) {
-            if args.block == &Block::COPPER_GOLEM_STATUE {
+            if let Some(weather) = Self::statue_weather_state(args.block) {
                 let state_id = args.world.get_block_state_id(args.position);
                 let props = CopperGolemStatueLikeProperties::from_state_id(state_id);
                 let custom_name = args.world.get_block_entity(args.position).and_then(|be| {
@@ -1226,6 +1247,16 @@ impl BlockBehaviour for CopperGolemStatueBlock {
                 entity.set_rotation(Self::horizontal_facing_to_yaw(props.facing), 0.0);
                 if let Some(name) = custom_name {
                     entity.set_custom_name(TextComponent::text(name));
+                }
+                if let Some(copper_golem) = golem
+                    .cast_any()
+                    .downcast_ref::<crate::entity::passive::copper_golem::CopperGolemEntity>(
+                ) {
+                    copper_golem.spawn(
+                        crate::entity::passive::copper_golem::WeatherState::from_block_state(
+                            weather,
+                        ),
+                    );
                 }
                 args.world.spawn_entity(golem);
 

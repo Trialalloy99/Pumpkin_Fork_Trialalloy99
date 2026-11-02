@@ -513,6 +513,26 @@ impl MobEntity {
         previous
     }
 
+    /// Vanilla `Mob.dropPreservedEquipment`: slots with a preserved drop chance fall to the ground.
+    pub fn drop_preserved_equipment(&self) {
+        let slots: Vec<EquipmentSlot> = self
+            .living_entity
+            .entity_equipment
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .equipment
+            .iter()
+            .filter(|(_, stack)| !stack.is_empty())
+            .map(|(slot, _)| slot.clone())
+            .collect();
+        for slot in slots {
+            if self.drop_chance(&slot) > 1.0 {
+                let stack = self.set_item_slot(&slot, ItemStack::EMPTY.clone());
+                self.living_entity.entity.spawn_at_location(stack);
+            }
+        }
+    }
+
     // mob: read main hand without cloning
     pub fn with_main_hand<R>(&self, f: impl FnOnce(&ItemStack) -> R) -> R {
         let equipment = self
@@ -671,6 +691,18 @@ impl MobEntity {
         };
         self.process_brain_memory_clear();
         result
+    }
+
+    /// Reads another mob's brain without waiting, `None` while that brain is busy (it may be ticking in
+    /// parallel and holding its own lock).
+    pub fn try_with_brain<R>(
+        &self,
+        mob: &dyn Mob,
+        callback: impl FnOnce(&mut Brain) -> R,
+    ) -> Option<R> {
+        let mut slot = self.brain.try_lock().ok()?;
+        let brain = slot.get_or_insert_with(|| mob.make_brain(&PackedMemories::empty()));
+        Some(callback(brain))
     }
 
     /// Installs an already built brain, such as one restored from saved memories.
