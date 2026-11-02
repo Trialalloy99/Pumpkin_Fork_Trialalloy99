@@ -5,15 +5,25 @@ use std::sync::atomic::Ordering;
 pub enum ProjectileDeflectionType {
     None,
     Simple,
+    // breeze: PROJECTILE_DEFLECTION (BREEZE_DEFLECT sound, then REVERSE)
+    SimpleWithSound(pumpkin_data::sound::Sound),
     Redirected,
     TransferVelocityDirection,
 }
 
 impl ProjectileDeflectionType {
-    pub fn deflect(&self, projectile: &mut dyn EntityBase, hit_entity: Option<&dyn EntityBase>) {
+    pub fn deflect(&self, projectile: &dyn EntityBase, hit_entity: Option<&dyn EntityBase>) {
         match self {
             Self::None => {}
-            Self::Simple => {
+            Self::Simple | Self::SimpleWithSound(_) => {
+                if let Self::SimpleWithSound(sound) = self {
+                    let entity = hit_entity.map_or(projectile.get_entity(), EntityBase::get_entity);
+                    entity.world.load().play_sound(
+                        *sound,
+                        pumpkin_data::sound::SoundCategory::Hostile,
+                        &entity.pos.load(),
+                    );
+                }
                 let vel = rand::random::<f32>().mul_add(20.0, 170.0);
 
                 let current_velocity = projectile
@@ -51,4 +61,21 @@ impl ProjectileDeflectionType {
             }
         }
     }
+}
+
+/// Vanilla `Projectile.hitTargetOrDeflectSelf` for entity hits: `true` when the target deflected the projectile.
+pub fn try_deflect(projectile: &dyn EntityBase, target: &dyn EntityBase) -> bool {
+    let deflection = target.projectile_deflection(projectile);
+    if matches!(deflection, ProjectileDeflectionType::None) {
+        return false;
+    }
+    let projectile_entity = projectile.get_entity();
+    let target_id = target.get_entity().entity_id;
+    if projectile_entity.last_deflected_by.load(Ordering::Relaxed) != target_id {
+        deflection.deflect(projectile, Some(target));
+        projectile_entity
+            .last_deflected_by
+            .store(target_id, Ordering::Relaxed);
+    }
+    true
 }

@@ -50,6 +50,7 @@ use uuid::Uuid;
 pub mod bat;
 pub mod blaze;
 pub mod breeze;
+pub mod breeze_ai;
 pub mod cave_spider;
 pub mod conversion;
 pub mod creaking;
@@ -1469,6 +1470,14 @@ pub trait Mob: EntityBase + Send + Sync {
     /// Per-mob tick hook called each tick before AI runs. Override for mob-specific logic.
     fn mob_tick(&self, _caller: &dyn EntityBase) {}
 
+    // projectile deflection: Entity.deflection (Breeze)
+    fn projectile_deflection(
+        &self,
+        _projectile: &dyn EntityBase,
+    ) -> crate::entity::projectile_deflection::ProjectileDeflectionType {
+        crate::entity::projectile_deflection::ProjectileDeflectionType::None
+    }
+
     fn mob_is_pushed_by_fluids(&self) -> bool {
         true
     }
@@ -2332,6 +2341,13 @@ pub trait Mob: EntityBase + Send + Sync {
     }
 }
 impl<T: Mob + Send + 'static> EntityBase for T {
+    fn projectile_deflection(
+        &self,
+        projectile: &dyn EntityBase,
+    ) -> crate::entity::projectile_deflection::ProjectileDeflectionType {
+        Mob::projectile_deflection(self, projectile)
+    }
+
     fn is_pushed_by_fluids(&self) -> bool {
         self.mob_is_pushed_by_fluids()
     }

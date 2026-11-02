@@ -150,7 +150,12 @@ impl ThrownItemEntity {
         let mut velocity = entity.velocity.load();
         velocity.y -= self.get_gravity();
 
-        let inertia = if entity.touching_water.load(Ordering::Relaxed) {
+        // wind charge: getInertia / getLiquidInertia 1.0 (AbstractWindCharge)
+        let inertia = if entity.entity_type == &EntityType::WIND_CHARGE
+            || entity.entity_type == &EntityType::BREEZE_WIND_CHARGE
+        {
+            1.0
+        } else if entity.touching_water.load(Ordering::Relaxed) {
             0.8
         } else {
             0.99
@@ -238,6 +243,12 @@ impl ThrownItemEntity {
 
         // Handle hit or continue
         if let Some(h) = hit {
+            // projectile: Projectile.hitTargetOrDeflectSelf
+            if let ProjectileHit::Entity { entity: target, .. } = &h
+                && crate::entity::projectile_deflection::try_deflect(caller, target.as_ref())
+            {
+                return;
+            }
             // Ensure hit is only processed once per projectile
             if self.has_hit.swap(true, Ordering::SeqCst) {
                 return;

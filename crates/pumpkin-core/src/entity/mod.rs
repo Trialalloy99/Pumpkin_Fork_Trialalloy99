@@ -310,6 +310,14 @@ pub trait EntityBase: Send + Sync + std::any::Any {
         None
     }
 
+    /// Vanilla `Entity.deflection`: how this entity deflects a projectile that hits it.
+    fn projectile_deflection(
+        &self,
+        _projectile: &dyn EntityBase,
+    ) -> projectile_deflection::ProjectileDeflectionType {
+        projectile_deflection::ProjectileDeflectionType::None
+    }
+
     /// Who shot or threw this, for projectiles.
     fn get_projectile_owner(&self) -> Option<&projectile::owner::ProjectileOwner> {
         None
@@ -1188,6 +1196,8 @@ pub struct Entity {
     pub vertical_collision: AtomicBool,
     /// Indicates whether the entity is on the ground (may not always be accurate).
     pub on_ground: AtomicBool,
+    /// Vanilla `Projectile.lastDeflectedBy`: entity id of the last deflector, 0 for none.
+    pub last_deflected_by: std::sync::atomic::AtomicI32,
     /// Indicates whether the entity is touching water
     pub touching_water: AtomicBool,
     /// Indicates the fluid height
@@ -1448,6 +1458,7 @@ impl Entity {
             entity_uuid,
             entity_type,
             on_ground: AtomicBool::new(false),
+            last_deflected_by: std::sync::atomic::AtomicI32::new(0),
             touching_water: AtomicBool::new(false),
             water_height: AtomicCell::new(0.0),
             touching_lava: AtomicBool::new(false),

@@ -109,6 +109,8 @@ pub struct LivingEntity {
     pub equipment_slots: Arc<FxHashMap<usize, EquipmentSlot>>,
 
     pub jumping: AtomicBool,
+    // living: shouldDiscardFriction (Breeze long jump)
+    pub discard_friction: AtomicBool,
 
     pub jumping_cooldown: AtomicU8,
 
@@ -351,6 +353,7 @@ impl LivingEntity {
             equipment_drop_chances: Arc::new(std::sync::Mutex::new(FxHashMap::default())),
             equipment_slots: Arc::new(build_equipment_slots()),
             jumping: AtomicBool::new(false),
+            discard_friction: AtomicBool::new(false),
             jumping_cooldown: AtomicU8::new(0),
             climbing: AtomicBool::new(false),
             climbing_pos: AtomicCell::new(None),
@@ -1865,6 +1868,12 @@ impl LivingEntity {
         }
 
         // If entity has no drag: store velo and return
+
+        // living: travelInAir discardFriction
+        if self.discard_friction.load(Relaxed) {
+            self.entity.velocity.store(velo);
+            return;
+        }
 
         velo.x *= friction;
 

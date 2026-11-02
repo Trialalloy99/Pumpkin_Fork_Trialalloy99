@@ -738,6 +738,12 @@ impl EntityBase for ArrowEntity {
 
         // Handle hit
         if let Some(h) = hit {
+            // projectile: Projectile.hitTargetOrDeflectSelf
+            if let ProjectileHit::Entity { entity: target, .. } = &h
+                && crate::entity::projectile_deflection::try_deflect(caller, target.as_ref())
+            {
+                return;
+            }
             match h {
                 ProjectileHit::Block { .. } => {
                     if !self.has_hit.swap(true, Ordering::SeqCst) {

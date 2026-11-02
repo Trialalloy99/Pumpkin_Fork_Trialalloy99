@@ -380,10 +380,16 @@ impl EntityBase for TridentEntity {
         }
 
         // Handle hit
-        if let Some(h) = hit
-            && !self.has_hit.swap(true, Ordering::SeqCst)
-        {
-            caller.on_hit(h);
+        if let Some(h) = hit {
+            // projectile: Projectile.hitTargetOrDeflectSelf
+            if let ProjectileHit::Entity { entity: target, .. } = &h
+                && crate::entity::projectile_deflection::try_deflect(caller, target.as_ref())
+            {
+                return;
+            }
+            if !self.has_hit.swap(true, Ordering::SeqCst) {
+                caller.on_hit(h);
+            }
         }
 
         if !self.in_ground.load(Ordering::Relaxed) && !entity.is_removed() {
