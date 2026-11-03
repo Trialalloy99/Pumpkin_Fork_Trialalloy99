@@ -378,7 +378,14 @@ impl ItemBehaviour for SpawnEggItem {
                 return;
             }
             let pos = entity.get_entity().pos.load();
-            let mob = from_type(entity_type, pos, &world, Uuid::new_v4());
+            // spawnOffspringFromSpawnEgg: the parent's own offspring, with its coat
+            let mob = entity
+                .get_mob()
+                .and_then(|parent| parent.as_animal())
+                .map_or_else(
+                    || from_type(entity_type, pos, &world, Uuid::new_v4()),
+                    |animal| animal.get_breed_offspring(entity.as_ref()),
+                );
             // no baby form, no offspring.
             if !mob
                 .get_mob()
@@ -389,6 +396,9 @@ impl ItemBehaviour for SpawnEggItem {
             mob.get_entity()
                 .set_rotation(rand::random::<f32>() * 360.0, 0.0);
             apply_entity_variant(item, mob.as_ref(), Some(player));
+            if let Some(parent) = entity.get_mob() {
+                parent.on_offspring_spawned_from_egg(player.gameprofile.id, mob.as_ref());
+            }
             if world.spawn_creature(
                 mob,
                 CreatureSpawnReason::SpawnerEgg,

@@ -32,6 +32,12 @@ impl BreedGoal {
         })
     }
 
+    /// The partner picked by `can_start`.
+    #[must_use]
+    pub const fn mate(&self) -> Option<&Arc<dyn EntityBase>> {
+        self.mate.as_ref()
+    }
+
     fn find_mate(mob: &dyn Mob) -> Option<Arc<dyn EntityBase>> {
         let mob_entity = mob.get_mob_entity();
         if !mob_entity.is_in_love() {

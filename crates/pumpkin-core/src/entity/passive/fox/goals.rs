@@ -13,6 +13,7 @@ use rand::RngExt;
 
 use super::{FoxEntity, as_fox};
 use crate::entity::EntityBase;
+use crate::entity::ai::goal::breed::BreedGoal;
 use crate::entity::ai::goal::melee_attack::MeleeAttackGoal;
 use crate::entity::ai::goal::track_target::TrackTargetGoal;
 use crate::entity::ai::goal::{Controls, Goal, GoalReach, to_goal_ticks};
@@ -104,6 +105,62 @@ impl<G: Goal> Goal for FoxGoal<G> {
     }
 
     /// The fox checks only read the fox itself.
+    fn tick_reach(&self, mob: &dyn Mob, running: bool) -> Option<GoalReach> {
+        self.inner.tick_reach(mob, running)
+    }
+}
+
+/// Vanilla `FoxBreedGoal`: both parents drop their states before the courtship starts.
+pub struct FoxBreedGoal {
+    inner: Box<BreedGoal>,
+}
+
+impl FoxBreedGoal {
+    #[must_use]
+    pub fn new(speed: f64) -> Self {
+        Self {
+            inner: BreedGoal::new(speed),
+        }
+    }
+}
+
+impl Goal for FoxBreedGoal {
+    fn can_start(&mut self, mob: &dyn Mob) -> bool {
+        self.inner.can_start(mob)
+    }
+
+    fn should_continue(&mut self, mob: &dyn Mob) -> bool {
+        self.inner.should_continue(mob)
+    }
+
+    fn start(&mut self, mob: &dyn Mob) {
+        if let Some(fox) = as_fox(mob) {
+            fox.clear_states();
+        }
+        if let Some(partner) = self.inner.mate().and_then(|mate| mate.get_mob())
+            && let Some(fox) = as_fox(partner)
+        {
+            fox.clear_states();
+        }
+        self.inner.start(mob);
+    }
+
+    fn stop(&mut self, mob: &dyn Mob) {
+        self.inner.stop(mob);
+    }
+
+    fn tick(&mut self, mob: &dyn Mob) {
+        self.inner.tick(mob);
+    }
+
+    fn should_run_every_tick(&self) -> bool {
+        self.inner.should_run_every_tick()
+    }
+
+    fn controls(&self) -> Controls {
+        self.inner.controls()
+    }
+
     fn tick_reach(&self, mob: &dyn Mob, running: bool) -> Option<GoalReach> {
         self.inner.tick_reach(mob, running)
     }

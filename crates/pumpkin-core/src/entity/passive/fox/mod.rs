@@ -26,6 +26,7 @@ use crate::entity::ai::goal::active_target::ActiveTargetGoal;
 use crate::entity::ai::goal::avoid_entity::not_creative_or_spectator;
 use crate::entity::ai::goal::climb_on_top_of_powder_snow::ClimbOnTopOfPowderSnowGoal;
 use crate::entity::ai::goal::leap_at_target::LeapAtTargetGoal;
+use crate::entity::ai::pathfinder::node::PathType;
 use crate::entity::ai::target_match::TargetMatch;
 use crate::entity::mob::spawn::SpawnGroupData;
 use crate::entity::passive::tamable::is_untamed;
@@ -33,7 +34,7 @@ use crate::entity::{
     Entity, EntityBase,
     ageable::{AgeableData, AgeableMob},
     ai::goal::{
-        breed::BreedGoal, escape_danger::EscapeDangerGoal, follow_parent::FollowParentGoal,
+        escape_danger::EscapeDangerGoal, follow_parent::FollowParentGoal,
         look_at_entity::LookAtEntityGoal, swim::SwimGoal, wander_around::WanderAroundGoal,
     },
     mob::{Mob, MobEntity},
@@ -42,8 +43,10 @@ use crate::entity::{
 };
 use crate::world::World;
 use goals::{
-    DefendTrustedTargetGoal, FaceplantGoal, FoxGoal, PounceGoal, StalkPreyGoal, melee_attack,
+    DefendTrustedTargetGoal, FaceplantGoal, FoxBreedGoal, FoxGoal, PounceGoal, StalkPreyGoal,
+    melee_attack,
 };
+use pumpkin_util::math::vector3::Vector3;
 
 pub const FOX_FOOD: &[&Item] = &[&Item::SWEET_BERRIES, &Item::GLOW_BERRIES];
 
@@ -73,6 +76,12 @@ const fn fish_prey(priority: u8) -> Hunt {
 /// Red foxes hunt on land first, snow foxes fish first.
 const RED_FOX_HUNTS: &[Hunt] = &[land_prey(4), hunting::baby_turtles(4, false), fish_prey(6)];
 const SNOW_FOX_HUNTS: &[Hunt] = &[fish_prey(4), land_prey(6), hunting::baby_turtles(6, false)];
+
+/// Vanilla `FoxFloatGoal.canUse`: `isInFluidDeeperThan(0.25, ..)`.
+const FLOAT_FLUID_THRESHOLD: f64 = 0.25;
+const REQUIRED_PATH_LENGTH: f32 = 32.0;
+const ALERT_PLAYER_RANGE: f64 = 16.0;
+const SCREECH_VOLUME: f32 = 2.0;
 
 /// Vanilla `MAX_CROUCH_AMOUNT`: a full crouch, ready to pounce.
 const MAX_CROUCH_AMOUNT: f32 = 5.0;
@@ -173,6 +182,20 @@ impl FoxEntity {
             .get_mut()
             .unwrap_or_else(std::sync::PoisonError::into_inner) =
             Box::new(extra::FoxLookControl::default());
+        // fox: constructor, pathfinding malus and path length
+        let navigator = mob_entity
+            .navigator
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        navigator.set_pathfinding_malus(PathType::DangerOther, 0.0);
+        navigator.set_pathfinding_malus(PathType::DamageOther, 0.0);
+        navigator.set_required_path_length(REQUIRED_PATH_LENGTH);
+        // fox: getLeashOffset, (0, 0.55 * eyeHeight, width * 0.4)
+        mob_entity
+            .living_entity
+            .entity
+            .leash_offset_factors
+            .store(Some((0.55, 0.4)));
         let fox = Self {
             mob_entity,
             ageable_data: AgeableData::default(),
@@ -194,17 +217,17 @@ impl FoxEntity {
 
             goal_selector.add_goal(
                 0,
-                Box::new(FoxGoal::new(SwimGoal::default()).on_start(Self::clear_states)),
+                Box::new(
+                    FoxGoal::new(SwimGoal::default().with_fluid_threshold(FLOAT_FLUID_THRESHOLD))
+                        .on_start(Self::clear_states),
+                ),
             );
             goal_selector.add_goal(1, Box::new(FaceplantGoal::default()));
             goal_selector.add_goal(
                 2,
                 Box::new(FoxGoal::new(*EscapeDangerGoal::new(2.2)).start_if(not_defending)),
             );
-            goal_selector.add_goal(
-                3,
-                Box::new(FoxGoal::new(*BreedGoal::new(1.0)).on_start(Self::clear_states)),
-            );
+            goal_selector.add_goal(3, Box::new(FoxBreedGoal::new(1.0)));
             fleeing::apply(goal_selector, FOX_FLEES);
             goal_selector.add_goal(0, Box::new(ClimbOnTopOfPowderSnowGoal));
             goal_selector.add_goal(5, Box::new(StalkPreyGoal));
@@ -587,6 +610,9 @@ impl Mob for FoxEntity {
         }
         self.spit_out_item(self.mouth_item());
         self.set_mouth_item(taken.split(1));
+        self.mob_entity
+            .living_entity
+            .pickup(item.get_entity(), u32::from(taken.item_count));
         item.get_entity().remove();
         self.ticks_since_eaten.store(0, Ordering::Relaxed);
         true
@@ -594,6 +620,12 @@ impl Mob for FoxEntity {
 
     // fox: eats what it holds after 600 ticks (Fox.aiStep)
     fn mob_ai_step(&self) {
+        // fox: aiStep, a sleeping or dying fox holds no input
+        if self.is_sleeping() || self.mob_entity.living_entity.is_dead_or_dying() {
+            let living = &self.mob_entity.living_entity;
+            living.jumping.store(false, Ordering::Relaxed);
+            living.movement_input.store(Vector3::new(0.0, 0.0, 0.0));
+        }
         if !self.get_entity().is_alive() {
             return;
         }
@@ -646,6 +678,41 @@ impl Mob for FoxEntity {
             self.set_defending(false);
         }
         self.mob_entity.set_target(target);
+    }
+
+    // fox: getAmbientSound, asleep or screeching at night with nobody around
+    fn get_ambient_sound(&self) -> Option<Sound> {
+        if self.is_sleeping() {
+            return Some(Sound::EntityFoxSleep);
+        }
+        let entity = self.get_entity();
+        let world = entity.world.load();
+        if !world.is_bright_outside() && self.get_random().random::<f32>() < 0.1 {
+            let nobody_near = world
+                .get_nearby_players(entity.pos.load(), ALERT_PLAYER_RANGE)
+                .iter()
+                .all(|player| player.is_spectator());
+            if nobody_near {
+                return Some(Sound::EntityFoxScreech);
+            }
+        }
+        Some(Sound::EntityFoxAmbient)
+    }
+
+    // fox: playAmbientSound, the screech is twice as loud
+    fn play_ambient_sound(&self) {
+        let Some(sound) = self.get_ambient_sound() else {
+            return;
+        };
+        if sound == Sound::EntityFoxScreech {
+            self.mob_entity.living_entity.make_sound(
+                sound,
+                self.get_entity().entity_type.sound_source,
+                SCREECH_VOLUME,
+            );
+        } else {
+            self.make_sound(sound);
+        }
     }
 
     fn look_resets_pitch(&self) -> bool {
@@ -718,6 +785,13 @@ impl Mob for FoxEntity {
         self.add_trusted(player);
     }
 
+    // fox: onOffspringSpawnedFromEgg
+    fn on_offspring_spawned_from_egg(&self, spawner: Uuid, offspring: &dyn EntityBase) {
+        if let Some(fox) = offspring.cast_any().downcast_ref::<Self>() {
+            fox.add_trusted(spawner);
+        }
+    }
+
     fn mob_init_data_tracker(&self) {
         let entity = self.get_entity();
         let is_baby = entity.age.load(Ordering::Relaxed) < 0;
@@ -736,5 +810,60 @@ impl Mob for FoxEntity {
 
     fn mob_interact(&self, player: &Arc<Player>, item_stack: &mut ItemStack) -> bool {
         self.animal_interact(player, item_stack, Sound::EntityFoxAmbient)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::entity::ai::test_support::world;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    fn fox_in(world: &Arc<World>) -> Arc<FoxEntity> {
+        FoxEntity::new(Entity::new(
+            world.clone(),
+            pumpkin_util::math::vector3::Vector3::new(0.5, 64.0, 0.5),
+            &EntityType::FOX,
+        ))
+    }
+
+    #[tokio::test]
+    async fn a_sleeping_fox_snores_and_a_spawn_egg_cub_trusts_the_spawner() -> TestResult {
+        let folder = tempfile::tempdir()?;
+        let world = world(&folder);
+        let fox = fox_in(&world);
+        fox.set_sleeping(true);
+        assert_eq!(fox.get_ambient_sound(), Some(Sound::EntityFoxSleep));
+
+        let cub = fox_in(&world);
+        let spawner = Uuid::new_v4();
+        assert!(!cub.trusts(spawner));
+        fox.on_offspring_spawned_from_egg(spawner, cub.as_ref());
+        assert!(cub.trusts(spawner));
+        world.level.shutdown().await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn a_sleeping_fox_drops_its_movement_input() -> TestResult {
+        let folder = tempfile::tempdir()?;
+        let world = world(&folder);
+        let fox = fox_in(&world);
+        let living = &fox.mob_entity.living_entity;
+        living.jumping.store(true, Ordering::Relaxed);
+        living
+            .movement_input
+            .store(pumpkin_util::math::vector3::Vector3::new(1.0, 0.0, 1.0));
+        fox.set_sleeping(true);
+        fox.mob_ai_step();
+        assert!(!living.jumping.load(Ordering::Relaxed));
+        assert_eq!(
+            living.movement_input.load(),
+            pumpkin_util::math::vector3::Vector3::new(0.0, 0.0, 0.0)
+        );
+        world.level.shutdown().await;
+        Ok(())
     }
 }

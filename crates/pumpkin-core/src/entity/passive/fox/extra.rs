@@ -4,6 +4,7 @@ use pumpkin_data::{
     Block,
     block_properties::{CaveVinesLikeProperties, NetherWartLikeProperties},
     entity::EntityType,
+    game_event::GameEvent,
     item::Item,
     item_stack::ItemStack,
     sound::{Sound, SoundCategory},
@@ -14,6 +15,7 @@ use pumpkin_world::world::BlockFlags;
 use rand::RngExt;
 
 use super::FoxEntity;
+use crate::entity::ai::target_predicate::TargetPredicate;
 use crate::entity::{
     Entity, EntityBase,
     ai::goal::{
@@ -74,59 +76,66 @@ fn has_shelter(mob: &dyn Mob) -> bool {
     !world.can_see_sky(&top) && mob.get_walk_target_value(&top) >= 0.0
 }
 
-// fox: FoxBehaviorGoal.alertable with the FoxAlertableEntitiesSelector
+// fox: FoxAlertableEntitiesSelector
+fn alertable_target(own: &FoxEntity, other: &dyn EntityBase) -> bool {
+    let kind = other.get_entity().entity_type;
+    if kind == &EntityType::FOX {
+        return false;
+    }
+    if kind == &EntityType::CHICKEN
+        || kind == &EntityType::RABBIT
+        || TargetMatch::Enemy.matches(kind)
+    {
+        return true;
+    }
+    if let Some(tamable) = other.get_mob().and_then(|mob| mob.as_tamable()) {
+        return !tamable.is_tame();
+    }
+    if let Some(player) = other.get_player()
+        && (player.is_spectator() || player.is_creative())
+    {
+        return false;
+    }
+    if own.trusts(other.get_entity().entity_uuid) {
+        return false;
+    }
+    let sleeping = other
+        .get_player()
+        .is_some_and(crate::entity::player::Player::is_sleeping)
+        || other
+            .cast_any()
+            .downcast_ref::<FoxEntity>()
+            .is_some_and(FoxEntity::is_sleeping)
+        || other.get_entity().pose.load() == pumpkin_data::entity::EntityPose::Sleeping;
+    !sleeping && !other.get_entity().is_sneaking()
+}
+
+// fox: FoxBehaviorGoal.alertable, forCombat 12 blocks without line of sight and the alertable selector
 fn alertable(mob: &dyn Mob) -> bool {
+    let Some(own) = fox(mob) else { return false };
     let entity = mob.get_entity();
     let world = entity.world.load();
-    let pos = entity.pos.load();
+    let bounds = entity.bounding_box.load();
     let area = BoundingBox::new(
         Vector3::new(
-            pos.x - ALERT_RANGE,
-            pos.y - ALERT_HEIGHT,
-            pos.z - ALERT_RANGE,
+            bounds.min.x - ALERT_RANGE,
+            bounds.min.y - ALERT_HEIGHT,
+            bounds.min.z - ALERT_RANGE,
         ),
         Vector3::new(
-            pos.x + ALERT_RANGE,
-            pos.y + ALERT_HEIGHT,
-            pos.z + ALERT_RANGE,
+            bounds.max.x + ALERT_RANGE,
+            bounds.max.y + ALERT_HEIGHT,
+            bounds.max.z + ALERT_RANGE,
         ),
     );
-    let Some(own) = fox(mob) else { return false };
+    let conditions = TargetPredicate::create_attackable()
+        .ignore_visibility()
+        .set_base_max_distance(ALERT_RANGE);
     world.get_all_at_box(&area).iter().any(|other| {
-        let other_entity = other.get_entity();
-        if other_entity.entity_id == entity.entity_id
-            || other_entity.entity_type == &EntityType::FOX
-            || other.get_living_entity().is_none()
-        {
-            return false;
-        }
-        if other_entity.pos.load().squared_distance_to_vec(&pos) > ALERT_RANGE * ALERT_RANGE {
-            return false;
-        }
-        let kind = other_entity.entity_type;
-        if kind == &EntityType::CHICKEN
-            || kind == &EntityType::RABBIT
-            || TargetMatch::Enemy.matches(kind)
-        {
-            return true;
-        }
-        if let Some(tamable) = other
-            .get_mob()
-            .and_then(|mob| mob.as_tamable())
-            .filter(|_| true)
-        {
-            return !tamable.is_tame();
-        }
-        if let Some(player) = other.get_player()
-            && (player.is_spectator() || player.is_creative())
-        {
-            return false;
-        }
-        !own.trusts(other_entity.entity_uuid)
-            && !other
-                .get_player()
-                .is_some_and(crate::entity::player::Player::is_sleeping)
-            && !other_entity.is_sneaking()
+        other.get_entity().entity_id != entity.entity_id
+            && other.get_living_entity().is_some()
+            && alertable_target(own, other.as_ref())
+            && conditions.test(&world, Some(mob), other.as_ref())
     })
 }
 
@@ -243,7 +252,7 @@ impl Goal for PerchAndSearchGoal {
         let Some(fox) = fox(mob) else { return false };
         mob.get_mob_entity()
             .living_entity
-            .get_last_damage_source()
+            .get_last_hurt_by_mob()
             .is_none()
             && mob.get_random().random::<f32>() < 0.02
             && !fox.is_sleeping()
@@ -289,7 +298,7 @@ impl Goal for PerchAndSearchGoal {
                 pos.x + self.rel_x,
                 pos.y + entity.get_eye_height(),
                 pos.z + self.rel_z,
-                mob.get_max_look_yaw_change(),
+                mob.get_max_head_rotation(),
                 mob.get_max_look_pitch_change(),
             );
     }
@@ -315,7 +324,7 @@ impl SeekShelterGoal {
     pub const fn new(speed: f64) -> Self {
         Self {
             speed,
-            interval: SHELTER_INTERVAL,
+            interval: to_goal_ticks(SHELTER_INTERVAL),
             wanted: None,
         }
     }
@@ -448,24 +457,17 @@ impl EatBerriesGoal {
                 count -= 1;
             }
             if count > 0 {
-                let item = ItemEntity::new(
-                    Entity::new(world.clone(), pos.to_centered_f64(), &EntityType::ITEM),
-                    ItemStack::new(count as u8, &Item::SWEET_BERRIES),
-                );
-                world.spawn_entity(Arc::new(item));
+                world.drop_stack(&pos, ItemStack::new(count as u8, &Item::SWEET_BERRIES));
             }
             entity.play_sound(Sound::BlockSweetBerryBushPickBerries);
             props.age = 1;
             world.set_block_state(&pos, props.to_state_id(block), BlockFlags::NOTIFY_LISTENERS);
+            world.emit_game_event(GameEvent::BlockChange.name(), pos.to_centered_f64());
         } else if block == &Block::CAVE_VINES || block == &Block::CAVE_VINES_PLANT {
             let mut props = CaveVinesLikeProperties::from_state_id(state_id);
             if props.berries {
                 props.berries = false;
-                let item = ItemEntity::new(
-                    Entity::new(world.clone(), pos.to_centered_f64(), &EntityType::ITEM),
-                    ItemStack::new(1, &Item::GLOW_BERRIES),
-                );
-                world.spawn_entity(Arc::new(item));
+                world.drop_stack(&pos, ItemStack::new(1, &Item::GLOW_BERRIES));
                 world.play_sound_fine(
                     Sound::BlockCaveVinesPickBerries,
                     SoundCategory::Blocks,
@@ -474,6 +476,7 @@ impl EatBerriesGoal {
                     0.8 + rand::random::<f32>() * 0.4,
                 );
                 world.set_block_state(&pos, props.to_state_id(block), BlockFlags::NOTIFY_LISTENERS);
+                world.emit_game_event(GameEvent::BlockChange.name(), pos.to_centered_f64());
             }
         }
     }
@@ -562,7 +565,7 @@ impl Goal for SearchForItemsGoal {
             || mob
                 .get_mob_entity()
                 .living_entity
-                .get_last_damage_source()
+                .get_last_hurt_by_mob()
                 .is_some()
             || !fox.can_move()
             || mob.get_random().random_range(0..to_goal_ticks(10)) != 0
@@ -604,7 +607,7 @@ impl StrollThroughVillageGoal {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            interval: VILLAGE_STROLL_INTERVAL,
+            interval: to_goal_ticks(VILLAGE_STROLL_INTERVAL),
             wanted: None,
         }
     }

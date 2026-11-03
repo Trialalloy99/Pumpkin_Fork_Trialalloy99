@@ -2286,6 +2286,9 @@ pub trait Mob: EntityBase + Send + Sync {
     /// Called on a newborn for each online player who fed its parents. Foxes trust them.
     fn on_bred_by(&self, _player: Uuid) {}
 
+    /// Vanilla `Mob.onOffspringSpawnedFromEgg`, run on the parent when a spawn egg makes a baby.
+    fn on_offspring_spawned_from_egg(&self, _spawner: Uuid, _offspring: &dyn EntityBase) {}
+
     /// Fires `EntityBreedEvent` before the child spawns. `None`: a plugin cancelled,
     /// else the experience to drop.
     fn approve_breeding(&self, father_id: i32, child_id: i32, experience: i32) -> Option<i32> {
