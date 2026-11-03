@@ -1,6 +1,10 @@
 use std::sync::Arc;
 
-use pumpkin_data::{BlockState, entity::EntityType};
+use pumpkin_data::{
+    Block, BlockState,
+    entity::EntityType,
+    tag::{self, Taggable},
+};
 use pumpkin_util::math::{
     boundingbox::{BoundingBox, EntityDimensions},
     position::BlockPos,
@@ -15,6 +19,7 @@ use crate::world::World;
 #[derive(Clone, Copy)]
 pub enum SpawnStrategy {
     OnTopOfCollider,
+    LegacyIronGolem,
 }
 
 impl SpawnStrategy {
@@ -22,6 +27,28 @@ impl SpawnStrategy {
         match self {
             Self::OnTopOfCollider => {
                 above_state.get_block_collision_shapes().next().is_none() && is_face_full_up(state)
+            }
+            // spawn util: Strategy.LEGACY_IRON_GOLEM
+            Self::LegacyIronGolem => {
+                let block = Block::from_state_id(state.id);
+                let name = block.name;
+                let excluded = block == &Block::COBWEB
+                    || block == &Block::CACTUS
+                    || block == &Block::CONDUIT
+                    || block == &Block::ICE
+                    || block == &Block::TNT
+                    || block == &Block::GLOWSTONE
+                    || block == &Block::BEACON
+                    || block == &Block::SEA_LANTERN
+                    || block == &Block::FROSTED_ICE
+                    || block == &Block::TINTED_GLASS
+                    || block == &Block::GLASS
+                    || block.has_tag(&tag::Block::MINECRAFT_LEAVES)
+                    || name.ends_with("glass_pane")
+                    || name.ends_with("stained_glass");
+                !excluded
+                    && (above_state.is_air() || above_state.is_liquid())
+                    && (state.is_solid() || block == &Block::POWDER_SNOW)
             }
         }
     }

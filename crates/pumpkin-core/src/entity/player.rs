@@ -5138,18 +5138,13 @@ impl Player {
             let player_pos = self.living_entity.entity.block_pos.load();
             let pos_f64 = self.living_entity.entity.pos.load();
 
-            let village_pos = world
-                .villager_poi
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .get_nearest_job_site(player_pos, 64)
-                .or_else(|| {
-                    world.raids.try_lock().ok().and_then(|raids| {
-                        raids
-                            .get_nearby_raid(&player_pos, 64.0 * 64.0)
-                            .map(|r| r.center)
-                    })
-                });
+            let village_pos = world.poi_closest_village_poi(player_pos, 64).or_else(|| {
+                world.raids.try_lock().ok().and_then(|raids| {
+                    raids
+                        .get_nearby_raid(&player_pos, 64.0 * 64.0)
+                        .map(|r| r.center)
+                })
+            });
 
             if let Some(pos) = village_pos {
                 if let Some(p) = self.world().get_player_by_uuid(self.gameprofile.id) {

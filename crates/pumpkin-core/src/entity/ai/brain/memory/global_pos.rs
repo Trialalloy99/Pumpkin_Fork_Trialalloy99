@@ -16,6 +16,20 @@ impl GlobalPos {
         Self { dimension, pos }
     }
 
+    // brain: GlobalPos.of(level.dimension(), pos)
+    #[must_use]
+    pub fn of(world: &crate::world::World, pos: BlockPos) -> Option<Self> {
+        Some(Self::new(
+            pumpkin_data::dimension::Dimension::from_name(world.dimension.minecraft_name)?,
+            pos,
+        ))
+    }
+
+    #[must_use]
+    pub fn is_in_world(&self, world: &crate::world::World) -> bool {
+        self.dimension.minecraft_name == world.dimension.minecraft_name
+    }
+
     #[must_use]
     pub fn is_close_enough(&self, dimension: &Dimension, pos: BlockPos, max_distance: u32) -> bool {
         self.dimension.id == dimension.id

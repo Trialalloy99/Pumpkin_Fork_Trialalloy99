@@ -752,3 +752,40 @@ impl Raids {
         }
     }
 }
+
+/// What villager behaviors ask of the raid at their position (`ServerLevel.getRaidAt`).
+#[derive(Clone, Copy, Debug)]
+pub struct RaidState {
+    pub active: bool,
+    pub over: bool,
+    pub victory: bool,
+    pub loss: bool,
+    pub stopped: bool,
+    pub has_first_wave_spawned: bool,
+    pub between_waves: bool,
+}
+
+impl World {
+    // raid: ServerLevel.getRaidAt as a copy of the flags the villager behaviors read
+    #[must_use]
+    pub fn raid_state_at(&self, pos: &BlockPos) -> Option<RaidState> {
+        let raids = self
+            .raids
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        raids.get_raid_at(pos).map(|raid| {
+            let has_first_wave_spawned = raid.groups_spawned > 0;
+            RaidState {
+                active: raid.is_active(),
+                over: raid.is_over(),
+                victory: raid.is_victory(),
+                loss: raid.is_loss(),
+                stopped: raid.is_stopped(),
+                has_first_wave_spawned,
+                between_waves: has_first_wave_spawned
+                    && raid.get_total_raiders_alive() == 0
+                    && raid.raid_cooldown_ticks > 0,
+            }
+        })
+    }
+}

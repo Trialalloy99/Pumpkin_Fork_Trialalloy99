@@ -417,6 +417,29 @@ pub trait PathNavigationTrait: Send + Sync {
         destination: Vector3<f64>,
         reach_range: i32,
     ) -> Option<Path>;
+    // navigation: PathNavigation.createPath(Set<BlockPos>, reachRange), the shortest reachable path
+    fn create_path_to_targets(
+        &mut self,
+        entity: &LivingEntity,
+        targets: &[BlockPos],
+        reach_range: i32,
+    ) -> Option<Path> {
+        let mut best: Option<Path> = None;
+        for target in targets {
+            let Some(path) = self.create_path(entity, target.0.to_f64(), reach_range) else {
+                continue;
+            };
+            let better = best.as_ref().is_none_or(|current| {
+                (path.can_reach() && !current.can_reach())
+                    || (path.can_reach() == current.can_reach()
+                        && path.calculate_length() < current.calculate_length())
+            });
+            if better {
+                best = Some(path);
+            }
+        }
+        best
+    }
     fn recompute_path(&mut self, entity: &LivingEntity);
     fn should_recompute_path(&self, entity: &LivingEntity, position: BlockPos) -> bool;
     fn set_avoid_sun(&mut self, avoid_sun: bool);

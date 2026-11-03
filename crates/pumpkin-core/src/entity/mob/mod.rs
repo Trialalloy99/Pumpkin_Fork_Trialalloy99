@@ -1476,12 +1476,6 @@ pub trait Mob: EntityBase + Send + Sync {
         None
     }
 
-    fn is_job_site_pending(&self) -> bool {
-        false
-    }
-
-    fn release_pending_job_site(&self, _position: BlockPos) {}
-
     fn get_trading_player(&self) -> Option<Arc<Player>> {
         None
     }
@@ -1626,6 +1620,9 @@ pub trait Mob: EntityBase + Send + Sync {
     fn handle_killing_blow(&self) -> bool {
         true
     }
+
+    /// Vanilla `die(source)` override: runs once when the mob dies, `killer` is the causing entity.
+    fn mob_on_death(&self, _killer: Option<&dyn EntityBase>) {}
 
     /// Vanilla `dropCustomDeathLoot`: extra drops after the loot table.
     fn drop_custom_death_loot(&self) {}

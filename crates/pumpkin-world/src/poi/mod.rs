@@ -137,6 +137,17 @@ impl PoiRegion {
         self.entries.values().collect()
     }
 
+    // poi: PoiRecord ticket count change
+    pub fn set_free_tickets(&mut self, pos: &BlockPos, free_tickets: i32) -> bool {
+        let Some(entry) = self.entries.get_mut(&Self::pos_key(pos)) else {
+            return false;
+        };
+        entry.free_tickets = free_tickets;
+        self.dirty_chunks.insert((pos.0.x >> 4, pos.0.z >> 4));
+        self.dirty = true;
+        true
+    }
+
     #[must_use]
     pub const fn is_dirty(&self) -> bool {
         self.dirty
@@ -501,6 +512,59 @@ impl PoiStorage {
         region.remove(pos)
     }
 
+    // poi: PoiRecord.getFreeTickets
+    pub fn free_tickets(&mut self, pos: &BlockPos) -> Option<i32> {
+        let (rx, rz) = Self::region_coords(pos);
+        self.get_or_load_region(rx, rz)
+            .get(pos)
+            .map(|entry| entry.free_tickets)
+    }
+
+    // poi: PoiRecord.acquireTicket
+    pub fn take_ticket(&mut self, pos: &BlockPos) -> bool {
+        let (rx, rz) = Self::region_coords(pos);
+        let region = self.get_or_load_region(rx, rz);
+        match region.get(pos).map(|entry| entry.free_tickets) {
+            Some(free) if free > 0 => region.set_free_tickets(pos, free - 1),
+            _ => false,
+        }
+    }
+
+    // poi: PoiRecord.releaseTicket, capped at the type's ticket count
+    pub fn release_ticket(&mut self, pos: &BlockPos, max_tickets: i32) -> bool {
+        let (rx, rz) = Self::region_coords(pos);
+        let region = self.get_or_load_region(rx, rz);
+        match region.get(pos).map(|entry| entry.free_tickets) {
+            Some(free) if free < max_tickets => region.set_free_tickets(pos, free + 1),
+            _ => false,
+        }
+    }
+
+    // poi: every entry within a square, with its ticket count
+    pub fn for_each_entry_in_square(
+        &mut self,
+        center: BlockPos,
+        radius: i32,
+        mut visit: impl FnMut(&PoiEntry),
+    ) {
+        let min_rx = ((center.0.x - radius) >> 4) >> 5;
+        let max_rx = ((center.0.x + radius) >> 4) >> 5;
+        let min_rz = ((center.0.z - radius) >> 4) >> 5;
+        let max_rz = ((center.0.z + radius) >> 4) >> 5;
+        for rx in min_rx..=max_rx {
+            for rz in min_rz..=max_rz {
+                let region = self.get_or_load_region(rx, rz);
+                for entry in region.get_all() {
+                    if (entry.x - center.0.x).abs() <= radius
+                        && (entry.z - center.0.z).abs() <= radius
+                    {
+                        visit(entry);
+                    }
+                }
+            }
+        }
+    }
+
     /// Get all POI positions within a square radius (for portal search)
     #[expect(clippy::similar_names)]
     pub fn get_in_square(
@@ -656,6 +720,22 @@ mod tests {
         assert_eq!(entry.y, 64);
         assert_eq!(entry.z, 200);
         assert_eq!(entry.poi_type, POI_TYPE_NETHER_PORTAL);
+    }
+
+    #[test]
+    fn poi_tickets_are_taken_and_released_up_to_the_maximum() {
+        let folder = std::env::temp_dir().join("pumpkin_poi_ticket_test");
+        let mut storage = PoiStorage::new(folder);
+        let bed = BlockPos(Vector3::new(8, 64, 8));
+        storage.add_with_free_tickets(bed, "minecraft:home", 1);
+
+        assert_eq!(storage.free_tickets(&bed), Some(1));
+        assert!(storage.take_ticket(&bed));
+        assert!(!storage.take_ticket(&bed));
+        assert_eq!(storage.free_tickets(&bed), Some(0));
+        assert!(storage.release_ticket(&bed, 1));
+        assert!(!storage.release_ticket(&bed, 1));
+        assert!(!storage.take_ticket(&BlockPos(Vector3::new(9, 64, 8))));
     }
 
     #[test]

@@ -1,14 +1,9 @@
-use pumpkin_data::entity::EntityType;
-use pumpkin_util::math::boundingbox::BoundingBox;
 use pumpkin_util::math::position::BlockPos;
-use pumpkin_util::math::vector3::Vector3;
 
 use super::World;
 
 /// Vanilla `PoiManager.MAX_VILLAGE_DISTANCE`, in sections.
 pub const MAX_VILLAGE_DISTANCE: i32 = 6;
-/// Range in which villagers claim beds and meeting points (vanilla `AcquirePoi` range).
-const VILLAGER_CLAIM_RANGE: f64 = 48.0;
 
 // village: poi types in #minecraft:village (acquirable job sites + home + meeting)
 #[must_use]
@@ -33,48 +28,20 @@ pub fn is_village_poi_type(poi_type: &str) -> bool {
     )
 }
 
-/// Villagers near a spot, gathered once so occupancy checks need no further entity queries.
-pub struct VillageOccupancy {
-    /// Villager position and claimed home.
-    villagers: Vec<(Vector3<f64>, Option<BlockPos>)>,
-}
+/// Ticket based occupancy of village pois (`PoiRecord.isOccupied`).
+pub struct VillageOccupancy;
 
 impl VillageOccupancy {
-    // village: villagers that could hold a poi around `center` within `radius` blocks
+    // village: occupancy is read from the poi tickets, there is nothing to gather
     #[must_use]
-    pub fn gather(world: &World, center: BlockPos, radius: i32) -> Self {
-        let reach = f64::from(radius) + VILLAGER_CLAIM_RANGE;
-        let center = center.to_centered_f64();
-        let area = BoundingBox::new(
-            Vector3::new(center.x - reach, center.y - reach, center.z - reach),
-            Vector3::new(center.x + reach, center.y + reach, center.z + reach),
-        );
-        let villagers = world
-            .get_entities_at_box(&area)
-            .into_iter()
-            .filter(|entity| entity.get_entity().entity_type == &EntityType::VILLAGER)
-            .map(|entity| (entity.get_entity().pos.load(), entity.get_home_pos()))
-            .collect();
-        Self { villagers }
+    pub const fn gather(_world: &World, _center: BlockPos, _radius: i32) -> Self {
+        Self
     }
 
-    // village: poi has a claimed ticket (PoiRecord.isOccupied); bells count once a villager lives in reach
+    // village: poi has a claimed ticket (PoiRecord.isOccupied)
     #[must_use]
-    pub fn is_occupied(&self, world: &World, pos: BlockPos, poi_type: &str) -> bool {
-        match poi_type {
-            "minecraft:home" => self.villagers.iter().any(|(_, home)| *home == Some(pos)),
-            "minecraft:meeting" => {
-                let bell = pos.to_centered_f64();
-                self.villagers.iter().any(|(villager, _)| {
-                    villager.squared_distance_to_vec(&bell) <= VILLAGER_CLAIM_RANGE.powi(2)
-                })
-            }
-            _ => world
-                .villager_poi
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .is_claimed(pos),
-        }
+    pub fn is_occupied(&self, world: &World, pos: BlockPos, _poi_type: &str) -> bool {
+        world.poi_is_occupied(&pos)
     }
 }
 

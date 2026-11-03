@@ -70,6 +70,8 @@ pub struct BrainState {
     core_activities: ActivitySet,
     active_activities: ActivitySet,
     default_activity: Activity,
+    // brain: schedule, None without one; Some(baby) picks the baby villager track
+    schedule: Option<bool>,
 }
 
 impl Default for BrainState {
@@ -81,6 +83,7 @@ impl Default for BrainState {
             core_activities: ActivitySet::single(Activity::Core),
             active_activities: ActivitySet::default(),
             default_activity: Activity::Idle,
+            schedule: None,
         };
         state.use_default_activity();
         state
@@ -184,6 +187,23 @@ impl BrainState {
 
     pub const fn set_default_activity(&mut self, activity: Activity) {
         self.default_activity = activity;
+    }
+
+    // brain: setSchedule, the villager or baby villager activity timeline
+    pub const fn set_schedule(&mut self, baby: bool) {
+        self.schedule = Some(baby);
+    }
+
+    // brain: updateActivityFromSchedule
+    pub fn update_activity_from_schedule(
+        &mut self,
+        world: &World,
+        pos: &pumpkin_util::math::position::BlockPos,
+    ) {
+        if let Some(baby) = self.schedule {
+            let activity = world.villager_activity(pos, baby);
+            self.set_active_activity_if_possible(activity);
+        }
     }
 
     pub fn use_default_activity(&mut self) {

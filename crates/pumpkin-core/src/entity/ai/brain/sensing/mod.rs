@@ -15,6 +15,7 @@ pub mod nearest_living_entities;
 pub mod nearest_players;
 pub mod piglin_specific;
 pub mod tempting;
+pub mod villager;
 pub mod warden_entity;
 
 pub use dummy::DummySensor;
@@ -41,6 +42,11 @@ pub enum SensorType {
     NearestAdultAnyType,
     PiglinSpecific,
     WardenEntity,
+    VillagerHostiles,
+    VillagerBabies,
+    SecondaryPois,
+    GolemDetected,
+    NearestBed,
 }
 
 impl SensorType {
@@ -57,12 +63,19 @@ impl SensorType {
             Self::NearestAdultAnyType => "minecraft:nearest_adult_any_type",
             Self::PiglinSpecific => "minecraft:piglin_specific_sensor",
             Self::WardenEntity => "minecraft:warden_entity_sensor",
+            Self::VillagerHostiles => "minecraft:villager_hostiles",
+            Self::VillagerBabies => "minecraft:villager_babies",
+            Self::SecondaryPois => "minecraft:secondary_pois",
+            Self::GolemDetected => "minecraft:golem_detected",
+            Self::NearestBed => "minecraft:nearest_bed",
         }
     }
 
     #[must_use]
     pub const fn scan_rate(self) -> i32 {
         match self {
+            Self::SecondaryPois => 40,
+            Self::GolemDetected => 200,
             Self::Dummy
             | Self::NearestLivingEntities
             | Self::NearestPlayers
@@ -72,7 +85,10 @@ impl SensorType {
             | Self::FoodTemptations
             | Self::NearestAdultAnyType
             | Self::PiglinSpecific
-            | Self::WardenEntity => DEFAULT_SCAN_RATE,
+            | Self::WardenEntity
+            | Self::VillagerHostiles
+            | Self::VillagerBabies
+            | Self::NearestBed => DEFAULT_SCAN_RATE,
         }
     }
 
@@ -88,6 +104,11 @@ impl SensorType {
             Self::NearestAdultAnyType => Box::new(adult::AdultSensorAnyType),
             Self::PiglinSpecific => Box::new(piglin_specific::PiglinSpecificSensor),
             Self::WardenEntity => Box::new(warden_entity::WardenEntitySensor),
+            Self::VillagerHostiles => Box::new(villager::VillagerHostilesSensor),
+            Self::VillagerBabies => Box::new(villager::VillagerBabiesSensor),
+            Self::SecondaryPois => Box::new(villager::SecondaryPoiSensor),
+            Self::GolemDetected => Box::new(villager::GolemSensor),
+            Self::NearestBed => Box::new(villager::NearestBedSensor),
         }
     }
 

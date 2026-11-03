@@ -2457,6 +2457,9 @@ impl LivingEntity {
             // Like vanilla, stats go to the kill credit, loot and XP to the killing blow.
             let kill_credit = self.get_kill_credit();
             let killer = cause.or(source);
+            if let Some(mob) = dyn_self.get_mob() {
+                mob.mob_on_death(killer);
+            }
 
             self.update_death_stats(&*dyn_self, kill_credit.as_deref());
 

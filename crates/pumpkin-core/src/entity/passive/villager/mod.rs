@@ -3,12 +3,10 @@ use std::sync::atomic::{AtomicBool, AtomicI32, AtomicI64, Ordering};
 use std::sync::{Arc, Weak};
 use uuid::Uuid;
 
-use crate::block::blocks::bed::BedBlock;
 use pumpkin_data::Enchantment;
 use pumpkin_data::attributes::Attributes;
-use pumpkin_data::block_properties::{BedPart, WhiteBedLikeProperties as BedProperties};
 use pumpkin_data::effect::StatusEffect;
-use pumpkin_data::entity::{EntityPose, EntityType};
+
 use pumpkin_data::item::{Item, JavaToBedrockItemMapping};
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::potion::Effect;
@@ -27,28 +25,26 @@ use pumpkin_protocol::bedrock::{
 };
 use pumpkin_protocol::codec::var_int::VarInt;
 use pumpkin_protocol::java::client::play::CMerchantOffers;
-use pumpkin_util::math::{boundingbox::BoundingBox, position::BlockPos, vector3::Vector3};
+use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::text::TextComponent;
 
-use crate::entity::ai::behavior::fleeing::{self, Flee};
+use crate::entity::ageable::{AgeableData, AgeableMob};
+use crate::entity::ai::brain::Brain;
+use crate::entity::ai::brain::memory::{PackedMemories, types};
 use crate::entity::player::Player;
 use crate::entity::{
     Entity, EntityBase,
-    ai::{
-        goal::{
-            look_around::RandomLookAroundGoal, look_at_entity::LookAtEntityGoal,
-            open_door::OpenDoorGoal, swim::SwimGoal, trade_with_player::TradeWithPlayerGoal,
-            wander_around::WanderAroundGoal, work_at_job_site::WorkAtJobSiteGoal,
-        },
-        pathfinder::Navigator,
-    },
     experience_orb::ExperienceOrbEntity,
     mob::{Mob, MobEntity},
 };
 use crate::world::World;
-use crate::world::villager_poi::profession_for_block;
 
+mod actions;
+pub use actions::{ReputationEvent, secondary_poi_block, villager_type_for_biome};
+mod ai;
+mod behaviors;
 pub mod data;
+mod routines;
 pub use data::{
     BREEDING_FOOD_THRESHOLD, GossipType, VillagerData, VillagerProfession, VillagerType,
     get_food_points,
@@ -329,26 +325,6 @@ fn explorer_map_target(
     })
 }
 
-/// Vanilla `VillagerHostilesSensor` distances; panic runs at 0.5 * 1.5.
-const VILLAGER_FLEES: &[Flee] = &[Flee::nearest_of(
-    1,
-    &[
-        (&EntityType::DROWNED, 8.0),
-        (&EntityType::EVOKER, 12.0),
-        (&EntityType::HUSK, 8.0),
-        (&EntityType::ILLUSIONER, 12.0),
-        (&EntityType::PILLAGER, 15.0),
-        (&EntityType::RAVAGER, 12.0),
-        (&EntityType::VEX, 8.0),
-        (&EntityType::VINDICATOR, 10.0),
-        (&EntityType::ZOGLIN, 10.0),
-        (&EntityType::ZOMBIE, 8.0),
-        (&EntityType::ZOMBIE_VILLAGER, 8.0),
-    ],
-    0.75,
-    0.75,
-)];
-
 pub struct VillagerEntity {
     pub mob_entity: MobEntity,
     pub villager_data: std::sync::Mutex<VillagerData>,
@@ -371,9 +347,9 @@ pub struct VillagerEntity {
     pub last_traded_player: std::sync::Mutex<Option<Uuid>>,
     pub trading_player: std::sync::Mutex<Option<(Uuid, u8)>>,
     pub is_trading: AtomicBool,
-    pub job_site: std::sync::Mutex<Option<BlockPos>>,
-    pub job_site_pending: AtomicBool,
-    pub home_pos: std::sync::Mutex<Option<BlockPos>>,
+    pub brain_refresh_requested: AtomicBool,
+    pub ageable_data: AgeableData,
+    pub villager_data_finalized: AtomicBool,
     pub self_weak: std::sync::Mutex<Option<Weak<Self>>>,
 }
 
@@ -414,7 +390,15 @@ impl VillagerEntity {
 
     #[allow(clippy::too_many_lines)]
     pub fn new(entity: Entity) -> Arc<Self> {
-        let mob_entity = MobEntity::new(entity);
+        let mut mob_entity = MobEntity::new(entity);
+        // villager: navigation opens doors, floats, 48 blocks of path
+        let navigator = mob_entity
+            .navigator
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        navigator.set_can_open_doors(true);
+        navigator.set_can_float(true);
+        navigator.set_required_path_length(48.0);
         let villager_data = VillagerData::new(VillagerType::Plains, VillagerProfession::None, 1);
         let inventory = std::sync::Mutex::new((0..8).map(|_| ItemStack::EMPTY.clone()).collect());
 
@@ -440,43 +424,17 @@ impl VillagerEntity {
             last_traded_player: std::sync::Mutex::new(None),
             trading_player: std::sync::Mutex::new(None),
             is_trading: AtomicBool::new(false),
-            job_site: std::sync::Mutex::new(None),
-            job_site_pending: AtomicBool::new(false),
-            home_pos: std::sync::Mutex::new(None),
+            brain_refresh_requested: AtomicBool::new(false),
+            ageable_data: AgeableData::default(),
+            villager_data_finalized: AtomicBool::new(false),
             self_weak: std::sync::Mutex::new(None),
         };
         let mob_arc = Arc::new(villager);
+        mob_arc.mob_entity.set_can_pick_up_loot(true);
         *mob_arc
             .self_weak
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(Arc::downgrade(&mob_arc));
-        let mob_weak: Weak<dyn Mob> = {
-            let mob_arc: Arc<dyn Mob> = mob_arc.clone();
-            Arc::downgrade(&mob_arc)
-        };
-
-        {
-            let goal_selector = &mob_arc.mob_entity.goals_selector;
-
-            goal_selector.add_goal(0, Box::new(SwimGoal::default()));
-            goal_selector.add_goal(0, Box::new(OpenDoorGoal::new(true)));
-            // Villagers avoid threats
-            fleeing::apply(goal_selector, VILLAGER_FLEES);
-
-            goal_selector.add_goal(2, Box::new(TradeWithPlayerGoal::new()));
-            // Basic movement and looking (Vanilla uses 0.5 speed)
-            goal_selector.add_goal(3, Box::new(WorkAtJobSiteGoal::new(0.5)));
-            goal_selector.add_goal(4, Box::new(WanderAroundGoal::new(0.5)));
-            goal_selector.add_goal(
-                5,
-                LookAtEntityGoal::with_default(mob_weak.clone(), &EntityType::PLAYER, 8.0),
-            );
-            goal_selector.add_goal(
-                6,
-                LookAtEntityGoal::with_default(mob_weak, &EntityType::VILLAGER, 8.0),
-            );
-            goal_selector.add_goal(7, Box::new(RandomLookAroundGoal::default()));
-        };
 
         // Send initial metadata
         let bedrock_metadata = Self::bedrock_metadata(villager_data, 0);
@@ -506,16 +464,6 @@ impl VillagerEntity {
             }
         }
         total
-    }
-
-    fn poi_owner(&self) -> Option<Weak<dyn EntityBase>> {
-        let owner = self
-            .self_weak
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .clone()?;
-        let owner: Weak<dyn EntityBase> = owner;
-        Some(owner)
     }
 
     pub fn eat_until_full(&self) {
@@ -859,18 +807,11 @@ impl VillagerEntity {
         }
 
         if let Some(player) = world.get_player_by_uuid(player_uuid) {
-            {
-                let mut gossips = self
-                    .gossips
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                let value = gossips
-                    .entry(player_uuid)
-                    .or_default()
-                    .entry(GossipType::Trading)
-                    .or_default();
-                *value = (*value + 2).min(GossipType::Trading.max_value());
-            };
+            // villager: rewardTradeXp remembers the trader, the brain tick turns it into reputation
+            *self
+                .last_traded_player
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(player_uuid);
             self.resend_offers_to_player(&player);
         }
     }
@@ -972,32 +913,6 @@ impl VillagerEntity {
         self.send_trade_offers(&player, sync_id, &offers, villager_data);
     }
 
-    fn decay_gossips(&self, game_time: i64) {
-        let last_decay = self.last_gossip_decay_time.load(Ordering::Relaxed);
-        if last_decay == 0 {
-            self.last_gossip_decay_time
-                .store(game_time, Ordering::Relaxed);
-            return;
-        }
-        if game_time < last_decay + 24_000 {
-            return;
-        }
-
-        let mut gossips = self
-            .gossips
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for values in gossips.values_mut() {
-            values.retain(|kind, value| {
-                *value -= kind.daily_decay();
-                *value > 0
-            });
-        }
-        gossips.retain(|_, values| !values.is_empty());
-        self.last_gossip_decay_time
-            .store(game_time, Ordering::Relaxed);
-    }
-
     fn notify_trading_player_offers_updated(&self) {
         if self
             .trading_player
@@ -1012,283 +927,6 @@ impl VillagerEntity {
                 .and_then(Weak::upgrade)
         {
             villager.resend_offers_to_trading_player();
-        }
-    }
-
-    fn work_at_job_site(&self, game_time: i64, day_time: i64, day: i64) {
-        use rand::RngExt;
-
-        if !(2_000..9_000).contains(&day_time)
-            || game_time - self.last_worked_at_poi.load(Ordering::Relaxed) < 300
-            || !rand::rng().random_bool(0.5)
-        {
-            return;
-        }
-        self.last_worked_at_poi.store(game_time, Ordering::Relaxed);
-
-        let Some(job_site) = self.get_job_site() else {
-            return;
-        };
-        if job_site
-            .to_centered_f64()
-            .squared_distance_to_vec(&self.get_entity().pos.load())
-            >= 1.73f64.powi(2)
-        {
-            return;
-        }
-
-        let profession = self
-            .villager_data
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .profession_enum();
-        if let Some(sound) = profession.work_sound() {
-            self.get_entity().play_sound(sound);
-        }
-
-        let last_restock = self.last_restock_time.load(Ordering::Relaxed);
-        let last_check_day = self.last_restock_check_day.swap(day, Ordering::Relaxed);
-        if game_time > last_restock + 12_000 || (last_check_day > 0 && day > last_check_day) {
-            let missed_restock_count = (2 - self.restocks_today.load(Ordering::Relaxed)).max(0);
-            {
-                let mut offers = self
-                    .offers
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner);
-                if missed_restock_count > 0 {
-                    for offer in offers.iter_mut() {
-                        offer.reset_uses();
-                    }
-                }
-                for _ in 0..missed_restock_count {
-                    for offer in offers.iter_mut() {
-                        offer.update_demand();
-                    }
-                }
-            }
-            self.last_restock_time.store(game_time, Ordering::Relaxed);
-            self.restocks_today.store(0, Ordering::Relaxed);
-            self.notify_trading_player_offers_updated();
-        }
-
-        let restocks_today = self.restocks_today.load(Ordering::Relaxed);
-        let allowed = restocks_today == 0
-            || (restocks_today < 2
-                && game_time > self.last_restock_time.load(Ordering::Relaxed) + 2_400);
-        if !allowed {
-            return;
-        }
-
-        {
-            let mut offers = self
-                .offers
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if !offers
-                .iter()
-                .any(pumpkin_protocol::java::client::play::MerchantOffer::needs_restock)
-            {
-                return;
-            }
-            for offer in offers.iter_mut() {
-                offer.update_demand();
-                offer.reset_uses();
-            }
-        }
-        self.last_restock_time.store(game_time, Ordering::Relaxed);
-        self.restocks_today.fetch_add(1, Ordering::Relaxed);
-        self.notify_trading_player_offers_updated();
-    }
-
-    #[expect(clippy::too_many_lines)]
-    fn update_job_site(&self, world: &crate::world::World) {
-        let data = *self
-            .villager_data
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let profession = data.profession_enum();
-        let is_adult = self.get_entity().age.load(Ordering::Relaxed) >= 0;
-
-        if profession == VillagerProfession::Nitwit || !is_adult {
-            if let Some(site) = self.get_job_site() {
-                world
-                    .villager_poi
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .release(site, self.get_entity().entity_uuid);
-                *self
-                    .job_site
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-                self.job_site_pending.store(false, Ordering::Relaxed);
-            }
-            return;
-        }
-
-        let Some(owner) = self.poi_owner() else {
-            return;
-        };
-
-        if let Some(current_site) = self.get_job_site()
-            && current_site
-                .to_centered_f64()
-                .squared_distance_to_vec(&self.get_entity().pos.load())
-                < 16.0f64.powi(2)
-        {
-            let (block, _state) = world.get_block_and_state(&current_site);
-            let expected = (profession != VillagerProfession::None).then_some(profession);
-            let valid = world
-                .villager_poi
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .claim(current_site, block, owner.clone(), expected)
-                .is_some();
-
-            if !valid {
-                *self
-                    .job_site
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-                self.job_site_pending.store(false, Ordering::Relaxed);
-                if self.xp.load(Ordering::Relaxed) == 0
-                    && data.level.0 <= 1
-                    && profession != VillagerProfession::None
-                {
-                    let r#type = self
-                        .villager_data
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .type_enum();
-                    self.set_villager_data(VillagerData::new(r#type, VillagerProfession::None, 1));
-                }
-            }
-        }
-
-        if self.get_job_site().is_none() {
-            let profession = self
-                .villager_data
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .profession_enum();
-            let expected = (profession != VillagerProfession::None).then_some(profession);
-            let pos = self.get_entity().block_pos.load();
-            let start = BlockPos::new(pos.0.x - 10, pos.0.y - 4, pos.0.z - 10);
-            let end = BlockPos::new(pos.0.x + 10, pos.0.y + 4, pos.0.z + 10);
-            let mut candidates = Vec::new();
-
-            let indexed_sites = world
-                .villager_poi
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .available_job_sites(pos, 48, expected);
-            let saved_sites = world
-                .portal_poi
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .get_in_square(pos, 48, None);
-            for position in indexed_sites.into_iter().chain(saved_sites) {
-                let delta = position.0 - pos.0;
-                if i64::from(delta.x).pow(2) + i64::from(delta.y).pow(2) + i64::from(delta.z).pow(2)
-                    > 48i64.pow(2)
-                    || candidates
-                        .iter()
-                        .any(|(_, candidate, _, _)| *candidate == position)
-                {
-                    continue;
-                }
-                let (block, _state) = world.get_block_and_state(&position);
-                if let Some(site_profession) = profession_for_block(block)
-                    && expected.is_none_or(|profession| profession == site_profession)
-                {
-                    let distance = position
-                        .to_centered_f64()
-                        .squared_distance_to_vec(&self.get_entity().pos.load());
-                    candidates.push((distance, position, block, site_profession));
-                }
-            }
-
-            for position in BlockPos::iterate(start, end) {
-                let (block, _state) = world.get_block_and_state(&position);
-                let Some(site_profession) = profession_for_block(block) else {
-                    continue;
-                };
-                if expected.is_some_and(|profession| profession != site_profession)
-                    || candidates
-                        .iter()
-                        .any(|(_, candidate, _, _)| *candidate == position)
-                {
-                    continue;
-                }
-                let distance = position
-                    .to_centered_f64()
-                    .squared_distance_to_vec(&self.get_entity().pos.load());
-                candidates.push((distance, position, block, site_profession));
-            }
-            candidates.sort_by(|left, right| left.0.total_cmp(&right.0));
-
-            let mut navigator = Navigator::default();
-            let mut claimed = None;
-            for (_, position, block, _) in candidates.into_iter().take(5) {
-                if !navigator.can_reach_within(
-                    &self.mob_entity.living_entity,
-                    position.to_centered_f64(),
-                    1.73,
-                ) {
-                    continue;
-                }
-                if world
-                    .villager_poi
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .claim(position, block, owner.clone(), expected)
-                    .is_some()
-                {
-                    claimed = Some(position);
-                    break;
-                }
-            }
-
-            if let Some(site) = claimed {
-                *self
-                    .job_site
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(site);
-                self.job_site_pending.store(true, Ordering::Relaxed);
-            }
-        }
-
-        if self.job_site_pending.load(Ordering::Relaxed)
-            && let Some(site) = self.get_job_site()
-            && site
-                .to_centered_f64()
-                .squared_distance_to_vec(&self.get_entity().pos.load())
-                < 2.0f64.powi(2)
-        {
-            let (block, _state) = world.get_block_and_state(&site);
-            if let Some(claimed_profession) = profession_for_block(block) {
-                let profession = self
-                    .villager_data
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .profession_enum();
-                if profession != VillagerProfession::None && profession != claimed_profession {
-                    return;
-                }
-                world.send_entity_status(
-                    self.get_entity(),
-                    pumpkin_data::entity::EntityStatus::VillagerHappy,
-                    ActorEventID::VillagerHappy,
-                );
-                self.job_site_pending.store(false, Ordering::Relaxed);
-                if profession == VillagerProfession::None {
-                    let r#type = self
-                        .villager_data
-                        .lock()
-                        .unwrap_or_else(std::sync::PoisonError::into_inner)
-                        .type_enum();
-                    self.set_villager_data(VillagerData::new(r#type, claimed_profession, 1));
-                }
-            }
         }
     }
 
@@ -1550,7 +1188,7 @@ impl ScreenHandlerFactory for VillagerEntity {
 }
 
 impl VillagerEntity {
-    #[expect(clippy::too_many_lines)]
+    // villager: Villager.tick
     pub fn villager_mob_tick(&self) {
         let world = self.get_entity().world.load();
 
@@ -1569,30 +1207,6 @@ impl VillagerEntity {
                 (cooldown > 0).then_some(cooldown - 1)
             })
             .ok();
-
-        let last_traded_player = self
-            .last_traded_player
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
-        if let Some(player_uuid) = last_traded_player {
-            let mut gossips = self
-                .gossips
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let value = gossips
-                .entry(player_uuid)
-                .or_default()
-                .entry(GossipType::Trading)
-                .or_default();
-            *value = (*value + 2).min(GossipType::Trading.max_value());
-            drop(gossips);
-            world.send_entity_status(
-                self.get_entity(),
-                pumpkin_data::entity::EntityStatus::VillagerHappy,
-                ActorEventID::VillagerHappy,
-            );
-        }
 
         if !self.is_trading.load(Ordering::Relaxed)
             && self.merchant_update_timer.load(Ordering::Relaxed) > 0
@@ -1621,239 +1235,140 @@ impl VillagerEntity {
             });
         }
 
-        let (game_time, day_time, day) = {
-            let time = world
-                .level_time
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            (time.world_age, time.query_daytime(), time.query_day())
-        };
-        self.decay_gossips(game_time);
-        self.work_at_job_site(game_time, day_time, day);
+        self.maybe_decay_gossip(world.get_world_age());
+    }
 
-        let age = self.get_entity().tick_count.load(Ordering::Relaxed);
-        if age % 20 != 0 {
-            return;
-        }
-        self.update_job_site(&world);
-
-        // 1. Bed / Sleeping logic (for all villagers: babies, nitwits, adults)
-        let is_sleeping = self.get_entity().pose.load() == EntityPose::Sleeping;
-
-        // Check if current bed is still valid
-        if let Some(current_home) = self.get_home_pos() {
-            let (block, state) = world.get_block_and_state(&current_home);
-            let valid = if block.has_tag(&pumpkin_data::tag::Block::MINECRAFT_BEDS) {
-                let bed_props = BedProperties::from_state_id(state.id);
-                bed_props.part == BedPart::Head
-            } else {
-                false
-            };
-
-            if !valid {
-                *self
-                    .home_pos
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-                if is_sleeping {
-                    // Wake up if bed was broken
-                    self.get_entity().set_pose(EntityPose::Standing);
-                    self.get_entity().set_synced_data(
-                        pumpkin_data::tracked_data::villager::SLEEPING_POS_ID,
-                        None::<BlockPos>,
-                    );
-                }
-            }
+    // villager: customServerAiStep, the brain first
+    fn villager_server_ai_step(&self) {
+        let world = self.get_entity().world.load_full();
+        self.mob_entity.tick_brain(self);
+        if self.brain_refresh_requested.swap(false, Ordering::Relaxed) {
+            self.mob_entity.refresh_brain(self);
         }
 
-        // If no bed, search for one
-        if self.get_home_pos().is_none() {
-            let pos = self.get_entity().block_pos.load();
-            let start = BlockPos::new(pos.0.x - 16, pos.0.y - 4, pos.0.z - 16);
-            let end = BlockPos::new(pos.0.x + 16, pos.0.y + 4, pos.0.z + 16);
-
-            let aabb = BoundingBox::new(
-                Vector3::new(
-                    pos.0.x as f64 - 32.0,
-                    pos.0.y as f64 - 16.0,
-                    pos.0.z as f64 - 32.0,
-                ),
-                Vector3::new(
-                    pos.0.x as f64 + 32.0,
-                    pos.0.y as f64 + 16.0,
-                    pos.0.z as f64 + 32.0,
-                ),
-            );
-            let nearby_entities = world.get_all_at_box(&aabb);
-
-            let mut claimed_homes = Vec::new();
-            for entity in nearby_entities {
-                if entity.get_entity().entity_id != self.get_entity().entity_id
-                    && entity.get_entity().entity_type
-                        == &pumpkin_data::entity::EntityType::VILLAGER
-                    && let Some(home) = entity.get_home_pos()
-                {
-                    claimed_homes.push(home);
-                }
-            }
-
-            let mut best_home = None;
-            let mut best_dist = f64::MAX;
-
-            for p in BlockPos::iterate(start, end) {
-                let (block, state) = world.get_block_and_state(&p);
-                if block.has_tag(&pumpkin_data::tag::Block::MINECRAFT_BEDS) {
-                    let bed_props = BedProperties::from_state_id(state.id);
-                    let bed_head_pos = if bed_props.part == BedPart::Head {
-                        p
-                    } else {
-                        p.offset(bed_props.facing.to_offset())
-                    };
-
-                    if claimed_homes.contains(&bed_head_pos) {
-                        continue;
-                    }
-
-                    let dist = bed_head_pos
-                        .to_f64()
-                        .squared_distance_to_vec(&self.get_entity().pos.load());
-                    if dist < best_dist {
-                        best_dist = dist;
-                        best_home = Some(bed_head_pos);
-                    }
-                }
-            }
-
-            if let Some(home) = best_home {
-                *self
-                    .home_pos
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(home);
-            }
-        }
-
-        // Handle Sleeping/Waking up based on time
-        let is_sleeping = self.get_entity().pose.load() == EntityPose::Sleeping;
-        if let Some(home_pos) = self.get_home_pos() {
-            let time = world.get_time_of_day();
-            let is_night = (12000..=23000).contains(&time);
-
-            if is_night {
-                if !is_sleeping {
-                    // Check distance to bed. If close enough, go to sleep
-                    let dist = home_pos
-                        .to_f64()
-                        .squared_distance_to_vec(&self.get_entity().pos.load());
-                    if dist <= 4.0 {
-                        // Within 2 blocks (squared distance 4.0)
-                        let (block, state) = world.get_block_and_state(&home_pos);
-                        if block.has_tag(&pumpkin_data::tag::Block::MINECRAFT_BEDS) {
-                            let bed_props = BedProperties::from_state_id(state.id);
-                            if !bed_props.occupied {
-                                // Make bed occupied
-                                BedBlock::set_occupied(true, &world, block, &home_pos, state.id);
-
-                                self.get_entity().set_pose(EntityPose::Sleeping);
-                                self.get_entity().set_synced_data(
-                                    pumpkin_data::tracked_data::villager::SLEEPING_POS_ID,
-                                    Some(home_pos),
-                                );
-                            }
-                        }
-                    }
-                }
-            } else if is_sleeping {
-                // It is day, wake up!
-                let (block, state) = world.get_block_and_state(&home_pos);
-                if block.has_tag(&pumpkin_data::tag::Block::MINECRAFT_BEDS) {
-                    let bed_props = BedProperties::from_state_id(state.id);
-                    if bed_props.occupied {
-                        BedBlock::set_occupied(false, &world, block, &home_pos, state.id);
-                    }
-                }
-
-                self.get_entity().set_pose(EntityPose::Standing);
-                self.get_entity().set_synced_data(
-                    pumpkin_data::tracked_data::villager::SLEEPING_POS_ID,
-                    None::<BlockPos>,
-                );
-            }
-        } else if is_sleeping {
-            // Wake up during the day
-            self.get_entity().set_pose(EntityPose::Standing);
-            self.get_entity().set_synced_data(
-                pumpkin_data::tracked_data::villager::SLEEPING_POS_ID,
-                None::<BlockPos>,
-            );
-        }
-
-        // 2. Iron Golem spawning logic (only for adults)
-        let profession = self
-            .villager_data
+        let last_traded_player = self
+            .last_traded_player
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .profession_enum();
-        if profession != VillagerProfession::Nitwit && age >= 0 {
-            // Checked every 20 ticks, golem spawn check every ~100 ticks
-            if age % 100 == 0 && self.get_home().is_some() {
-                // Check if panicked or talked recently to spawn an Iron Golem
-                let has_bed = self.get_home().is_some();
-                let has_worked =
-                    game_time - self.last_worked_at_poi.load(Ordering::Relaxed) < 24000;
-                if has_bed && has_worked {
-                    // Check nearby villagers
-                    let my_pos = self.get_entity().pos.load();
-                    let bb = BoundingBox::new(
-                        my_pos.sub_raw(16.0, 8.0, 16.0),
-                        my_pos.add_raw(16.0, 8.0, 16.0),
-                    );
-                    let nearby_villagers = world
-                        .get_entities_at_box(&bb)
-                        .iter()
-                        .filter(|e| {
-                            e.get_entity().entity_type
-                                == &pumpkin_data::entity::EntityType::VILLAGER
-                        })
-                        .count();
+            .take();
+        if let Some(player_uuid) = last_traded_player {
+            if let Some(player) = world.get_player_by_uuid(player_uuid) {
+                self.on_reputation_event_from(ReputationEvent::Trade, player.as_ref());
+            }
+            self.broadcast_status(
+                pumpkin_data::entity::EntityStatus::VillagerHappy,
+                ActorEventID::VillagerHappy,
+            );
+        }
 
-                    if nearby_villagers >= 3 {
-                        // Check if an iron golem is already nearby
-                        let nearby_golems = world
-                            .get_entities_at_box(&bb)
-                            .iter()
-                            .filter(|e| {
-                                e.get_entity().entity_type
-                                    == &pumpkin_data::entity::EntityType::IRON_GOLEM
-                            })
-                            .count();
+        if !self.mob_entity.is_no_ai() && rand::random_range(0..100) == 0 {
+            let pos = self.get_entity().block_pos.load();
+            if world
+                .raid_state_at(&pos)
+                .is_some_and(|raid| raid.active && !raid.over)
+            {
+                self.broadcast_status(
+                    pumpkin_data::entity::EntityStatus::VillagerSweat,
+                    ActorEventID::None,
+                );
+            }
+        }
 
-                        if nearby_golems == 0 {
-                            // Attempt to spawn an Iron Golem
-                            let spawn_pos = my_pos.add_raw(0.0, 0.5, 0.0);
-                            let golem_entity = Entity::new(
-                                world.clone(),
-                                spawn_pos,
-                                &pumpkin_data::entity::EntityType::IRON_GOLEM,
-                            );
-                            let golem = crate::entity::passive::iron_golem::IronGolemEntity::new(
-                                golem_entity,
-                            );
-                            world.spawn_entity_non_save(golem as Arc<dyn EntityBase>);
-                            world.send_entity_status(
-                                self.get_entity(),
-                                pumpkin_data::entity::EntityStatus::VillagerHappy,
-                                ActorEventID::VillagerHappy,
-                            );
-                        }
-                    }
+        if self
+            .offers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty()
+            && self.is_trading.load(Ordering::Relaxed)
+        {
+            self.clear_trading_player_state();
+        }
+    }
+
+    // villager: restock rules (Villager.shouldRestock, restock, catchUpDemand)
+    pub fn should_restock(&self, world: &Arc<World>) -> bool {
+        let game_time = world.get_world_age();
+        let half_day_passed = self.last_restock_time.load(Ordering::Relaxed) + 12_000;
+        let mut is_new_day = game_time > half_day_passed;
+        let current_day = world
+            .level_time
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .query_day();
+        let last_check_day = self
+            .last_restock_check_day
+            .swap(current_day, Ordering::Relaxed);
+        is_new_day |= last_check_day > 0 && current_day > last_check_day;
+        if is_new_day {
+            self.last_restock_time.store(game_time, Ordering::Relaxed);
+            self.reset_number_of_restocks();
+        }
+        self.allowed_to_restock(game_time) && self.needs_to_restock()
+    }
+
+    fn allowed_to_restock(&self, game_time: i64) -> bool {
+        let today = self.restocks_today.load(Ordering::Relaxed);
+        today == 0
+            || (today < 2 && game_time > self.last_restock_time.load(Ordering::Relaxed) + 2400)
+    }
+
+    fn needs_to_restock(&self) -> bool {
+        self.offers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .any(pumpkin_protocol::java::client::play::MerchantOffer::needs_restock)
+    }
+
+    fn reset_number_of_restocks(&self) {
+        self.catch_up_demand();
+        self.restocks_today.store(0, Ordering::Relaxed);
+    }
+
+    fn catch_up_demand(&self) {
+        let missed_updates = 2 - self.restocks_today.load(Ordering::Relaxed);
+        {
+            let mut offers = self
+                .offers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if missed_updates > 0 {
+                for offer in offers.iter_mut() {
+                    offer.reset_uses();
+                }
+            }
+            for _ in 0..missed_updates.max(0) {
+                for offer in offers.iter_mut() {
+                    offer.update_demand();
                 }
             }
         }
+        self.notify_trading_player_offers_updated();
+    }
+
+    pub fn restock(&self) {
+        {
+            let mut offers = self
+                .offers
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for offer in offers.iter_mut() {
+                offer.update_demand();
+            }
+            for offer in offers.iter_mut() {
+                offer.reset_uses();
+            }
+        }
+        self.last_restock_time.store(
+            self.get_entity().world.load().get_world_age(),
+            Ordering::Relaxed,
+        );
+        self.restocks_today.fetch_add(1, Ordering::Relaxed);
+        self.notify_trading_player_offers_updated();
     }
 }
 
 impl Mob for VillagerEntity {
-    #[expect(clippy::too_many_lines)]
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
         {
             let data = self
@@ -1866,6 +1381,10 @@ impl Mob for VillagerEntity {
             villager_data_nbt.put_int("Level", data.level.0);
             nbt.put_compound("VillagerData", villager_data_nbt);
         };
+        nbt.put_bool(
+            "VillagerDataFinalized",
+            self.villager_data_finalized.load(Ordering::Relaxed),
+        );
 
         nbt.put_int("FoodLevel", self.food_level.load(Ordering::Relaxed));
         nbt.put_int("Xp", self.xp.load(Ordering::Relaxed));
@@ -1882,27 +1401,6 @@ impl Mob for VillagerEntity {
         let last_gossip_share = self.last_gossip_share_time.load(Ordering::Relaxed);
         if last_gossip_share > 0 {
             nbt.put_long("LastGossipShare", last_gossip_share);
-        }
-
-        let last_worked = self.last_worked_at_poi.load(Ordering::Relaxed);
-        if last_worked > 0 {
-            nbt.put_long("LastWorkedAtPoi", last_worked);
-        }
-
-        if let Some(pos) = self.get_job_site() {
-            nbt.put_int("JobSiteX", pos.0.x);
-            nbt.put_int("JobSiteY", pos.0.y);
-            nbt.put_int("JobSiteZ", pos.0.z);
-            nbt.put_bool(
-                "JobSitePending",
-                self.job_site_pending.load(Ordering::Relaxed),
-            );
-        }
-
-        if let Some(pos) = self.get_home() {
-            nbt.put_int("HomeX", pos.0.x);
-            nbt.put_int("HomeY", pos.0.y);
-            nbt.put_int("HomeZ", pos.0.z);
         }
 
         let offers = self
@@ -1998,6 +1496,10 @@ impl Mob for VillagerEntity {
             if let Some(l) = villager_data_nbt.get_int("Level") {
                 data.level = VarInt(l);
             }
+            self.villager_data_finalized.store(true, Ordering::Relaxed);
+        }
+        if nbt.get_bool("VillagerDataFinalized").unwrap_or(false) {
+            self.villager_data_finalized.store(true, Ordering::Relaxed);
         }
 
         if let Some(food) = nbt.get_int("FoodLevel") {
@@ -2017,42 +1519,37 @@ impl Mob for VillagerEntity {
                 .store(last_decay, Ordering::Relaxed);
         }
 
-        if let (Some(x), Some(y), Some(z)) = (
-            nbt.get_int("JobSiteX"),
-            nbt.get_int("JobSiteY"),
-            nbt.get_int("JobSiteZ"),
-        ) {
-            *self
-                .job_site
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(BlockPos::new(x, y, z));
-            self.job_site_pending.store(
-                nbt.get_bool("JobSitePending").unwrap_or(false),
-                Ordering::Relaxed,
-            );
-        } else {
-            *self
-                .job_site
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-            self.job_site_pending.store(false, Ordering::Relaxed);
+        // villager: saves before the brain port kept the home and job site next to the data
+        if nbt.get_compound("Brain").is_none() {
+            let legacy = |x: &str, y: &str, z: &str| {
+                Some(BlockPos::new(
+                    nbt.get_int(x)?,
+                    nbt.get_int(y)?,
+                    nbt.get_int(z)?,
+                ))
+            };
+            let home = legacy("HomeX", "HomeY", "HomeZ").or_else(|| legacy("BedX", "BedY", "BedZ"));
+            let job_site = legacy("JobSiteX", "JobSiteY", "JobSiteZ");
+            let last_worked = nbt.get_long("LastWorkedAtPoi");
+            if home.is_some() || job_site.is_some() || last_worked.is_some() {
+                let world = self.get_entity().world.load();
+                self.mob_entity.with_brain(self, |brain| {
+                    use crate::entity::ai::brain::memory::GlobalPos;
+                    if let Some(global) = home.and_then(|pos| GlobalPos::of(&world, pos)) {
+                        world.poi_take(&global.pos);
+                        brain.set(types::HOME, global);
+                    }
+                    if let Some(global) = job_site.and_then(|pos| GlobalPos::of(&world, pos)) {
+                        world.poi_take(&global.pos);
+                        brain.set(types::JOB_SITE, global);
+                    }
+                    if let Some(time) = last_worked {
+                        brain.set(types::LAST_WORKED_AT_POI, time);
+                    }
+                });
+            }
         }
-
-        if let (Some(x), Some(y), Some(z)) = (
-            nbt.get_int("HomeX").or_else(|| nbt.get_int("BedX")),
-            nbt.get_int("HomeY").or_else(|| nbt.get_int("BedY")),
-            nbt.get_int("HomeZ").or_else(|| nbt.get_int("BedZ")),
-        ) {
-            *self
-                .home_pos
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(BlockPos::new(x, y, z));
-        } else {
-            *self
-                .home_pos
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-        }
+        self.request_brain_refresh();
 
         if let Some(offers_compound) = nbt.get_compound("Offers")
             && let Some(recipes) = offers_compound.get_list("Recipes")
@@ -2176,35 +1673,19 @@ impl Mob for VillagerEntity {
         Some(meta)
     }
 
+    // villager: Villager.getHome for the village scans
+    fn get_home(&self) -> Option<BlockPos> {
+        self.mob_entity
+            .try_with_brain(self, |brain| brain.get(types::HOME).map(|home| home.pos))
+            .flatten()
+    }
+
     fn get_job_site(&self) -> Option<BlockPos> {
-        *self
-            .job_site
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    fn is_job_site_pending(&self) -> bool {
-        self.job_site_pending.load(Ordering::Relaxed)
-    }
-
-    fn release_pending_job_site(&self, position: BlockPos) {
-        if self.get_job_site() != Some(position) || !self.job_site_pending.load(Ordering::Relaxed) {
-            return;
-        }
-        self.get_entity()
-            .world
-            .load()
-            .villager_poi
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .release(position, self.get_entity().entity_uuid);
-        if self.get_job_site() == Some(position) {
-            *self
-                .job_site
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = None;
-            self.job_site_pending.store(false, Ordering::Relaxed);
-        }
+        self.mob_entity
+            .try_with_brain(self, |brain| {
+                brain.get(types::JOB_SITE).map(|site| site.pos)
+            })
+            .flatten()
     }
 
     fn clear_trading_player(&self) {
@@ -2226,13 +1707,6 @@ impl Mob for VillagerEntity {
             .get_player_by_uuid(player_uuid)
     }
 
-    fn get_home(&self) -> Option<BlockPos> {
-        *self
-            .home_pos
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
     fn mob_init_data_tracker(&self) {
         let entity = self.get_entity();
         let data = *self
@@ -2247,28 +1721,162 @@ impl Mob for VillagerEntity {
         }
     }
 
+    fn make_brain(&self, packed: &PackedMemories) -> Brain {
+        ai::make_brain(self, packed)
+    }
+
+    fn custom_server_ai_step(&self, _caller: &dyn EntityBase) {
+        self.villager_server_ai_step();
+    }
+
+    fn as_ageable(&self) -> Option<&dyn AgeableMob> {
+        Some(self)
+    }
+
+    fn uses_mob_looting(&self) -> bool {
+        true
+    }
+
+    // villager: wantsToPickUp for the generic item pickup
+    fn mob_wants_to_pick_up(&self, stack: &ItemStack) -> bool {
+        self.villager_wants_to_pick_up(stack)
+    }
+
+    fn wants_to_pick_up_in_brain(
+        &self,
+        stack: &ItemStack,
+        _brain: &crate::entity::ai::brain::BrainState,
+    ) -> bool {
+        self.mob_entity.can_pick_up_loot() && self.villager_wants_to_pick_up(stack)
+    }
+
+    // villager: InventoryCarrier.pickUpItem
+    fn mob_pick_up_item(&self, item: &crate::entity::item::ItemEntity, stack: &ItemStack) -> bool {
+        let before = stack.item_count;
+        let leftover = self.add_inventory_item(stack.clone());
+        let taken = before - leftover.item_count;
+        if taken == 0
+            || !self
+                .mob_entity
+                .living_entity
+                .pickup(item.get_entity(), u32::from(taken))
+        {
+            return true;
+        }
+        let emptied = {
+            let mut ground = item
+                .get_item_stack()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            ground.item_count = ground.item_count.saturating_sub(taken);
+            ground.is_empty()
+        };
+        if emptied {
+            item.get_entity().remove();
+        } else {
+            item.init_data_tracker();
+        }
+        true
+    }
+
+    // villager: setLastHurtByMob reputation and waking up
     fn on_damage(
         &self,
         _damage_type: pumpkin_data::damage::DamageType,
         source: Option<&dyn EntityBase>,
     ) {
-        let Some(source) = source.filter(|source| {
-            source.get_entity().entity_type == &pumpkin_data::entity::EntityType::PLAYER
-        }) else {
+        self.stop_sleeping_outside();
+        let world = self.get_entity().world.load_full();
+        let attacker: Option<Arc<dyn EntityBase>> = source.and_then(|source| {
+            source
+                .get_projectile_owner()
+                .and_then(|owner| owner.get(&world))
+                .or_else(|| world.get_entity_by_id(source.get_entity().entity_id))
+        });
+        let Some(attacker) = attacker.filter(|attacker| attacker.get_living_entity().is_some())
+        else {
             return;
         };
+        self.on_reputation_event_from(ReputationEvent::VillagerHurt, attacker.as_ref());
+        if self.get_entity().is_alive() && attacker.get_player().is_some() {
+            self.broadcast_status(
+                pumpkin_data::entity::EntityStatus::VillagerAngry,
+                ActorEventID::VillagerAngry,
+            );
+        }
+    }
 
-        let Some(player) = source.cast_any().downcast_ref::<Player>() else {
-            return;
-        };
+    // villager: die
+    fn mob_on_death(&self, killer: Option<&dyn EntityBase>) {
+        self.villager_died(killer);
+    }
 
-        if let Ok(mut gossips) = self.gossips.try_lock() {
-            let value = gossips
-                .entry(player.gameprofile.id)
-                .or_default()
-                .entry(GossipType::MinorNegative)
-                .or_default();
-            *value = (*value + 25).min(GossipType::MinorNegative.max_value());
+    // villager: finalizeSpawn picks the villager type of the biome
+    fn finalize_spawn(
+        &self,
+        world: &Arc<World>,
+        group_data: Option<crate::entity::mob::spawn::SpawnGroupData>,
+    ) -> Option<crate::entity::mob::spawn::SpawnGroupData> {
+        if !self.villager_data_finalized.swap(true, Ordering::Relaxed) {
+            let biome = world.get_biome(&self.get_entity().block_pos.load());
+            let data = *self
+                .villager_data
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            self.set_villager_data(VillagerData::new(
+                villager_type_for_biome(biome.registry_id),
+                data.profession_enum(),
+                data.level.0,
+            ));
+        }
+        self.finalize_spawn_super(group_data)
+    }
+
+    // villager: Villager.thunderHit turns into a witch unless peaceful
+    fn mob_on_lightning_strike(
+        &self,
+        caller: &dyn EntityBase,
+        lightning: &crate::entity::lightning::LightningBoltEntity,
+    ) {
+        let world = self.get_entity().world.load_full();
+        if world.level_info.load().difficulty != pumpkin_util::Difficulty::Peaceful {
+            let converted = crate::entity::mob::conversion::convert_single(
+                self,
+                &pumpkin_data::entity::EntityType::WITCH,
+                false,
+                false,
+                |witch| {
+                    crate::entity::mob::spawn::finalize_spawn(
+                        witch,
+                        &world,
+                        None,
+                        crate::entity::mob::spawn::SpawnReason::Conversion,
+                    );
+                    if let Some(mob) = witch.get_mob() {
+                        mob.get_mob_entity()
+                            .persistence_required
+                            .store(true, Ordering::Relaxed);
+                    }
+                    self.release_all_pois();
+                },
+            );
+            if converted.is_some() {
+                return;
+            }
+        }
+        self.mob_entity
+            .living_entity
+            .on_lightning_strike(caller, lightning);
+    }
+
+    // villager: getAmbientSound is silent asleep and talks while trading
+    fn get_ambient_sound(&self) -> Option<pumpkin_data::sound::Sound> {
+        if self.is_villager_sleeping() {
+            None
+        } else if self.is_trading.load(Ordering::Relaxed) {
+            Some(pumpkin_data::sound::Sound::EntityVillagerTrade)
+        } else {
+            Some(pumpkin_data::sound::Sound::EntityVillagerAmbient)
         }
     }
 
@@ -2277,7 +1885,7 @@ impl Mob for VillagerEntity {
     }
 
     fn mob_interact(&self, player: &Arc<Player>, _item_stack: &mut ItemStack) -> bool {
-        if self.is_trading.load(Ordering::Relaxed) {
+        if self.is_trading.load(Ordering::Relaxed) || self.is_villager_sleeping() {
             return false;
         }
         if self.get_entity().age.load(Ordering::Relaxed) < 0 {
