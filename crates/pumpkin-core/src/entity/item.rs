@@ -26,7 +26,7 @@ use std::sync::atomic::Ordering::{AcqRel, Relaxed};
 use std::sync::{
     Arc, Mutex,
     atomic::{
-        AtomicBool, AtomicU8, AtomicU32,
+        AtomicBool, AtomicI32, AtomicU8,
         Ordering::{self},
     },
 };
@@ -37,7 +37,7 @@ use crate::world::entity_islands::{self, AuditedReach};
 
 pub struct ItemEntity {
     entity: Entity,
-    item_age: AtomicU32,
+    item_age: AtomicI32,
     thrower: crossbeam::atomic::AtomicCell<Option<uuid::Uuid>>,
     // These cannot be atomic values because we mutate their state based on what they are; we run
     // into the ABA problem
@@ -89,7 +89,7 @@ impl Drop for ItemMergeReservation<'_> {
 }
 
 /// Vanilla `ItemEntity.LIFETIME`.
-const LIFETIME: u32 = 6000; // 5 minutes in ticks
+const LIFETIME: i32 = 6000; // 5 minutes in ticks
 /// Vanilla `ItemEntity.merge(to, from, 64)`: cap on top of `getMaxStackSize`.
 const MERGE_MAX_COUNT: u8 = 64;
 
@@ -111,7 +111,7 @@ impl ItemEntity {
         Self {
             entity,
             item_stack: Mutex::new(item_stack),
-            item_age: AtomicU32::new(0),
+            item_age: AtomicI32::new(0),
             thrower: crossbeam::atomic::AtomicCell::new(None),
             pickup_delay: AtomicU8::new(Self::DEFAULT_PICKUP_DELAY),
             health: AtomicF32::new(5.0),
@@ -134,7 +134,7 @@ impl ItemEntity {
         Self {
             entity,
             item_stack: Mutex::new(item_stack),
-            item_age: AtomicU32::new(0),
+            item_age: AtomicI32::new(0),
             thrower: crossbeam::atomic::AtomicCell::new(None),
             pickup_delay: AtomicU8::new(pickup_delay), // Vanilla pickup delay is 10 ticks
             health: AtomicF32::new(5.0),
@@ -150,7 +150,7 @@ impl ItemEntity {
         Self {
             entity,
             item_stack: Mutex::new(ItemStack::new(1, &pumpkin_data::item::Item::AIR)),
-            item_age: AtomicU32::new(0),
+            item_age: AtomicI32::new(0),
             thrower: crossbeam::atomic::AtomicCell::new(None),
             pickup_delay: AtomicU8::new(0),
             health: AtomicF32::new(5.0),
@@ -178,6 +178,11 @@ impl ItemEntity {
 
     pub fn set_pickup_delay(&self, pickup_delay: u8) {
         self.pickup_delay.store(pickup_delay, Ordering::Relaxed);
+    }
+
+    // item: setExtendedLifetime (ItemEntity)
+    pub fn set_extended_lifetime(&self) {
+        self.item_age.store(-32768, Ordering::Relaxed);
     }
 
     pub const fn get_entity(&self) -> &Entity {
@@ -872,7 +877,7 @@ impl EntityBase for ItemEntity {
 
         // Vanilla stores Age as a short
         self.item_age
-            .store(nbt.get_short("Age").unwrap_or(0) as u32, Ordering::Relaxed);
+            .store(nbt.get_short("Age").map_or(0, i32::from), Ordering::Relaxed);
 
         // Vanilla stores PickupDelay as a short
         if let Some(delay) = nbt.get_short("PickupDelay") {

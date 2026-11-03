@@ -1627,6 +1627,9 @@ pub trait Mob: EntityBase + Send + Sync {
         true
     }
 
+    /// Vanilla `dropCustomDeathLoot`: extra drops after the loot table.
+    fn drop_custom_death_loot(&self) {}
+
     /// Vanilla `LivingEntity.tickDeath` override: `true` replaces the generic 20 tick death animation.
     fn custom_tick_death(&self) -> bool {
         false

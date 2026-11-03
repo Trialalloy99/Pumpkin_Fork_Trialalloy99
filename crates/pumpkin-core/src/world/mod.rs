@@ -4074,8 +4074,23 @@ impl World {
         power: f32,
         interaction: ExplosionInteraction,
     ) {
+        self.explode_from_entity_with_calculator(source, position, power, interaction, None);
+    }
+
+    // entity explosion with the source's own block resistance rules (EntityBasedExplosionDamageCalculator)
+    pub fn explode_from_entity_with_calculator(
+        self: &Arc<Self>,
+        source: Arc<dyn EntityBase>,
+        position: Vector3<f64>,
+        power: f32,
+        interaction: ExplosionInteraction,
+        damage_calculator: Option<Arc<dyn ExplosionDamageCalculator>>,
+    ) {
         let block_interaction = self.get_block_interaction(interaction);
-        let explosion = Explosion::new(power, position, block_interaction).with_source(source);
+        let mut explosion = Explosion::new(power, position, block_interaction).with_source(source);
+        if let Some(calc) = damage_calculator {
+            explosion = explosion.with_damage_calculator(calc);
+        }
         self.run_explosion(&explosion, position, power);
     }
 
@@ -6057,8 +6072,17 @@ impl World {
     }
 
     pub fn drop_stack(self: &Arc<Self>, pos: &BlockPos, stack: ItemStack) {
+        self.drop_stack_entity(pos, stack);
+    }
+
+    // world: dropStack that hands back the item entity (spawnAtLocation)
+    pub fn drop_stack_entity(
+        self: &Arc<Self>,
+        pos: &BlockPos,
+        stack: ItemStack,
+    ) -> Option<Arc<ItemEntity>> {
         if stack.is_empty() {
-            return;
+            return None;
         }
 
         let half_height = f64::from(EntityType::ITEM.dimension[1]) / 2.0;
@@ -6083,11 +6107,12 @@ impl World {
                 .fire_blocking(&server, &mut item_event);
         }
         if item_event.cancelled {
-            return;
+            return None;
         }
 
         let item_entity = Arc::new(ItemEntity::new(entity, stack));
-        self.spawn_entity(item_entity);
+        self.spawn_entity(item_entity.clone());
+        Some(item_entity)
     }
 
     pub fn drop_stack_from_face(

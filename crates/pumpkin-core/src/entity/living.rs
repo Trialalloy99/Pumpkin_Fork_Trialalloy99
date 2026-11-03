@@ -1166,7 +1166,11 @@ impl LivingEntity {
     // canBeAffected, with the mob overrides folded in
     fn can_be_affected(&self, effect: &Effect) -> bool {
         let entity_type = self.entity.entity_type;
-        if (entity_type == &EntityType::WITHER_SKELETON || entity_type == &EntityType::WITHER)
+        // wither boss takes no effects at all (WitherBoss.addEffect)
+        if entity_type == &EntityType::WITHER {
+            return false;
+        }
+        if entity_type == &EntityType::WITHER_SKELETON
             && effect.effect_type == &StatusEffect::WITHER
         {
             return false;
@@ -2789,6 +2793,10 @@ impl LivingEntity {
             for stack in crate::world::loot::generate_loot_from_handle(&loot_table, seed, params) {
                 world.drop_stack(&pos, stack);
             }
+        }
+        // mob: dropCustomDeathLoot
+        if let Some(mob) = dyn_self.get_mob() {
+            mob.drop_custom_death_loot();
         }
     }
 
