@@ -38,3 +38,28 @@ impl Sensor for AdultSensorAnyType {
         tick.state.set_optional(types::NEAREST_VISIBLE_ADULT, adult);
     }
 }
+
+// sensor: AdultSensor, an adult of the same type
+pub struct AdultSensor;
+
+impl Sensor for AdultSensor {
+    fn requires(&self) -> &'static [MemoryModuleId] {
+        &REQUIRES
+    }
+
+    fn do_tick(&mut self, tick: &mut BrainTick<'_>) {
+        let own_type = tick.mob.get_entity().entity_type;
+        let adult = tick
+            .state
+            .get(types::NEAREST_VISIBLE_LIVING_ENTITIES)
+            .and_then(|visible| {
+                visible.find_closest(&tick.visibility(), |entity| {
+                    entity.get_entity().entity_type == own_type
+                        && !entity
+                            .get_living_entity()
+                            .is_some_and(crate::entity::living::LivingEntity::is_baby)
+                })
+            });
+        tick.state.set_optional(types::NEAREST_VISIBLE_ADULT, adult);
+    }
+}

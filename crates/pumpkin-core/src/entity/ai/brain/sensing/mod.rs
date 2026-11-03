@@ -7,6 +7,7 @@ use super::memory::{MemoryModuleId, types};
 use super::{BrainTick, VisibilityContext};
 
 pub mod adult;
+pub mod armadillo;
 pub mod breeze_attack_entity;
 pub mod dummy;
 pub mod hurt_by;
@@ -39,6 +40,7 @@ pub enum SensorType {
     NearestItems,
     BreezeAttackEntity,
     FoodTemptations,
+    NearestAdult,
     NearestAdultAnyType,
     PiglinSpecific,
     WardenEntity,
@@ -47,6 +49,7 @@ pub enum SensorType {
     SecondaryPois,
     GolemDetected,
     NearestBed,
+    ArmadilloScareDetected,
 }
 
 impl SensorType {
@@ -60,6 +63,7 @@ impl SensorType {
             Self::NearestItems => "minecraft:nearest_items",
             Self::BreezeAttackEntity => "minecraft:breeze_attack_entity_sensor",
             Self::FoodTemptations => "minecraft:food_temptations",
+            Self::NearestAdult => "minecraft:nearest_adult",
             Self::NearestAdultAnyType => "minecraft:nearest_adult_any_type",
             Self::PiglinSpecific => "minecraft:piglin_specific_sensor",
             Self::WardenEntity => "minecraft:warden_entity_sensor",
@@ -68,6 +72,7 @@ impl SensorType {
             Self::SecondaryPois => "minecraft:secondary_pois",
             Self::GolemDetected => "minecraft:golem_detected",
             Self::NearestBed => "minecraft:nearest_bed",
+            Self::ArmadilloScareDetected => "minecraft:armadillo_scare_detected",
         }
     }
 
@@ -75,6 +80,7 @@ impl SensorType {
     pub const fn scan_rate(self) -> i32 {
         match self {
             Self::SecondaryPois => 40,
+            Self::ArmadilloScareDetected => 5,
             Self::GolemDetected => 200,
             Self::Dummy
             | Self::NearestLivingEntities
@@ -83,6 +89,7 @@ impl SensorType {
             | Self::NearestItems
             | Self::BreezeAttackEntity
             | Self::FoodTemptations
+            | Self::NearestAdult
             | Self::NearestAdultAnyType
             | Self::PiglinSpecific
             | Self::WardenEntity
@@ -101,6 +108,7 @@ impl SensorType {
             Self::NearestItems => Box::new(nearest_items::NearestItemSensor),
             Self::BreezeAttackEntity => Box::new(breeze_attack_entity::BreezeAttackEntitySensor),
             Self::FoodTemptations => Box::new(tempting::TemptingSensor),
+            Self::NearestAdult => Box::new(adult::AdultSensor),
             Self::NearestAdultAnyType => Box::new(adult::AdultSensorAnyType),
             Self::PiglinSpecific => Box::new(piglin_specific::PiglinSpecificSensor),
             Self::WardenEntity => Box::new(warden_entity::WardenEntitySensor),
@@ -109,6 +117,7 @@ impl SensorType {
             Self::SecondaryPois => Box::new(villager::SecondaryPoiSensor),
             Self::GolemDetected => Box::new(villager::GolemSensor),
             Self::NearestBed => Box::new(villager::NearestBedSensor),
+            Self::ArmadilloScareDetected => Box::new(armadillo::ArmadilloScareSensor),
         }
     }
 

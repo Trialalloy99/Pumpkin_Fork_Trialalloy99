@@ -49,6 +49,13 @@ impl AnimalMakeLove {
         }
     }
 
+    /// Vanilla `AnimalMakeLove(type, speed, closeEnoughDistance)`.
+    #[must_use]
+    pub const fn with_close_enough_distance(mut self, distance: i32) -> Self {
+        self.close_enough_distance = distance;
+        self
+    }
+
     fn is_panicking(entity: &Arc<dyn EntityBase>) -> bool {
         entity.get_mob().is_some_and(|mob| {
             mob.get_mob_entity()

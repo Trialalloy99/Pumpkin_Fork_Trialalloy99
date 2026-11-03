@@ -63,6 +63,7 @@ pub mod equipment;
 pub mod evoker;
 pub mod ghast;
 pub mod giant;
+pub mod gift_loot;
 pub mod guardian;
 pub mod hoglin;
 pub mod illusioner;
