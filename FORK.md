@@ -80,6 +80,7 @@ Unser Fortschritt steht auf **https://claude.ai/artifact/KAHK4pXmbbEhd9nXiBuobN*
 | Redstone (Abschluss) | Druckplatten, Tageslichtsensor, Notenblock und Kolben gegen Vanilla geprüft; Kolben: bewegte Blöcke haben Kollision, Entities werden kollisionsbewusst geschoben, Pushreaction-Ausnahmen, Wasser/Zerstörung beim Landen | in `playable`; Test im Spiel steht aus |
 | Performance | `/recording`, Himmelslicht, Jigsaw-Cache, Mth.floor, Gen-Threads, mimalloc, FxHash-Strukturcache | in `playable`; siehe unten |
 | 10 | Breeze, Wither Skeleton, Creaking, Allay, Copper Golem, Happy Ghast, Sniffer, Wandering Trader, Piglin, Sulfur Cube | Branch `batch-10`; im Tracker auf `done`; Test im Spiel steht aus |
+| 13 | Ender Drache samt Kampf, Elytra und Raketen, Warden, Wither, Drachenfeuerball, Erfahrungsflasche, Angelhaken, Villager (Brain, Tagesplan, POI-Tickets, Glocke) | in `playable`; Test im Spiel steht aus |
 
 Aus dem Tracker entfernt, weil Vanilla sie auf einem dedizierten Server nicht hat: `/publish` und `/unpublish` (nur Einzelspieler) sowie `/jfr` (Java Flight Recorder, braucht eine JVM).
 
@@ -198,3 +199,9 @@ Was dabei aufgefallen ist (eigene Aufgaben, nicht in dieser Batch behoben):
 - Strukturen: Vanilla merkt sich bereits gefundene Struktur-Starts (zweite Suche 3 ms), Pumpkin rechnet jedes Mal neu.
 - `/locate structure mansion` findet in Pumpkin eine andere Position (12032, 5280) als Vanilla (4656, 7056). Bei Woodland Mansions stimmt also etwas an der Platzierung oder der Biom-Prüfung nicht.
 - Die Abstände weichen um ein paar Blöcke ab (841 statt 835), weil die Konsole in Pumpkin von einer anderen Position aus sucht als vom Welt-Spawn wie in Vanilla.
+
+Batch 13, neu dazugekommen:
+- POI-Tickets: `PoiStorage::take_ticket/release_ticket/free_tickets`, `world/poi_manager.rs` (`poi_find_all_closest_first`, `poi_take`, `poi_release`, `poi_is_occupied`, `PoiOccupancy`). Betten, Glocken und Arbeitsplätze zählen Tickets wie Vanilla; `VillagerPoiStorage` gibt es nicht mehr.
+- Brain: `BrainState::set_schedule/update_activity_from_schedule` (Tagesplan aus `World::villager_activity`), `PathNavigationTrait::create_path_to_targets`, `GlobalPos::of(world, pos)`, `Mob::mob_on_death`, `Mob::drop_custom_death_loot`.
+- Villager: `entity/passive/villager/{ai,behaviors,routines,actions}.rs` und `ai/brain/sensing/villager.rs`. Ein anderer Villager wird nur über `try_with_brain` gelesen oder verändert; ist dessen Brain gerade beschäftigt, wird er übersprungen (Näherung wie beim Piglin).
+- Glocke: `BellBlockEntity` setzt `HEARD_BELL_TIME` im Umkreis von 32 Blöcken, Resonanz und Leuchten der Plünderer wie Vanilla.
