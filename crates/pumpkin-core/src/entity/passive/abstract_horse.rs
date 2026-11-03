@@ -368,6 +368,9 @@ pub trait HorseLike: Mob + Animal + AgeableMob + Sized {
     fn can_eat_grass(&self) -> bool {
         true
     }
+    fn horse_max_temper(&self) -> i32 {
+        MAX_TEMPER
+    }
 
     fn flag(&self, flag: u8) -> bool {
         self.horse_flags().load(Ordering::Relaxed) & flag != 0
@@ -481,8 +484,10 @@ pub trait HorseLike: Mob + Animal + AgeableMob + Sized {
     // AbstractHorse.modifyTemper
     fn horse_modify_temper(&self, delta: i32) {
         let cur = self.horse_temper().load(Ordering::Relaxed);
-        self.horse_temper()
-            .store((cur + delta).clamp(0, MAX_TEMPER), Ordering::Relaxed);
+        self.horse_temper().store(
+            (cur + delta).clamp(0, self.horse_max_temper()),
+            Ordering::Relaxed,
+        );
     }
 
     // AbstractHorse.handleEating (the generic food table)
@@ -525,7 +530,7 @@ pub trait HorseLike: Mob + Animal + AgeableMob + Sized {
         }
         if temper > 0
             && (item_used || !self.is_horse_tame())
-            && self.horse_temper().load(Ordering::Relaxed) < MAX_TEMPER
+            && self.horse_temper().load(Ordering::Relaxed) < self.horse_max_temper()
         {
             self.horse_modify_temper(temper);
             item_used = true;
@@ -550,8 +555,12 @@ pub trait HorseLike: Mob + Animal + AgeableMob + Sized {
         ate
     }
 
-    // AbstractHorse.doPlayerRide
     fn do_player_ride(&self, player: &Arc<Player>) -> bool {
+        self.do_player_ride_default(player)
+    }
+
+    // AbstractHorse.doPlayerRide
+    fn do_player_ride_default(&self, player: &Arc<Player>) -> bool {
         self.set_horse_eating(false);
         self.clear_standing();
         let entity = self.get_entity();
@@ -715,8 +724,12 @@ pub trait HorseLike: Mob + Animal + AgeableMob + Sized {
         self.follow_mommy();
     }
 
-    // AbstractHorse.followMommy
     fn follow_mommy(&self) {
+        self.follow_mommy_default();
+    }
+
+    // AbstractHorse.followMommy
+    fn follow_mommy_default(&self) {
         if !(self.is_horse_bred() && self.is_baby() && !self.is_horse_eating()) {
             return;
         }
@@ -901,7 +914,7 @@ macro_rules! horse_mob_hooks {
         }
 
         fn max_temper(&self) -> i32 {
-            $crate::entity::passive::abstract_horse::MAX_TEMPER
+            $crate::entity::passive::abstract_horse::HorseLike::horse_max_temper(self)
         }
 
         fn modify_temper(&self, delta: i32) {
