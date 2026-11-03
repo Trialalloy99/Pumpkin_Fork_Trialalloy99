@@ -1826,6 +1826,14 @@ impl Entity {
             .default_dimensions
             .load()
             .unwrap_or_else(|| Self::type_dimensions(self.entity_type));
+        // goat: LONG_JUMPING scales the hit box (Goat.getDefaultDimensions)
+        if self.entity_type == &EntityType::GOAT && pose == EntityPose::LongJumping {
+            return EntityDimensions::new(
+                dimensions.width * 0.7,
+                dimensions.height * 0.7,
+                dimensions.eye_height * 0.7,
+            );
+        }
         // warden: low hit box while digging and emerging (Warden.getDefaultDimensions)
         if self.entity_type == &EntityType::WARDEN
             && matches!(pose, EntityPose::Digging | EntityPose::Emerging)

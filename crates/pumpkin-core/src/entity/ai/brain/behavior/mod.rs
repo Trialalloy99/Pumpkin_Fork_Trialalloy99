@@ -20,6 +20,7 @@ pub mod go_to_target_location;
 pub mod go_to_wanted_item;
 pub mod interact_with;
 pub mod interact_with_door;
+pub mod long_jump;
 pub mod long_jump_util;
 pub mod look_at_target_sink;
 pub mod melee_attack;
