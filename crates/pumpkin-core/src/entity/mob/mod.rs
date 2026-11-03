@@ -1344,6 +1344,12 @@ pub trait Mob: EntityBase + Send + Sync {
         40.0
     }
 
+    /// Replaces the generic `BodyRotationControl.clientTick` (Phantom.PhantomBodyRotationControl).
+    /// Returns `true` when the mob handled the rotation itself.
+    fn custom_body_rotation(&self) -> bool {
+        false
+    }
+
     fn get_max_head_rotation(&self) -> f32 {
         75.0
     }

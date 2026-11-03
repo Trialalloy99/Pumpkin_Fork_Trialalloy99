@@ -140,6 +140,31 @@ impl ThrownItemEntity {
         );
     }
 
+    /// Vanilla `Projectile.shootFromRotation`: the owner's movement is added to the throw,
+    /// vertical movement only while the owner is airborne.
+    pub fn set_velocity_from_owner(
+        &self,
+        owner: &dyn EntityBase,
+        pitch: f32,
+        yaw: f32,
+        roll: f32,
+        speed: f32,
+        divergence: f32,
+    ) {
+        self.set_velocity_from(pitch, yaw, roll, speed, divergence);
+        let movement = Entity::known_movement(owner);
+        let on_ground = owner.get_entity().on_ground.load(Ordering::Relaxed);
+        let entity = self.get_entity();
+        entity.velocity.store(
+            entity.velocity.load()
+                + Vector3::new(
+                    movement.x,
+                    if on_ground { 0.0 } else { movement.y },
+                    movement.z,
+                ),
+        );
+    }
+
     pub fn set_velocity(&self, x: f64, y: f64, z: f64, power: f64, uncertainty: f64) {
         fn next_triangular(mode: f64, deviation: f64) -> f64 {
             deviation.mul_add(rand::random::<f64>() - rand::random::<f64>(), mode)

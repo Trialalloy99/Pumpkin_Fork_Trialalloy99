@@ -21,10 +21,12 @@ use std::{
 use tracing::{debug, error, info, trace, warn};
 
 mod active_chunks;
+pub mod base_spawner;
 pub mod brightness;
 mod cat_spawner;
 pub mod chunker;
 mod entity_index;
+mod phantom_spawner;
 mod wandering_trader_spawner;
 pub(crate) use entity_index::EntityIndex;
 pub mod entity_islands;
@@ -256,6 +258,8 @@ pub struct World {
     pub weather: std::sync::Mutex<Weather>,
     /// Wandering trader spawner timers (`WanderingTraderSpawner`).
     pub wandering_trader_spawner: std::sync::Mutex<wandering_trader_spawner::SpawnerState>,
+    /// Ticks until the next phantom spawn attempt (`PhantomSpawner.nextTick`).
+    pub phantom_spawner_next_tick: std::sync::atomic::AtomicI32,
     /// Block Behaviour
     pub block_registry: Arc<BlockRegistry>,
     pub server: Weak<Server>,
@@ -458,6 +462,7 @@ impl World {
                     wandering_trader_chance,
                 ),
             ),
+            phantom_spawner_next_tick: std::sync::atomic::AtomicI32::new(0),
             block_registry,
             sea_level: generation_settings.sea_level,
             min_y: i32::from(generation_settings.shape.min_y),
@@ -2299,6 +2304,7 @@ impl World {
             self.tick_cat_spawner();
         }
         self.tick_wandering_trader_spawner();
+        self.tick_phantom_spawner(spawn_enemies);
 
         let spawn_list = Arc::new(natural_spawner::get_filtered_spawning_categories(
             &spawn_state,

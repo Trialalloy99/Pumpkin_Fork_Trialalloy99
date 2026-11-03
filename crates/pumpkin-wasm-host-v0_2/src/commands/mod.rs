@@ -290,6 +290,13 @@ impl pumpkin::plugin::command::HostCommandSender for PluginHostState {
             pumpkin_core::command::CommandSender::CommandBlock(block_entity, world) => Ok(
                 CommandSenderType::CommandBlock((self.add(block_entity)?, self.add(world)?)),
             ),
+            pumpkin_core::command::CommandSender::CommandMinecart(block_entity, entity) => {
+                let world = entity.get_entity().world.load_full();
+                Ok(CommandSenderType::CommandBlock((
+                    self.add(block_entity)?,
+                    self.add(world)?,
+                )))
+            }
             pumpkin_core::command::CommandSender::Dummy => Ok(CommandSenderType::Dummy),
         }
     }

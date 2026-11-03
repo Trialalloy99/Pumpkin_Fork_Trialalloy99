@@ -1812,7 +1812,7 @@ impl Entity {
         if pose == EntityPose::Sleeping {
             return EntityDimensions::new(0.2, 0.2, 0.2);
         }
-        if self.entity_type == &EntityType::PLAYER {
+        if self.entity_type == &EntityType::PLAYER || self.entity_type == &EntityType::MANNEQUIN {
             match pose {
                 EntityPose::FallFlying | EntityPose::Swimming | EntityPose::SpinAttack => {
                     return EntityDimensions::new(0.6, 0.6, 0.4);

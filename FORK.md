@@ -80,7 +80,7 @@ Unser Fortschritt steht auf **https://claude.ai/artifact/KAHK4pXmbbEhd9nXiBuobN*
 | Redstone (Abschluss) | Druckplatten, Tageslichtsensor, Notenblock und Kolben gegen Vanilla geprüft; Kolben: bewegte Blöcke haben Kollision, Entities werden kollisionsbewusst geschoben, Pushreaction-Ausnahmen, Wasser/Zerstörung beim Landen | in `playable`; Test im Spiel steht aus |
 | Performance | `/recording`, Himmelslicht, Jigsaw-Cache, Mth.floor, Gen-Threads, mimalloc, FxHash-Strukturcache | in `playable`; siehe unten |
 | 10 | Breeze, Wither Skeleton, Creaking, Allay, Copper Golem, Happy Ghast, Sniffer, Wandering Trader, Piglin, Sulfur Cube | Branch `batch-10`; im Tracker auf `done`; Test im Spiel steht aus |
-| 13 | Ender Drache samt Kampf, Elytra und Raketen, Warden, Wither, Drachenfeuerball, Erfahrungsflasche, Angelhaken, Villager (Brain, Tagesplan, POI-Tickets, Glocke) | in `playable`; Test im Spiel steht aus |
+| 13 | Ender Drache samt Kampf, Elytra und Raketen, Warden, Wither, Drachenfeuerball, Erfahrungsflasche, Angelhaken, Villager (Brain, Tagesplan, POI-Tickets, Glocke), Phantom samt Spawner, Mannequin, Befehlsblock- und Spawner-Loren | in `playable`; Test im Spiel steht aus |
 
 Aus dem Tracker entfernt, weil Vanilla sie auf einem dedizierten Server nicht hat: `/publish` und `/unpublish` (nur Einzelspieler) sowie `/jfr` (Java Flight Recorder, braucht eine JVM).
 
@@ -205,3 +205,8 @@ Batch 13, neu dazugekommen:
 - Brain: `BrainState::set_schedule/update_activity_from_schedule` (Tagesplan aus `World::villager_activity`), `PathNavigationTrait::create_path_to_targets`, `GlobalPos::of(world, pos)`, `Mob::mob_on_death`, `Mob::drop_custom_death_loot`.
 - Villager: `entity/passive/villager/{ai,behaviors,routines,actions}.rs` und `ai/brain/sensing/villager.rs`. Ein anderer Villager wird nur über `try_with_brain` gelesen oder verändert; ist dessen Brain gerade beschäftigt, wird er übersprungen (Näherung wie beim Piglin).
 - Glocke: `BellBlockEntity` setzt `HEARD_BELL_TIME` im Umkreis von 32 Blöcken, Resonanz und Leuchten der Plünderer wie Vanilla.
+- Phantom: eigene `PhantomMoveControl` (Geschwindigkeit, Drehung, Neigung wie Vanilla), `PhantomLookControl` ohne Wirkung, `Mob::custom_body_rotation`, Zielbedingungen über `TargetPredicate`, Anker optional, NBT `anchor_pos`/`size` (alte `AX/AY/AZ/Size` werden noch gelesen), XP fest 5. Neu: `world/phantom_spawner.rs` (`PhantomSpawner`, Zeit seit dem letzten Schlafen, Schwierigkeit, Gamerule `spawn_phantoms`), davor spawnten Phantome gar nicht natürlich.
+- Erfahrungsflasche: `ThrownItemEntity::set_velocity_from_owner` addiert die Bewegung des Werfers wie `Projectile.shootFromRotation`. Schneeball, Ei und Enderperle nutzen noch `set_velocity_from` ohne diesen Zusatz.
+- Spawner-Lore: `world/base_spawner.rs` (`BaseSpawner`: Verzögerung, `SpawnData`, `SpawnPotentials`, `custom_spawn_rules`, Nachbarlimit, Spawn-Regeln). Der Spawner-Block (`MobSpawnerBlockEntity`) nutzt ihn noch nicht. `equipment` in `SpawnData` fehlt.
+- Befehlsblock-Lore: `CommandSender::CommandMinecart`, Aktivierung nur auf eingeschalteter Aktivierungsschiene mit 4 Ticks Abstand, Paket `SetCommandMinecart` setzt Befehl und Ausgabe. Als Entität für `@s` kennt die Quelle die Lore nicht (`CommandSource` hält nur Spieler).
+- Mannequin: `entity/decoration/mannequin.rs` (Profil, Ebenen, Hand, Pose, unbeweglich, Beschriftung samt NBT) und `MetadataSerializer` für `ProfileImpl`.

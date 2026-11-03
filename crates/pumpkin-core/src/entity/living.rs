@@ -1623,6 +1623,7 @@ impl LivingEntity {
         world.broadcast_editioned(&je_packet, &be_packet);
     }
 
+    #[allow(clippy::too_many_lines)]
     fn tick_movement(&self, caller: &dyn EntityBase) {
         if let Some(mob) = caller.get_mob() {
             mob.before_mob_ai_step();
@@ -1753,11 +1754,13 @@ impl LivingEntity {
 
         if let Some(mob) = caller.get_mob() {
             mob.mob_ai_step();
-            mob.get_mob_entity()
-                .body_rotation_control
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .client_tick(mob);
+            if !mob.custom_body_rotation() {
+                mob.get_mob_entity()
+                    .body_rotation_control
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .client_tick(mob);
+            }
         }
     }
 

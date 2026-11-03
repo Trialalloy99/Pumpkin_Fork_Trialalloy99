@@ -474,7 +474,8 @@ impl pumpkin_command::source::CommandSource for CommandSource {
 
     fn call_result(&self, result: ReturnValue) {
         if result.success_value()
-            && let crate::command::CommandSender::CommandBlock(block_entity, _) = &self.output
+            && let crate::command::CommandSender::CommandBlock(block_entity, _)
+            | crate::command::CommandSender::CommandMinecart(block_entity, _) = &self.output
         {
             block_entity
                 .success_count

@@ -557,6 +557,23 @@ impl RegionalDifficulty {
         }
     }
 
+    /// Vanilla `DifficultyInstance.isHarderThan`.
+    #[must_use]
+    pub fn is_harder_than(&self, difficulty: f32) -> bool {
+        self.effective_difficulty > difficulty
+    }
+
+    /// Vanilla `Difficulty.getId`.
+    #[must_use]
+    pub const fn difficulty_id(&self) -> i32 {
+        match self.base_difficulty {
+            Difficulty::Peaceful => 0,
+            Difficulty::Easy => 1,
+            Difficulty::Normal => 2,
+            Difficulty::Hard => 3,
+        }
+    }
+
     /// Random check scaled by `special_multiplier`.
     ///
     /// Returns `true` with probability `base_chance * special_multiplier`. When
