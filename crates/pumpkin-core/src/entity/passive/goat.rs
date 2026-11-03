@@ -61,6 +61,8 @@ impl GoatEntity {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         navigator.set_can_float(true);
         navigator.set_pathfinding_malus(PathType::PowderSnow, -1.0);
+        // vanilla ON_TOP_OF_POWDER_SNOW, id 6 is DangerPowderSnow here
+        navigator.set_pathfinding_malus(PathType::DangerPowderSnow, -1.0);
         let goat = Arc::new(Self {
             mob_entity,
             ageable_data: AgeableData::default(),

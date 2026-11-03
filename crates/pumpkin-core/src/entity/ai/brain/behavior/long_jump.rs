@@ -15,6 +15,7 @@ use super::super::memory::position_tracker::{BlockPosTracker, PositionTracker};
 use super::super::memory::{MemoryModuleId, MemoryStatus, types};
 use super::long_jump_util;
 use super::timed::Behavior;
+use crate::entity::ai::pathfinder::pathfinding_context::PathfindingContext;
 use crate::entity::mob::Mob;
 use crate::world::natural_spawner::is_block_dangerous;
 
@@ -97,7 +98,17 @@ impl LongJumpToRandomPos {
     fn acceptable_landing_spot(tick: &BrainTick<'_>, target: &BlockPos) -> bool {
         let entity = tick.mob.get_entity();
         let landing = tick.world.get_block_state(target);
+        let path_type = PathfindingContext::new(target.0, tick.world.clone())
+            .compute_path_type_from_state(target.0);
+        let malus = tick
+            .mob
+            .get_mob_entity()
+            .navigator
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_pathfinding_malus(path_type);
         tick.world.get_block_state(&target.down()).is_solid_render()
+            && malus == 0.0
             && !is_block_dangerous(entity.entity_type, landing)
     }
 

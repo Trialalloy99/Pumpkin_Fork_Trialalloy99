@@ -427,8 +427,18 @@ impl Behavior for RamTarget {
             let resistance = target.get_living_entity().map_or(0.0, |living| {
                 living.get_attribute_value(&Attributes::KNOCKBACK_RESISTANCE)
             });
+            // goat: applyItemBlocking, a raised shield facing the goat halves the knockback
+            let blocked = target.get_living_entity().is_some_and(|living| {
+                let to_goat = (entity.pos.load() - target.get_entity().pos.load()).normalize();
+                let look = Vector3::rotation_vector(0.0, target.get_entity().yaw.load() as f64);
+                living.is_blocking() && Vector3::new(to_goat.x, 0.0, to_goat.z).dot(&look) > 0.0
+            });
+            let blocking_factor = if blocked { 0.5 } else { 1.0 };
             target.get_entity().apply_knockback(
-                knockback_after_resistance(f64::from(speed_factor) * force, resistance),
+                knockback_after_resistance(
+                    blocking_factor * f64::from(speed_factor) * force,
+                    resistance,
+                ),
                 self.ram_direction.x,
                 self.ram_direction.z,
             );
