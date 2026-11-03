@@ -48,3 +48,25 @@ pub fn apply_tail(goals: &GoalSelector, mob: Weak<dyn Mob>, first: u8) {
         LookAtEntityGoal::with_default(mob, &EntityType::PLAYER, 10.0),
     );
 }
+
+/// Vanilla `Cat.CatTemptGoal`: untamed cats only, and one picked player never scares them.
+#[must_use]
+pub fn cat_tempt_goal() -> Box<TemptGoal> {
+    Box::new(TemptGoal::new(0.6, TEMPT_ITEMS, true).for_cat(|mob| {
+        mob.cast_any()
+            .downcast_ref::<crate::entity::passive::cat::CatEntity>()
+            .is_some_and(|cat| !crate::entity::passive::tamable::TamableAnimal::is_tame(cat))
+    }))
+}
+
+/// Vanilla `Ocelot.OcelotTemptGoal`: a trusting ocelot is no longer scared.
+#[must_use]
+pub fn ocelot_tempt_goal() -> Box<TemptGoal> {
+    Box::new(
+        TemptGoal::new(0.6, TEMPT_ITEMS, true).with_scare_gate(|mob| {
+            mob.cast_any()
+                .downcast_ref::<crate::entity::passive::ocelot::OcelotEntity>()
+                .is_some_and(|ocelot| !ocelot.is_trusting())
+        }),
+    )
+}

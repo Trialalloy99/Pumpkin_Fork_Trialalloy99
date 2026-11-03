@@ -1358,6 +1358,11 @@ pub trait Mob: EntityBase + Send + Sync {
     // parrot: LivingEntity.setRecordPlayingNearby (jukebox song start and stop)
     fn set_record_playing_nearby(&self, _jukebox: BlockPos, _playing: bool) {}
 
+    // cat, ocelot: Entity.isSteppingCarefully (crouching), mutes step vibrations
+    fn mob_is_stepping_carefully(&self) -> bool {
+        self.get_entity().is_sneaking()
+    }
+
     // frog: Frog.calculateFallDamage reduction
     fn fall_damage_reduction(&self) -> i32 {
         0
@@ -2470,6 +2475,10 @@ pub trait Mob: EntityBase + Send + Sync {
     }
 }
 impl<T: Mob + Send + 'static> EntityBase for T {
+    fn is_stepping_carefully(&self) -> bool {
+        self.mob_is_stepping_carefully()
+    }
+
     fn is_invulnerable_to_piercing_weapon(&self) -> bool {
         self.mob_invulnerable_to_piercing_weapon()
     }

@@ -128,7 +128,7 @@ fn is_valid_vibration(event: GameEvent, context: &GameEventContext<'_>) -> bool 
     if source.is_spectator() {
         return false;
     }
-    if source.get_entity().is_sneaking()
+    if source.is_stepping_carefully()
         && tag::GameEvent::MINECRAFT_IGNORE_VIBRATIONS_SNEAKING
             .0
             .contains(&event.name())

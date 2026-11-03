@@ -301,25 +301,24 @@ impl CatRelaxOnOwnerGoal {
                 rng.random_range(0..11) - 5,
             )
         };
-        // cat: randomTeleport, standing spot whose floor is not CAT_DOES_NOT_TELEPORT_TO
-        let target = BlockPos::new(origin.0.x + dx, origin.0.y + dy, origin.0.z + dz);
-        let floor = world.get_block(&target.down());
-        let fits = world.get_block_state(&target).is_air()
-            && world.get_block_state(&target.up()).is_air()
-            && world.get_block_state(&target.down()).is_solid()
-            && !floor.has_tag(&tag::Block::MINECRAFT_CAT_DOES_NOT_TELEPORT_TO);
-        if fits {
-            entity.teleport(
-                Vector3::new(
-                    f64::from(target.0.x) + 0.5,
-                    f64::from(target.0.y),
-                    f64::from(target.0.z) + 0.5,
-                ),
-                None,
-                None,
-                &world,
-            );
-        }
+        // cat: randomTeleport(avoiding CAT_DOES_NOT_TELEPORT_TO) around the leash holder or itself
+        let holder = entity
+            .leashed_to
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let center = holder.map_or(origin, |holder| holder.get_entity().block_pos.load());
+        entity.random_teleport(
+            f64::from(center.0.x + dx),
+            f64::from(center.0.y + dy),
+            f64::from(center.0.z + dz),
+            false,
+            |state| {
+                pumpkin_data::Block::from_state_id(state.id)
+                    .has_tag(&tag::Block::MINECRAFT_CAT_DOES_NOT_TELEPORT_TO)
+            },
+        );
+        mob.get_mob_entity().steered().navigator().stop();
         let cat_pos = entity.block_pos.load();
         let yaw = f64::from(entity.body_yaw.load()).to_radians();
         let seed = rand::random::<i64>();

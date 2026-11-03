@@ -70,7 +70,7 @@ impl OcelotEntity {
             // Goal 1: FloatGoal (SwimGoal)
             goal_selector.add_goal(1, Box::new(SwimGoal::default()));
             // Goal 3: OcelotTemptGoal
-            goal_selector.add_goal(3, feline::tempt_goal());
+            goal_selector.add_goal(3, feline::ocelot_tempt_goal());
             // Goal 4: OcelotAvoidEntityGoal (when not trusting)
             fleeing::apply(goal_selector, OCELOT_FLEES);
             // Goal 7-11: LeapAtTarget, OcelotAttack, Breed, Stroll, LookAtPlayer
@@ -108,6 +108,11 @@ impl Animal for OcelotEntity {
 }
 
 impl Mob for OcelotEntity {
+    fn mob_is_stepping_carefully(&self) -> bool {
+        self.get_mob_entity().living_entity.entity.pose.load() == EntityPose::Crouching
+            || self.get_mob_entity().living_entity.entity.is_sneaking()
+    }
+
     fn as_animal(&self) -> Option<&dyn Animal> {
         Some(self)
     }

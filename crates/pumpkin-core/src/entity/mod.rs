@@ -540,6 +540,11 @@ pub trait EntityBase: Send + Sync + std::any::Any {
         false
     }
 
+    /// Vanilla `Entity.isSteppingCarefully`: sneaking, cats and ocelots also while crouching.
+    fn is_stepping_carefully(&self) -> bool {
+        self.get_entity().is_sneaking()
+    }
+
     fn is_collidable(&self, _entity: Option<Box<dyn EntityBase>>) -> bool {
         false
     }
@@ -4200,6 +4205,73 @@ impl Entity {
                 }
             }
         }
+    }
+
+    /// Vanilla `LivingEntity.randomTeleport`: drops down from `y` to the first block tagged
+    /// `entities_can_teleport_to` and teleports there when the box is free of blocks and liquid
+    /// and `is_invalid` rejects neither the floor nor any block in the box.
+    pub fn random_teleport(
+        &self,
+        x: f64,
+        y: f64,
+        z: f64,
+        show_particles: bool,
+        is_invalid: impl Fn(&BlockState) -> bool,
+    ) -> bool {
+        let world = self.world.load_full();
+        // WorldBorder.clampVec3ToBound
+        let (block_x, block_z) = (x.floor() as i32, z.floor() as i32);
+        let (clamped_x, clamped_z) = world
+            .worldborder
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clamp_block(block_x, block_z);
+        let (x, z) = if (clamped_x, clamped_z) == (block_x, block_z) {
+            (x, z)
+        } else {
+            (f64::from(clamped_x) + 0.5, f64::from(clamped_z) + 0.5)
+        };
+        let mut pos = BlockPos::floored(x, y, z);
+        if !world.is_loaded(&pos) {
+            return false;
+        }
+        let mut y = y;
+        while pos.0.y > world.get_bottom_y() {
+            pos = pos.down();
+            let (block, state_id) = world.get_block_and_state_id(&pos);
+            if block.has_tag(&tag::Block::MINECRAFT_ENTITIES_CAN_TELEPORT_TO) {
+                let state = BlockState::from_id(state_id);
+                if is_invalid(state) {
+                    return false;
+                }
+                let dimensions = self.entity_dimension.load();
+                let bounds = BoundingBox::new_from_pos(x, y, z, &dimensions);
+                if !world.is_space_empty(bounds) || world.contains_any_liquid(bounds) {
+                    return false;
+                }
+                let (min, max) = (bounds.min_block_pos(), bounds.max_block_pos());
+                for bx in min.0.x..=max.0.x {
+                    for by in min.0.y..=max.0.y {
+                        for bz in min.0.z..=max.0.z {
+                            if is_invalid(world.get_block_state(&BlockPos::new(bx, by, bz))) {
+                                return false;
+                            }
+                        }
+                    }
+                }
+                self.teleport(Vector3::new(x, y, z), None, None, &world);
+                if show_particles {
+                    world.send_entity_status(
+                        self,
+                        EntityStatus::Teleport,
+                        pumpkin_protocol::bedrock::server::actor_event::ActorEventID::None,
+                    );
+                }
+                return true;
+            }
+            y -= 1.0;
+        }
+        false
     }
 
     pub fn teleport(

@@ -88,7 +88,7 @@ impl CatEntity {
             goal_selector.add_goal(2, Box::new(SitWhenOrderedToGoal::new()));
             goal_selector.add_goal(3, Box::new(cat_goals::CatRelaxOnOwnerGoal::new()));
             // Goal 4: CatTemptGoal
-            goal_selector.add_goal(4, feline::tempt_goal());
+            goal_selector.add_goal(4, feline::cat_tempt_goal());
             // Goal 4: CatAvoidEntityGoal (when untamed)
             fleeing::apply(goal_selector, CAT_FLEES);
             goal_selector.add_goal(5, Box::new(cat_goals::CatLieOnBlockGoal::new()));
@@ -281,6 +281,11 @@ impl TamableAnimal for CatEntity {
 }
 
 impl Mob for CatEntity {
+    fn mob_is_stepping_carefully(&self) -> bool {
+        self.get_mob_entity().living_entity.entity.pose.load() == EntityPose::Crouching
+            || self.get_mob_entity().living_entity.entity.is_sneaking()
+    }
+
     fn as_custom_sound(&self) -> Option<&dyn CustomSound> {
         Some(self)
     }
@@ -425,6 +430,9 @@ impl Mob for CatEntity {
                         && dye.color.id() != self.get_collar_color()
                     {
                         self.set_collar_color(dye.color.id());
+                        self.mob_entity
+                            .persistence_required
+                            .store(true, Ordering::Relaxed);
                         item_stack.decrement_unless_creative(player.gamemode.load(), 1);
                         return true;
                     }
@@ -432,8 +440,12 @@ impl Mob for CatEntity {
                     && self.mob_entity.living_entity.health.load()
                         < self.mob_entity.living_entity.get_max_health()
                 {
+                    // cat: TamableAnimal.feed(healingFactor 1, defaultHeal 1)
+                    let heal = item_stack
+                        .get_data_component::<pumpkin_data::data_component_impl::FoodImpl>()
+                        .map_or(1.0, |food| food.nutrition as f32);
                     item_stack.decrement_unless_creative(player.gamemode.load(), 1);
-                    self.mob_entity.living_entity.heal(2.0);
+                    self.mob_entity.living_entity.heal(heal);
                     self.play_eating_sound();
                     return true;
                 }
@@ -468,11 +480,21 @@ impl Mob for CatEntity {
                 );
             }
 
+            self.mob_entity
+                .persistence_required
+                .store(true, Ordering::Relaxed);
             return true;
         }
 
-        self.mob_entity
-            .mob_interact(player, item_stack, self.can_be_leashed())
+        let interacted = self
+            .mob_entity
+            .mob_interact(player, item_stack, self.can_be_leashed());
+        if interacted {
+            self.mob_entity
+                .persistence_required
+                .store(true, Ordering::Relaxed);
+        }
+        interacted
     }
 
     fn can_mate(&self, partner: &dyn EntityBase) -> bool {
@@ -517,6 +539,18 @@ impl Mob for CatEntity {
                 .get_dimension_value_moon_phase(),
             pumpkin_data::environment_attribute::MoonPhase::FullMoon
         );
+        // cat: all_black has priority 1 inside a swamp hut (cats_spawn_as_black), then only it qualifies
+        let in_swamp_hut =
+            pumpkin_world::generation::generator::structure_finder::structure_spawns_at(
+                &world.level.world_gen(),
+                &self.get_entity().block_pos.load(),
+                "creature",
+            )
+            .is_some_and(|spawns| {
+                spawns
+                    .iter()
+                    .any(|entry| entry.entity_type == "minecraft:cat")
+            });
         let candidates: Vec<CatVariant> = [
             CatVariant::AllBlack,
             CatVariant::Black,
@@ -531,7 +565,13 @@ impl Mob for CatEntity {
             CatVariant::White,
         ]
         .into_iter()
-        .filter(|variant| *variant != CatVariant::AllBlack || full_moon)
+        .filter(|variant| {
+            if in_swamp_hut {
+                *variant == CatVariant::AllBlack
+            } else {
+                *variant != CatVariant::AllBlack || full_moon
+            }
+        })
         .collect();
         let variant = candidates[rand::random_range(0..candidates.len())];
         self.set_variant(variant.id());
@@ -603,5 +643,31 @@ impl Mob for CatEntity {
 
     fn remove_when_far_away(&self, _distance_sq: f64) -> bool {
         !self.is_tame() && self.get_entity().tick_count.load(Ordering::Relaxed) > 2400
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::entity::ai::test_support::world;
+    use pumpkin_util::math::vector3::Vector3;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[tokio::test]
+    async fn a_crouching_cat_steps_carefully_and_a_standing_one_does_not() -> TestResult {
+        let folder = tempfile::tempdir()?;
+        let world = world(&folder);
+        let cat = CatEntity::new(Entity::new(
+            world.clone(),
+            Vector3::new(0.5, 64.0, 0.5),
+            &EntityType::CAT,
+        ));
+        assert!(!cat.is_stepping_carefully());
+        cat.get_entity().pose.store(EntityPose::Crouching);
+        assert!(cat.is_stepping_carefully());
+        world.level.shutdown().await;
+        Ok(())
     }
 }

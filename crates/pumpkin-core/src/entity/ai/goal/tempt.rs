@@ -23,6 +23,13 @@ pub struct TemptGoal {
     predicate: Option<fn(&dyn Mob, &ItemStack) -> bool>,
     non_pathfinder: bool,
     can_scare: bool,
+    // cat: CatTemptGoal.canUse, extra gate on top of the tempting player
+    use_gate: Option<fn(&dyn Mob) -> bool>,
+    // ocelot: OcelotTemptGoal.canScare, extra gate on top of the scare flag
+    scare_gate: Option<fn(&dyn Mob) -> bool>,
+    // cat: CatTemptGoal keeps one picked player that never scares the cat
+    picks_unscary_player: bool,
+    selected_player: Option<i32>,
     stop_distance: f64,
     target_player: Option<Arc<Player>>,
     watched_pos: Vector3<f64>,
@@ -52,6 +59,10 @@ impl TemptGoal {
             predicate: None,
             non_pathfinder: false,
             can_scare,
+            use_gate: None,
+            scare_gate: None,
+            picks_unscary_player: false,
+            selected_player: None,
             stop_distance,
             target_player: None,
             watched_pos: Vector3::new(0.0, 0.0, 0.0),
@@ -71,6 +82,29 @@ impl TemptGoal {
         self.predicate = Some(predicate);
         self.non_pathfinder = true;
         self
+    }
+
+    /// Vanilla `CatTemptGoal`: only while the gate holds, with a picked player that never scares.
+    #[must_use]
+    pub const fn for_cat(mut self, use_gate: fn(&dyn Mob) -> bool) -> Self {
+        self.use_gate = Some(use_gate);
+        self.picks_unscary_player = true;
+        self
+    }
+
+    /// Vanilla `OcelotTemptGoal`: scares only while the gate holds.
+    #[must_use]
+    pub const fn with_scare_gate(mut self, gate: fn(&dyn Mob) -> bool) -> Self {
+        self.scare_gate = Some(gate);
+        self
+    }
+
+    // tempt: canScare with the species overrides
+    fn can_scare(&self, mob: &dyn Mob, player: &Player) -> bool {
+        if self.picks_unscary_player && self.selected_player == Some(player.entity_id()) {
+            return false;
+        }
+        self.can_scare && self.scare_gate.is_none_or(|gate| gate(mob))
     }
 
     #[must_use]
@@ -152,11 +186,15 @@ impl Goal for TemptGoal {
             return false;
         }
         self.target_player = self.find_tempting_player(mob);
-        self.target_player.is_some()
+        self.target_player.is_some() && self.use_gate.is_none_or(|gate| gate(mob))
     }
 
     fn should_continue(&mut self, mob: &dyn Mob) -> bool {
-        if self.can_scare {
+        let scares = self
+            .target_player
+            .as_ref()
+            .is_some_and(|player| self.can_scare(mob, player));
+        if scares {
             let Some(player) = self.target_player.clone() else {
                 return false;
             };
@@ -192,9 +230,18 @@ impl Goal for TemptGoal {
     }
 
     fn tick(&mut self, mob: &dyn Mob) {
-        let Some(player) = &self.target_player else {
+        let Some(player) = self.target_player.clone() else {
             return;
         };
+        // cat: CatTemptGoal.tick picks and drops the player that does not scare
+        if self.picks_unscary_player {
+            let mut rng = mob.get_random();
+            if self.selected_player.is_none() && rng.random_range(0..to_goal_ticks(600)) == 0 {
+                self.selected_player = Some(player.entity_id());
+            } else if rng.random_range(0..to_goal_ticks(500)) == 0 {
+                self.selected_player = None;
+            }
+        }
         let mob_entity = mob.get_mob_entity();
         let player_pos = player.get_entity().pos.load();
 
