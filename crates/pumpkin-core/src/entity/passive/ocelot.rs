@@ -5,7 +5,6 @@ use std::sync::{
 
 use pumpkin_data::Block;
 use pumpkin_data::entity::{EntityPose, EntityStatus, EntityType};
-use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::tag::{self, Taggable};
 use pumpkin_nbt::compound::NbtCompound;
@@ -54,6 +53,12 @@ pub struct OcelotEntity {
 impl OcelotEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
         let mob_entity = MobEntity::new(entity);
+        // ocelot: getLeashOffset, (0, 0.5 * eyeHeight, width * 0.4)
+        mob_entity
+            .living_entity
+            .entity
+            .leash_offset_factors
+            .store(Some((0.5, 0.4)));
         let ocelot = Self {
             mob_entity,
             is_trusting: AtomicBool::new(false),
@@ -102,8 +107,6 @@ impl Animal for OcelotEntity {
     fn is_food(&self, item_stack: &ItemStack) -> bool {
         let item = item_stack.get_item();
         item.has_tag(&tag::Item::MINECRAFT_OCELOT_FOOD)
-            || item == &Item::COD
-            || item == &Item::SALMON
     }
 }
 
@@ -122,9 +125,7 @@ impl Mob for OcelotEntity {
     }
 
     fn mob_read_nbt(&self, nbt: &NbtCompound) {
-        if let Some(trusting) = nbt.get_bool("Trusting") {
-            self.is_trusting.store(trusting, Ordering::Relaxed);
-        }
+        self.set_trusting(nbt.get_bool("Trusting").unwrap_or(false));
     }
 
     fn get_mob_entity(&self) -> &MobEntity {
@@ -138,6 +139,11 @@ impl Mob for OcelotEntity {
 
     fn get_ambient_sound_interval(&self) -> i32 {
         900
+    }
+
+    // ocelot: getAmbientSound
+    fn get_ambient_sound(&self) -> Option<pumpkin_data::sound::Sound> {
+        Some(pumpkin_data::sound::Sound::EntityOcelotAmbient)
     }
 
     // ocelot: BABY_DIMENSIONS
@@ -253,5 +259,38 @@ impl Mob for OcelotEntity {
             item_stack,
             pumpkin_data::sound::Sound::EntityOcelotAmbient,
         )
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::entity::ai::test_support::world;
+    use pumpkin_util::math::vector3::Vector3;
+
+    #[tokio::test]
+    async fn trust_survives_a_save_and_the_ocelot_has_an_ambient_sound()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let folder = tempfile::tempdir()?;
+        let world = world(&folder);
+        let make = || {
+            OcelotEntity::new(Entity::new(
+                world.clone(),
+                Vector3::new(0.5, 64.0, 0.5),
+                &EntityType::OCELOT,
+            ))
+        };
+        let ocelot = make();
+        ocelot.set_trusting(true);
+        let mut nbt = NbtCompound::new();
+        ocelot.mob_write_nbt(&mut nbt);
+        let loaded = make();
+        loaded.mob_read_nbt(&nbt);
+        assert!(loaded.is_trusting());
+        assert!(loaded.get_ambient_sound().is_some());
+        assert!(!ocelot.is_food(&ItemStack::new(1, &pumpkin_data::item::Item::STICK)));
+        world.level.shutdown().await;
+        Ok(())
     }
 }

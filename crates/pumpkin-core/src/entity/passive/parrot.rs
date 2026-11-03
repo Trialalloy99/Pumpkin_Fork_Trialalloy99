@@ -48,81 +48,129 @@ const SHOULDER_SIT_TICKS: i32 = RIDE_COOLDOWN;
 const VARIANT_COUNT: u8 = 5;
 
 // parrot: MOB_SOUND_MAP (Parrot)
-const IMITATED_SOUNDS: &[(&EntityType, Sound)] = &[
-    (&EntityType::BLAZE, Sound::EntityParrotImitateBlaze),
-    (&EntityType::BOGGED, Sound::EntityParrotImitateBogged),
-    (&EntityType::BREEZE, Sound::EntityParrotImitateBreeze),
-    (&EntityType::CAVE_SPIDER, Sound::EntityParrotImitateSpider),
-    (&EntityType::CREAKING, Sound::EntityParrotImitateCreaking),
-    (&EntityType::CREEPER, Sound::EntityParrotImitateCreeper),
-    (&EntityType::DROWNED, Sound::EntityParrotImitateDrowned),
+const IMITATED_SOUNDS: &[(&EntityType, Option<Sound>)] = &[
+    (&EntityType::BLAZE, Some(Sound::EntityParrotImitateBlaze)),
+    (&EntityType::BOGGED, Some(Sound::EntityParrotImitateBogged)),
+    (&EntityType::BREEZE, Some(Sound::EntityParrotImitateBreeze)),
+    (
+        &EntityType::CAMEL_HUSK,
+        Some(Sound::EntityParrotImitateCamelHusk),
+    ),
+    (
+        &EntityType::CAVE_SPIDER,
+        Some(Sound::EntityParrotImitateSpider),
+    ),
+    (
+        &EntityType::CREAKING,
+        Some(Sound::EntityParrotImitateCreaking),
+    ),
+    (
+        &EntityType::CREEPER,
+        Some(Sound::EntityParrotImitateCreeper),
+    ),
+    (
+        &EntityType::DROWNED,
+        Some(Sound::EntityParrotImitateDrowned),
+    ),
     (
         &EntityType::ELDER_GUARDIAN,
-        Sound::EntityParrotImitateElderGuardian,
+        Some(Sound::EntityParrotImitateElderGuardian),
     ),
     (
         &EntityType::ENDER_DRAGON,
-        Sound::EntityParrotImitateEnderDragon,
+        Some(Sound::EntityParrotImitateEnderDragon),
     ),
-    (&EntityType::ENDERMITE, Sound::EntityParrotImitateEndermite),
-    (&EntityType::EVOKER, Sound::EntityParrotImitateEvoker),
-    (&EntityType::GHAST, Sound::EntityParrotImitateGhast),
-    (&EntityType::GUARDIAN, Sound::EntityParrotImitateGuardian),
-    (&EntityType::HOGLIN, Sound::EntityParrotImitateHoglin),
-    (&EntityType::HUSK, Sound::EntityParrotImitateHusk),
+    (
+        &EntityType::ENDERMITE,
+        Some(Sound::EntityParrotImitateEndermite),
+    ),
+    (&EntityType::EVOKER, Some(Sound::EntityParrotImitateEvoker)),
+    (&EntityType::GHAST, Some(Sound::EntityParrotImitateGhast)),
+    (&EntityType::HAPPY_GHAST, None),
+    (
+        &EntityType::GUARDIAN,
+        Some(Sound::EntityParrotImitateGuardian),
+    ),
+    (&EntityType::HOGLIN, Some(Sound::EntityParrotImitateHoglin)),
+    (&EntityType::HUSK, Some(Sound::EntityParrotImitateHusk)),
     (
         &EntityType::ILLUSIONER,
-        Sound::EntityParrotImitateIllusioner,
+        Some(Sound::EntityParrotImitateIllusioner),
     ),
-    (&EntityType::MAGMA_CUBE, Sound::EntityParrotImitateMagmaCube),
-    (&EntityType::PARCHED, Sound::EntityParrotImitateParched),
-    (&EntityType::PHANTOM, Sound::EntityParrotImitatePhantom),
-    (&EntityType::PIGLIN, Sound::EntityParrotImitatePiglin),
+    (
+        &EntityType::MAGMA_CUBE,
+        Some(Sound::EntityParrotImitateMagmaCube),
+    ),
+    (
+        &EntityType::PARCHED,
+        Some(Sound::EntityParrotImitateParched),
+    ),
+    (
+        &EntityType::PHANTOM,
+        Some(Sound::EntityParrotImitatePhantom),
+    ),
+    (&EntityType::PIGLIN, Some(Sound::EntityParrotImitatePiglin)),
     (
         &EntityType::PIGLIN_BRUTE,
-        Sound::EntityParrotImitatePiglinBrute,
+        Some(Sound::EntityParrotImitatePiglinBrute),
     ),
-    (&EntityType::PILLAGER, Sound::EntityParrotImitatePillager),
-    (&EntityType::RAVAGER, Sound::EntityParrotImitateRavager),
-    (&EntityType::SHULKER, Sound::EntityParrotImitateShulker),
+    (
+        &EntityType::PILLAGER,
+        Some(Sound::EntityParrotImitatePillager),
+    ),
+    (
+        &EntityType::RAVAGER,
+        Some(Sound::EntityParrotImitateRavager),
+    ),
+    (
+        &EntityType::SHULKER,
+        Some(Sound::EntityParrotImitateShulker),
+    ),
     (
         &EntityType::SILVERFISH,
-        Sound::EntityParrotImitateSilverfish,
+        Some(Sound::EntityParrotImitateSilverfish),
     ),
-    (&EntityType::SKELETON, Sound::EntityParrotImitateSkeleton),
-    (&EntityType::SLIME, Sound::EntityParrotImitateSlime),
-    (&EntityType::SPIDER, Sound::EntityParrotImitateSpider),
-    (&EntityType::STRAY, Sound::EntityParrotImitateStray),
-    (&EntityType::VEX, Sound::EntityParrotImitateVex),
+    (
+        &EntityType::SKELETON,
+        Some(Sound::EntityParrotImitateSkeleton),
+    ),
+    (&EntityType::SLIME, Some(Sound::EntityParrotImitateSlime)),
+    (&EntityType::SPIDER, Some(Sound::EntityParrotImitateSpider)),
+    (&EntityType::STRAY, Some(Sound::EntityParrotImitateStray)),
+    (&EntityType::VEX, Some(Sound::EntityParrotImitateVex)),
     (
         &EntityType::VINDICATOR,
-        Sound::EntityParrotImitateVindicator,
+        Some(Sound::EntityParrotImitateVindicator),
     ),
-    (&EntityType::WARDEN, Sound::EntityParrotImitateWarden),
-    (&EntityType::WITCH, Sound::EntityParrotImitateWitch),
-    (&EntityType::WITHER, Sound::EntityParrotImitateWither),
+    (&EntityType::WARDEN, Some(Sound::EntityParrotImitateWarden)),
+    (&EntityType::WITCH, Some(Sound::EntityParrotImitateWitch)),
+    (&EntityType::WITHER, Some(Sound::EntityParrotImitateWither)),
     (
         &EntityType::WITHER_SKELETON,
-        Sound::EntityParrotImitateWitherSkeleton,
+        Some(Sound::EntityParrotImitateWitherSkeleton),
     ),
-    (&EntityType::ZOGLIN, Sound::EntityParrotImitateZoglin),
-    (&EntityType::ZOMBIE, Sound::EntityParrotImitateZombie),
+    (&EntityType::ZOGLIN, Some(Sound::EntityParrotImitateZoglin)),
+    (&EntityType::ZOMBIE, Some(Sound::EntityParrotImitateZombie)),
     (
         &EntityType::ZOMBIE_HORSE,
-        Sound::EntityParrotImitateZombieHorse,
+        Some(Sound::EntityParrotImitateZombieHorse),
+    ),
+    (
+        &EntityType::ZOMBIE_NAUTILUS,
+        Some(Sound::EntityParrotImitateZombieNautilus),
     ),
     (
         &EntityType::ZOMBIE_VILLAGER,
-        Sound::EntityParrotImitateZombieVillager,
+        Some(Sound::EntityParrotImitateZombieVillager),
     ),
 ];
 
 // parrot: Parrot.getImitatedSound
-fn imitated_sound(entity_type: &EntityType) -> Sound {
+fn imitated_sound(entity_type: &EntityType) -> Option<Sound> {
     IMITATED_SOUNDS
         .iter()
         .find(|(candidate, _)| candidate.id == entity_type.id)
-        .map_or(Sound::EntityParrotAmbient, |(_, sound)| *sound)
+        .map_or(Some(Sound::EntityParrotAmbient), |(_, sound)| *sound)
 }
 
 /// Represents a Parrot, a tameable flying mob that can mimic nearby mob sounds.
@@ -143,6 +191,12 @@ pub struct ParrotEntity {
 impl ParrotEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
         let mut mob_entity = MobEntity::new(entity);
+        // parrot: getLeashOffset, (0, 0.5 * eyeHeight, width * 0.4)
+        mob_entity
+            .living_entity
+            .entity
+            .leash_offset_factors
+            .store(Some((0.5, 0.4)));
         *mob_entity
             .move_control
             .get_mut()
@@ -178,7 +232,7 @@ impl ParrotEntity {
         {
             let goal_selector = &mob_arc.mob_entity.goals_selector;
 
-            goal_selector.add_goal(0, EscapeDangerGoal::new(1.25));
+            goal_selector.add_goal(0, EscapeDangerGoal::for_tamable(1.25));
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
             goal_selector.add_goal(
                 1,
@@ -200,7 +254,7 @@ impl ParrotEntity {
     }
 
     pub fn set_variant(&self, variant: u8) {
-        let variant = variant % VARIANT_COUNT;
+        let variant = variant.min(VARIANT_COUNT - 1);
         self.variant.store(variant, Ordering::Relaxed);
         self.get_entity()
             .set_synced_data(tracked_data::parrot::DATA_VARIANT_ID, i32::from(variant));
@@ -231,13 +285,13 @@ impl ParrotEntity {
 
     // parrot: Parrot.getAmbient, rarely imitates a random mob
     #[must_use]
-    pub fn get_ambient_sound(world: &World) -> Sound {
+    pub fn get_ambient_sound(world: &World) -> Option<Sound> {
         if world.level_info.load().difficulty != pumpkin_util::Difficulty::Peaceful
             && rand::random_range(0..1000) == 0
         {
             IMITATED_SOUNDS[rand::random_range(0..IMITATED_SOUNDS.len())].1
         } else {
-            Sound::EntityParrotAmbient
+            Some(Sound::EntityParrotAmbient)
         }
     }
 
@@ -276,13 +330,9 @@ impl ParrotEntity {
         if mob.get_entity().silent.load(Ordering::Relaxed) {
             return false;
         }
-        world.play_sound_fine(
-            imitated_sound(mob.get_entity().entity_type),
-            SoundCategory::Neutral,
-            &pos,
-            0.7,
-            Self::get_pitch(),
-        );
+        if let Some(sound) = imitated_sound(mob.get_entity().entity_type) {
+            world.play_sound_fine(sound, SoundCategory::Neutral, &pos, 0.7, Self::get_pitch());
+        }
         true
     }
 
@@ -481,7 +531,7 @@ impl Mob for ParrotEntity {
     }
 
     fn get_ambient_sound(&self) -> Option<Sound> {
-        Some(Self::get_ambient_sound(&self.get_entity().world.load()))
+        Self::get_ambient_sound(&self.get_entity().world.load())
     }
 
     fn mob_sound_source(&self) -> SoundCategory {
@@ -569,41 +619,39 @@ impl ParrotWanderGoal {
         pos.or(default)
     }
 
-    // parrot: getTreePos, leaves or logs around with open air above
+    // parrot: getTreePos, the first free spot above leaves or logs within 3 blocks sideways and 6 vertically
     fn tree_pos(mob: &dyn Mob) -> Option<Vector3<f64>> {
         let entity = mob.get_entity();
         let world = entity.world.load();
         let mob_pos = entity.block_pos.load();
-        let mut best: Option<BlockPos> = None;
-        for dx in -3..=3 {
-            for dy in -3..=3 {
-                for dz in -3..=3 {
-                    let pos = BlockPos::new(mob_pos.0.x + dx, mob_pos.0.y + dy, mob_pos.0.z + dz);
-                    let block = world.get_block(&pos);
-                    if !(block.has_tag(&tag::Block::MINECRAFT_LEAVES)
-                        || block.has_tag(&tag::Block::MINECRAFT_LOGS))
-                    {
+        let pos = entity.pos.load();
+        let (min_x, max_x) = ((pos.x - 3.0).floor() as i32, (pos.x + 3.0).floor() as i32);
+        let (min_y, max_y) = ((pos.y - 6.0).floor() as i32, (pos.y + 6.0).floor() as i32);
+        let (min_z, max_z) = ((pos.z - 3.0).floor() as i32, (pos.z + 3.0).floor() as i32);
+        for z in min_z..=max_z {
+            for y in min_y..=max_y {
+                for x in min_x..=max_x {
+                    let candidate = BlockPos::new(x, y, z);
+                    if candidate == mob_pos {
                         continue;
                     }
-                    let above = pos.up();
-                    if world.get_block_state(&above).is_air()
-                        && best.is_none_or(|current| {
-                            let distance = |p: &BlockPos| mob_pos.0.squared_distance_to_vec(&p.0);
-                            distance(&above) < distance(&current)
-                        })
+                    let below = world.get_block(&candidate.down());
+                    let can_sit_on = below.has_tag(&tag::Block::MINECRAFT_LEAVES)
+                        || below.has_tag(&tag::Block::MINECRAFT_LOGS);
+                    if can_sit_on
+                        && world.get_block_state(&candidate).is_air()
+                        && world.get_block_state(&candidate.up()).is_air()
                     {
-                        best = Some(above);
+                        return Some(Vector3::new(
+                            f64::from(x) + 0.5,
+                            f64::from(y),
+                            f64::from(z) + 0.5,
+                        ));
                     }
                 }
             }
         }
-        best.map(|pos| {
-            Vector3::new(
-                f64::from(pos.0.x) + 0.5,
-                f64::from(pos.0.y),
-                f64::from(pos.0.z) + 0.5,
-            )
-        })
+        None
     }
 }
 
@@ -669,5 +717,27 @@ impl Goal for LandOnOwnersShoulderGoal {
         if touching {
             self.sitting_on_shoulder = parrot.set_entity_on_shoulder(&owner);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn imitation_table_has_the_newer_mobs_and_a_silent_happy_ghast() {
+        assert_eq!(
+            imitated_sound(&EntityType::CAMEL_HUSK),
+            Some(Sound::EntityParrotImitateCamelHusk)
+        );
+        assert_eq!(
+            imitated_sound(&EntityType::ZOMBIE_NAUTILUS),
+            Some(Sound::EntityParrotImitateZombieNautilus)
+        );
+        assert_eq!(imitated_sound(&EntityType::HAPPY_GHAST), None);
+        assert_eq!(
+            imitated_sound(&EntityType::COW),
+            Some(Sound::EntityParrotAmbient)
+        );
     }
 }

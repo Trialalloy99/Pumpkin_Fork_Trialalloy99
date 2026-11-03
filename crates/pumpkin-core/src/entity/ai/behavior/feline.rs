@@ -42,7 +42,7 @@ pub fn apply_tail(goals: &GoalSelector, mob: Weak<dyn Mob>, first: u8) {
     goals.add_goal(first, Box::new(LeapAtTargetGoal::new(0.3)));
     goals.add_goal(first + 1, Box::new(OcelotAttackGoal::new()));
     goals.add_goal(first + 2, BreedGoal::new(0.8));
-    goals.add_goal(first + 3, Box::new(WanderAroundGoal::new(0.8)));
+    goals.add_goal(first + 3, Box::new(WanderAroundGoal::water_avoiding(0.8)));
     goals.add_goal(
         first + 4,
         LookAtEntityGoal::with_default(mob, &EntityType::PLAYER, 10.0),

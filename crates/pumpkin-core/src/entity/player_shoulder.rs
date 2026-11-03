@@ -141,9 +141,11 @@ impl Player {
             if is_parrot && rand::random_range(0..AMBIENT_SOUND_CHANCE) == 0 {
                 let world = self.world();
                 let entity = self.get_entity();
-                if !ParrotEntity::imitate_nearby_mobs(&world, entity) {
+                if !ParrotEntity::imitate_nearby_mobs(&world, entity)
+                    && let Some(sound) = ParrotEntity::get_ambient_sound(&world)
+                {
                     world.play_sound_fine(
-                        ParrotEntity::get_ambient_sound(&world),
+                        sound,
                         SoundCategory::Players,
                         &entity.pos.load(),
                         1.0,

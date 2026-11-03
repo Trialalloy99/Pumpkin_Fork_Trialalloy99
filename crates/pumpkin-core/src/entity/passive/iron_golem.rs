@@ -44,6 +44,10 @@ use pumpkin_util::math::boundingbox::BoundingBox;
 use pumpkin_util::math::vector3::Vector3;
 use rand::RngExt;
 
+const VILLAGER_SCAN_RADIUS: f64 = 32.0;
+const GOLEM_LEASH_EYE_FACTOR: f64 = 0.875;
+const GOLEM_LEASH_WIDTH_FACTOR: f64 = 0.4;
+
 /// Represents an Iron Golem, a powerful neutral mob that protects villagers and players.
 ///
 /// Wiki: <https://minecraft.wiki/w/Iron_Golem>
@@ -63,6 +67,12 @@ pub struct IronGolemEntity {
 impl IronGolemEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
         let mob_entity = MobEntity::new(entity);
+        // iron golem: getLeashOffset, (0, 0.875 * eyeHeight, width * 0.4)
+        mob_entity
+            .living_entity
+            .entity
+            .leash_offset_factors
+            .store(Some((GOLEM_LEASH_EYE_FACTOR, GOLEM_LEASH_WIDTH_FACTOR)));
         let iron_golem = Self {
             mob_entity,
             neutral_data: NeutralData::default(),
@@ -462,9 +472,36 @@ impl VillageStrollGoal {
         )
     }
 
-    // golem: villagers wanting a golem need villager sleep and golem memories, which villagers lack
-    const fn villager_position(_mob: &dyn Mob) -> Option<Vector3<f64>> {
-        None
+    // golem: GolemRandomStrollInVillageGoal.getPositionTowardsVillagerWhoWantsGolem
+    fn villager_position(mob: &dyn Mob) -> Option<Vector3<f64>> {
+        let entity = mob.get_entity();
+        let world = entity.world.load();
+        let game_time = world.get_world_age();
+        let area = entity.bounding_box.load().expand(
+            VILLAGER_SCAN_RADIUS,
+            VILLAGER_SCAN_RADIUS,
+            VILLAGER_SCAN_RADIUS,
+        );
+        let villagers: Vec<Arc<dyn EntityBase>> = world
+            .get_entities_at_box(&area)
+            .into_iter()
+            .filter(|villager| {
+                villager.get_entity().entity_type == &EntityType::VILLAGER
+                    && villager.get_mob().is_some_and(|villager_mob| {
+                        villager_mob
+                            .get_mob_entity()
+                            .try_with_brain(villager_mob, |brain| {
+                                VillagerEntity::wants_to_spawn_golem_in(brain, game_time)
+                            })
+                            .unwrap_or(false)
+                    })
+            })
+            .collect();
+        if villagers.is_empty() {
+            return None;
+        }
+        let villager = &villagers[mob.get_random().random_range(0..villagers.len())];
+        land_random_pos::get_pos_towards(mob, 10, 7, villager.get_entity().pos.load())
     }
 
     fn golem_stroll_position(mob: &dyn Mob) -> Option<Vector3<f64>> {

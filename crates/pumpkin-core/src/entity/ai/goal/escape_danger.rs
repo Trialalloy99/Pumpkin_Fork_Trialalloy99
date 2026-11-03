@@ -22,9 +22,18 @@ pub struct EscapeDangerGoal {
     running: bool,
     panic_gate: Option<MobFilter>,
     water_search_range: Option<i32>,
+    // TamableAnimalPanicGoal
+    teleports_to_owner: bool,
 }
 
 impl EscapeDangerGoal {
+    #[must_use]
+    pub fn for_tamable(speed: f64) -> Box<Self> {
+        let mut goal = Self::new(speed);
+        goal.teleports_to_owner = true;
+        goal
+    }
+
     #[must_use]
     pub fn new(speed: f64) -> Box<Self> {
         Box::new(Self {
@@ -34,6 +43,7 @@ impl EscapeDangerGoal {
             running: false,
             panic_gate: None,
             water_search_range: None,
+            teleports_to_owner: false,
         })
     }
 
@@ -162,6 +172,14 @@ impl Goal for EscapeDangerGoal {
                 .set_progress(NavigatorGoal::new(pos, target, self.speed));
         }
         self.running = true;
+    }
+
+    fn tick(&mut self, mob: &dyn Mob) {
+        if self.teleports_to_owner {
+            crate::entity::ai::goal::follow_owner::FollowOwnerGoal::teleport_to_owner_while_panicking(
+                mob,
+            );
+        }
     }
 
     fn stop(&mut self, _mob: &dyn Mob) {

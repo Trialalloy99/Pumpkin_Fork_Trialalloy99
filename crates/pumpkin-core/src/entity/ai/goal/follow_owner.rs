@@ -32,6 +32,18 @@ impl FollowOwnerGoal {
         })
     }
 
+    /// `TamableAnimalPanicGoal.tick`: a fleeing pet far from its owner teleports to them.
+    pub(crate) fn teleport_to_owner_while_panicking(mob: &dyn Mob) {
+        let Some(owner) = Self::find_owner(mob) else {
+            return;
+        };
+        if !Self::unable_to_move_to_owner(mob, Some(&owner))
+            && Self::should_try_teleport_to_owner(mob, &owner)
+        {
+            Self::try_teleport_to_owner(mob, &owner);
+        }
+    }
+
     fn unable_to_move_to_owner(mob: &dyn Mob, owner: Option<&Player>) -> bool {
         if mob.ordered_to_sit() {
             return true;

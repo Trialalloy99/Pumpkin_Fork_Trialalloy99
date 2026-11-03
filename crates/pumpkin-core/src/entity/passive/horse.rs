@@ -400,6 +400,14 @@ impl Mob for HorseEntity {
         self.horse_step_sound(pos, state);
     }
 
+    // horse: Horse.hurtArmor, the body armor wears down
+    fn hurt_armor(&self, _damage_type: pumpkin_data::damage::DamageType, damage: f32) {
+        if damage > 0.0 && self.is_wearing_armor() {
+            self.mob_entity
+                .damage_item_in_slot(&EquipmentSlot::BODY, (damage / 4.0).max(1.0) as i32);
+        }
+    }
+
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
         Some(self)
     }
