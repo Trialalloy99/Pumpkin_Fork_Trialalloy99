@@ -207,6 +207,12 @@ pub struct CamelEntity {
 impl CamelEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
         let mob_entity = MobEntity::new(entity);
+        // camel: Camel.getQuadLeashOffsets
+        mob_entity
+            .living_entity
+            .entity
+            .quad_leash_params
+            .store(Some([0.02, 0.48, 0.25, 0.82]));
         let camel = Self {
             mob_entity,
             ageable_data: AgeableData::default(),

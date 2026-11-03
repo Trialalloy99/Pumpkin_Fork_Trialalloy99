@@ -33,19 +33,18 @@ use crate::entity::{
     mob::{Mob, MobEntity, spawn::SpawnGroupData},
     passive::{
         abstract_horse::{
-            FLAG_BRED, FLAG_STANDING, FLAG_TAME, calculate_offspring_attributes,
-            controlling_passenger_horse, feed_horse, generate_jump_strength, generate_max_health,
-            generate_speed, tame_horse, throw_rider_off, tick_ridden_horse,
+            ABSTRACT_HORSES, FLAG_TAME, HORSE_SOUND_VOLUME, HorseCore, HorseLike, MAX_HEALTH,
+            MAX_JUMP_STRENGTH, MAX_MOVEMENT_SPEED, MIN_HEALTH, MIN_JUMP_STRENGTH,
+            MIN_MOVEMENT_SPEED, RandomStandGoal, controlling_passenger_horse,
+            create_offspring_attribute, generate_jump_strength, generate_max_health,
+            generate_speed, tick_ridden_horse,
         },
         animal::Animal,
-        mule::MuleEntity,
     },
     player::Player,
     r#type::from_type,
 };
 use crate::world::World;
-
-pub use crate::entity::passive::abstract_horse::play_horse_step_sound;
 
 const TEMPT_ITEMS: &[&Item] = &[
     &Item::GOLDEN_APPLE,
@@ -62,38 +61,28 @@ pub struct HorseEntity {
     pub owner: AtomicCell<Option<Uuid>>,
     pub saddle_inventory: Arc<SimpleInventory>,
     pub armor_inventory: Arc<SimpleInventory>,
+    core: HorseCore,
 }
 
 impl HorseEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
         let mob_entity = MobEntity::new(entity);
-        let mut rng = rand::rng();
-        let color = rng.random_range(0..7);
-        let style = rng.random_range(0..5);
-        let variant = color | (style << 8);
-
-        let max_health = generate_max_health(&mut rng);
-        let jump_strength = generate_jump_strength(&mut rng);
-        let speed = generate_speed(&mut rng);
-
-        mob_entity.living_entity.set_max_health(max_health);
-        mob_entity.living_entity.health.store(max_health);
+        // horse: AbstractHorse.getQuadLeashOffsets
         mob_entity
             .living_entity
-            .set_attribute_base(&Attributes::MOVEMENT_SPEED, speed);
-        mob_entity
-            .living_entity
-            .set_attribute_base(&Attributes::JUMP_STRENGTH, jump_strength);
-
+            .entity
+            .quad_leash_params
+            .store(Some([0.04, 0.52, 0.23, 0.87]));
         let horse = Self {
             mob_entity,
             ageable_data: AgeableData::default(),
-            variant: AtomicI32::new(variant),
+            variant: AtomicI32::new(0),
             flags: AtomicU8::new(0),
             temper: AtomicI32::new(0),
             owner: AtomicCell::new(None),
             saddle_inventory: Arc::new(SimpleInventory::new(1)),
             armor_inventory: Arc::new(SimpleInventory::new(1)),
+            core: HorseCore::default(),
         };
 
         let mob_arc = Arc::new(horse);
@@ -108,15 +97,16 @@ impl HorseEntity {
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
             goal_selector.add_goal(1, EscapeDangerGoal::new(1.2));
             goal_selector.add_goal(1, Box::new(RunAroundLikeCrazyGoal::new(1.2)));
-            goal_selector.add_goal(2, BreedGoal::new(1.0));
+            goal_selector.add_goal(2, BreedGoal::with_partner_types(1.0, ABSTRACT_HORSES));
             goal_selector.add_goal(3, Box::new(TemptGoal::new(1.25, TEMPT_ITEMS, false)));
             goal_selector.add_goal(4, Box::new(FollowParentGoal::new(1.0)));
-            goal_selector.add_goal(6, Box::new(WanderAroundGoal::new(0.7)));
+            goal_selector.add_goal(6, Box::new(WanderAroundGoal::water_avoiding(0.7)));
             goal_selector.add_goal(
                 7,
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 6.0),
             );
             goal_selector.add_goal(8, Box::new(RandomLookAroundGoal::default()));
+            goal_selector.add_goal(9, Box::new(RandomStandGoal::default()));
         };
 
         mob_arc
@@ -138,27 +128,31 @@ impl HorseEntity {
 
     #[must_use]
     pub fn has_flag(&self, flag: u8) -> bool {
-        (self.flags.load(Ordering::Relaxed) & flag) != 0
+        self.flag(flag)
     }
 
     pub fn set_flag(&self, flag: u8, val: bool) {
-        let current = self.flags.load(Ordering::Relaxed);
-        let new_flags = if val { current | flag } else { current & !flag };
-        self.flags.store(new_flags, Ordering::Relaxed);
-        let entity = self.get_entity();
-        entity.set_synced_data(
-            pumpkin_data::tracked_data::horse::DATA_ID_FLAGS,
-            new_flags as i8,
-        );
+        self.put_flag(flag, val);
     }
 
     #[must_use]
     pub fn is_tame(&self) -> bool {
-        self.has_flag(FLAG_TAME)
+        self.is_horse_tame()
     }
 
     pub fn set_tame(&self, val: bool) {
-        self.set_flag(FLAG_TAME, val);
+        self.put_flag(FLAG_TAME, val);
+    }
+
+    // horse: Horse.randomizeAttributes
+    fn randomize_attributes(&self) {
+        let mut rng = self.get_random();
+        let living = &self.mob_entity.living_entity;
+        let max_health = generate_max_health(&mut rng);
+        living.set_max_health(max_health);
+        living.health.store(max_health);
+        living.set_attribute_base(&Attributes::JUMP_STRENGTH, generate_jump_strength(&mut rng));
+        living.set_attribute_base(&Attributes::MOVEMENT_SPEED, generate_speed(&mut rng));
     }
 
     // horse: saddle lives in SADDLE slot (AbstractHorse.isSaddled)
@@ -240,137 +234,138 @@ impl AgeableMob for HorseEntity {
     }
 }
 
+impl HorseLike for HorseEntity {
+    fn core(&self) -> &HorseCore {
+        &self.core
+    }
+
+    fn horse_flags(&self) -> &AtomicU8 {
+        &self.flags
+    }
+
+    fn horse_temper(&self) -> &AtomicI32 {
+        &self.temper
+    }
+
+    fn horse_owner(&self) -> &AtomicCell<Option<Uuid>> {
+        &self.owner
+    }
+
+    fn store_flags(&self, flags: u8) {
+        self.flags.store(flags, Ordering::Relaxed);
+        self.get_entity().set_synced_data(
+            pumpkin_data::tracked_data::horse::DATA_ID_FLAGS,
+            flags as i8,
+        );
+    }
+
+    fn horse_saddled(&self) -> bool {
+        self.is_saddled()
+    }
+
+    fn set_horse_saddle(&self, saddled: bool) {
+        self.set_saddled(saddled);
+    }
+
+    // horse: Horse.getEatingSound
+    fn horse_eat_sound(&self) -> Sound {
+        if self.is_baby() {
+            Sound::EntityBabyHorseEat
+        } else {
+            Sound::EntityHorseEat
+        }
+    }
+
+    // horse: Horse.getAngrySound
+    fn angry_sound(&self) -> Sound {
+        if self.is_baby() {
+            Sound::EntityBabyHorseAngry
+        } else {
+            Sound::EntityHorseAngry
+        }
+    }
+
+    fn jump_sound(&self) -> Sound {
+        Sound::EntityHorseJump
+    }
+}
+
 impl Animal for HorseEntity {
     fn is_food(&self, item_stack: &ItemStack) -> bool {
         item_stack.item.has_tag(&tag::Item::MINECRAFT_HORSE_FOOD)
-            || item_stack.item == &Item::WHEAT
-            || item_stack.item == &Item::SUGAR
-            || item_stack.item == &Item::HAY_BLOCK
-            || item_stack.item == &Item::APPLE
-            || item_stack.item == &Item::CARROT
-            || item_stack.item == &Item::GOLDEN_CARROT
-            || item_stack.item == &Item::GOLDEN_APPLE
-            || item_stack.item == &Item::ENCHANTED_GOLDEN_APPLE
     }
 
-    // horse: breeding genetics and cross breeding with Donkey (Horse.getBreedOffspring)
-    #[allow(clippy::too_many_lines)]
+    // horse: AbstractHorse.setOffspringAttributes
+    // horse: Horse.getBreedOffspring, a mule with a donkey, else a foal with mixed coat and markings
     fn get_breed_offspring(&self, partner: &dyn EntityBase) -> Arc<dyn EntityBase> {
         let world = self.get_entity().world.load();
-        let mut rng = rand::rng();
-
-        // Horse + Donkey = Mule!
-        if partner.get_entity().entity_type == &EntityType::DONKEY {
-            let mule_base = from_type(
-                &EntityType::MULE,
-                self.get_entity().pos.load(),
-                &world,
-                Uuid::new_v4(),
-            );
-            if let Some(mule) = mule_base.cast_any().downcast_ref::<MuleEntity>() {
-                let partner_health = partner
-                    .get_mob()
-                    .map_or(20.0, |m| m.get_mob_entity().living_entity.get_max_health());
-                let partner_speed = partner.get_mob().map_or(0.175, |m| {
-                    m.get_mob_entity()
-                        .living_entity
-                        .get_attribute_value(&Attributes::MOVEMENT_SPEED)
-                });
-
-                let (health, jump, speed) = calculate_offspring_attributes(
-                    self.mob_entity.living_entity.get_max_health(),
-                    partner_health,
-                    0.7,
-                    0.5,
-                    self.mob_entity
-                        .living_entity
-                        .get_attribute_value(&Attributes::MOVEMENT_SPEED),
-                    partner_speed,
-                    &mut rng,
-                );
-                mule.mob_entity.living_entity.set_max_health(health);
-                mule.mob_entity.living_entity.health.store(health);
-                mule.mob_entity
-                    .living_entity
-                    .set_attribute_base(&Attributes::MOVEMENT_SPEED, speed);
-                mule.mob_entity
-                    .living_entity
-                    .set_attribute_base(&Attributes::JUMP_STRENGTH, jump);
-                mule.set_baby(true);
-            }
-            return mule_base;
-        }
-
-        let baby_base = from_type(
-            &EntityType::HORSE,
+        let mut rng = self.get_random();
+        let donkey_partner = partner.get_entity().entity_type == &EntityType::DONKEY;
+        let baby = from_type(
+            if donkey_partner {
+                &EntityType::MULE
+            } else {
+                &EntityType::HORSE
+            },
             self.get_entity().pos.load(),
             &world,
             Uuid::new_v4(),
         );
-
-        if let Some(baby) = baby_base.cast_any().downcast_ref::<Self>() {
-            // Inheritance: 4/9 parent 1, 4/9 parent 2, 1/9 random
-            let select_skin = rng.random_range(0..9);
-            let p1_color = self.get_variant() & 0xFF;
-            let p2_color = partner
+        if !donkey_partner && let Some(foal) = baby.cast_any().downcast_ref::<Self>() {
+            // coat: 4/9 either parent, 1/9 random; markings: 2/5 either parent, 1/5 random
+            let partner_variant = partner
                 .cast_any()
                 .downcast_ref::<Self>()
-                .map_or(0, |h| h.get_variant() & 0xFF);
+                .map_or_else(|| self.get_variant(), Self::get_variant);
+            let select_skin = rng.random_range(0..9);
             let color = if select_skin < 4 {
-                p1_color
+                self.get_variant() & 0xFF
             } else if select_skin < 8 {
-                p2_color
+                partner_variant & 0xFF
             } else {
                 rng.random_range(0..7)
             };
-
             let select_marking = rng.random_range(0..5);
-            let p1_style = (self.get_variant() >> 8) & 0xFF;
-            let p2_style = partner
-                .cast_any()
-                .downcast_ref::<Self>()
-                .map_or(0, |h| (h.get_variant() >> 8) & 0xFF);
             let style = if select_marking < 2 {
-                p1_style
+                (self.get_variant() >> 8) & 0xFF
             } else if select_marking < 4 {
-                p2_style
+                (partner_variant >> 8) & 0xFF
             } else {
                 rng.random_range(0..5)
             };
-
-            baby.set_variant(color | (style << 8));
-            let partner_health = partner
-                .get_mob()
-                .map_or(20.0, |m| m.get_mob_entity().living_entity.get_max_health());
-            let partner_speed = partner.get_mob().map_or(0.225, |m| {
-                m.get_mob_entity()
-                    .living_entity
-                    .get_attribute_value(&Attributes::MOVEMENT_SPEED)
-            });
-
-            let (health, jump, speed) = calculate_offspring_attributes(
-                self.mob_entity.living_entity.get_max_health(),
-                partner_health,
-                0.7,
-                0.7,
-                self.mob_entity
-                    .living_entity
-                    .get_attribute_value(&Attributes::MOVEMENT_SPEED),
-                partner_speed,
-                &mut rng,
-            );
-            baby.mob_entity.living_entity.set_max_health(health);
-            baby.mob_entity.living_entity.health.store(health);
-            baby.mob_entity
-                .living_entity
-                .set_attribute_base(&Attributes::MOVEMENT_SPEED, speed);
-            baby.mob_entity
-                .living_entity
-                .set_attribute_base(&Attributes::JUMP_STRENGTH, jump);
-            baby.set_baby(true);
+            foal.set_variant(color | (style << 8));
         }
-
-        baby_base
+        let own = &self.mob_entity.living_entity;
+        let other = partner
+            .get_mob()
+            .map(|mob| &mob.get_mob_entity().living_entity);
+        let parent_values = |attribute: &'static Attributes| {
+            (
+                own.get_attribute_base(attribute),
+                other.map_or_else(
+                    || own.get_attribute_base(attribute),
+                    |living| living.get_attribute_base(attribute),
+                ),
+            )
+        };
+        if let Some(mob) = baby.get_mob() {
+            let living = &mob.get_mob_entity().living_entity;
+            let (a, b) = parent_values(&Attributes::MAX_HEALTH);
+            let health = create_offspring_attribute(a, b, MIN_HEALTH, MAX_HEALTH, &mut rng);
+            living.set_max_health(health as f32);
+            living.health.store(health as f32);
+            let (a, b) = parent_values(&Attributes::JUMP_STRENGTH);
+            living.set_attribute_base(
+                &Attributes::JUMP_STRENGTH,
+                create_offspring_attribute(a, b, MIN_JUMP_STRENGTH, MAX_JUMP_STRENGTH, &mut rng),
+            );
+            let (a, b) = parent_values(&Attributes::MOVEMENT_SPEED);
+            living.set_attribute_base(
+                &Attributes::MOVEMENT_SPEED,
+                create_offspring_attribute(a, b, MIN_MOVEMENT_SPEED, MAX_MOVEMENT_SPEED, &mut rng),
+            );
+        }
+        baby
     }
 }
 
@@ -390,15 +385,19 @@ impl CustomSound for HorseEntity {
             Sound::EntityHorseHurt
         })
     }
+
+    // horse: AbstractHorse.getSoundVolume
+    fn sound_volume(&self) -> f32 {
+        HORSE_SOUND_VOLUME
+    }
 }
 
 impl Mob for HorseEntity {
-    fn is_tamed(&self) -> bool {
-        self.is_tame()
-    }
+    crate::horse_mob_hooks!();
+    crate::horse_mob_tick!();
 
     fn mob_play_step_sound(&self, pos: &BlockPos, state: &BlockState) {
-        play_horse_step_sound(self, pos, state, true);
+        self.horse_step_sound(pos, state);
     }
 
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
@@ -427,29 +426,16 @@ impl Mob for HorseEntity {
 
     fn tick_ridden(&self, controller: &Arc<dyn EntityBase>) {
         tick_ridden_horse(self, controller);
-    }
-
-    // horse: jump rearing animation and sound (AbstractHorse.handleStartJump)
-    fn on_player_start_jump(&self, _jump_scale: i32) {
-        if self.is_saddled() {
-            self.set_flag(FLAG_STANDING, true);
-            let entity = self.get_entity();
-            let world = entity.world.load();
-            world.play_sound(
-                Sound::EntityHorseJump,
-                SoundCategory::Neutral,
-                &entity.pos.load(),
-            );
+        if self.get_entity().on_ground.load(Ordering::Relaxed) {
+            self.core.jump_scale.store(0.0);
         }
-    }
-
-    fn on_player_stop_jump(&self) {
-        self.set_flag(FLAG_STANDING, false);
     }
 
     // horse: open mount screen with 0 chest columns (AbstractHorse.openCustomInventoryScreen)
     fn open_custom_inventory(&self, player: &Arc<Player>) {
-        if !self.is_baby() && self.is_tamed() {
+        let entity = self.get_entity();
+        if (!entity.has_passengers() || entity.has_passenger(player.entity_id())) && self.is_tamed()
+        {
             let handler = Arc::new(std::sync::Mutex::new(MountScreenHandler::new(
                 0,
                 &player.inventory,
@@ -458,76 +444,56 @@ impl Mob for HorseEntity {
                 self.armor_inventory.clone(),
                 0,
             )));
-            player.open_mount_screen(handler, 0, self.get_entity().entity_id);
+            player.open_mount_screen(handler, 0, entity.entity_id);
         }
     }
 
-    fn get_temper(&self) -> i32 {
-        self.temper.load(Ordering::Relaxed)
-    }
-
-    fn max_temper(&self) -> i32 {
-        100
-    }
-
-    fn modify_temper(&self, delta: i32) {
-        let cur = self.temper.load(Ordering::Relaxed);
-        self.temper
-            .store((cur + delta).clamp(0, 100), Ordering::Relaxed);
-    }
-
-    fn tame_with_name(&self, player: &Player) -> bool {
-        tame_horse(self, player, &self.flags, &self.owner)
-    }
-
-    fn make_mad(&self) {
-        let sound = if self.is_baby() {
-            Sound::EntityBabyHorseAngry
-        } else {
-            Sound::EntityHorseAngry
-        };
-        throw_rider_off(self, &self.flags, sound);
-    }
-
+    // horse: AbstractHorse.finalizeSpawn, Horse.randomizeAttributes and the coat
     fn finalize_spawn(
         &self,
         _world: &Arc<World>,
         group_data: Option<SpawnGroupData>,
     ) -> Option<SpawnGroupData> {
-        let mut rng = rand::rng();
-        let color = rng.random_range(0..7);
-        let style = rng.random_range(0..5);
+        let color = self.get_random().random_range(0..7);
+        let style = self.get_random().random_range(0..5);
         self.set_variant(color | (style << 8));
+        self.randomize_attributes();
         self.finalize_spawn_super(group_data)
+    }
+
+    // horse: Horse.canMate
+    fn can_mate(&self, partner: &dyn EntityBase) -> bool {
+        if partner.get_entity().entity_id == self.get_entity().entity_id {
+            return false;
+        }
+        let partner_type = partner.get_entity().entity_type;
+        if partner_type != &EntityType::DONKEY && partner_type != &EntityType::HORSE {
+            return false;
+        }
+        self.can_parent()
+            && partner.get_mob().is_some_and(|mob| {
+                let entity = partner.get_entity();
+                let living = &mob.get_mob_entity().living_entity;
+                mob.is_tamed()
+                    && mob.get_mob_entity().is_in_love()
+                    && !mob.is_baby_mob()
+                    && !entity.has_passengers()
+                    && !entity.has_vehicle()
+                    && living.health.load() >= living.get_max_health()
+            })
     }
 
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
         self.write_ageable_nbt(nbt);
+        self.write_horse_nbt(nbt);
         nbt.put_int("Variant", self.get_variant());
-        nbt.put_bool("Tame", self.is_tame());
-        nbt.put_int("Temper", self.temper.load(Ordering::Relaxed));
-        nbt.put_bool("Bred", self.has_flag(FLAG_BRED));
-        if let Some(owner) = self.owner.load() {
-            nbt.put_uuid("Owner", owner);
-        }
     }
 
     fn mob_read_nbt(&self, nbt: &NbtCompound) {
         self.read_ageable_nbt(nbt);
+        self.read_horse_nbt(nbt);
         if let Some(variant) = nbt.get_int("Variant") {
             self.set_variant(variant);
-        }
-        if let Some(tame) = nbt.get_bool("Tame") {
-            self.set_tame(tame);
-        }
-        if let Some(temper) = nbt.get_int("Temper") {
-            self.temper.store(temper, Ordering::Relaxed);
-        }
-        if let Some(bred) = nbt.get_bool("Bred") {
-            self.set_flag(FLAG_BRED, bred);
-        }
-        if let Some(owner) = nbt.get_uuid("Owner") {
-            self.owner.store(Some(owner));
         }
     }
 
@@ -551,68 +517,82 @@ impl Mob for HorseEntity {
         );
     }
 
+    // horse: Horse.mobInteract and AbstractHorse.mobInteract with the body armor
     fn mob_interact(&self, player: &Arc<Player>, item_stack: &mut ItemStack) -> bool {
-        let item = item_stack.get_item();
-
-        // Shift-right-click to open inventory
-        if !self.is_baby() && self.is_tame() && player.living_entity.entity.is_sneaking() {
-            self.open_custom_inventory(player);
-            return true;
-        }
-
-        // Feeding
-        if self.is_food(item_stack) {
-            let eating_sound = if self.is_baby() {
-                Sound::EntityBabyHorseEat
-            } else {
-                Sound::EntityHorseEat
-            };
-            if feed_horse(
-                self,
-                player,
-                item_stack,
-                &self.flags,
-                &self.temper,
-                eating_sound,
-                true,
-            ) {
+        let sneaking = player.living_entity.entity.is_sneaking();
+        let should_open_inventory = !self.is_baby() && self.is_horse_tame() && sneaking;
+        let holds_golden_dandelion = player.inventory().held_item().get_item()
+            == &Item::GOLDEN_DANDELION
+            || player.inventory().off_hand_item().get_item() == &Item::GOLDEN_DANDELION;
+        if !self.get_entity().has_passengers()
+            && !should_open_inventory
+            && (!self.is_baby() || !holds_golden_dandelion)
+            && !item_stack.is_empty()
+        {
+            if self.is_food(item_stack) {
+                return self.horse_fed_food(player, item_stack);
+            }
+            if !self.is_horse_tame() {
+                self.horse_make_mad();
                 return true;
             }
         }
-
-        // Saddling
-        if self.is_tame() && item == &Item::SADDLE && !self.is_saddled() && !self.is_baby() {
-            self.set_saddled(true);
-            item_stack.decrement_unless_creative(player.gamemode.load(), 1);
-            let entity = self.get_entity();
-            let world = entity.world.load();
-            world.play_sound(
-                Sound::EntityHorseSaddle,
-                SoundCategory::Neutral,
-                &entity.pos.load(),
-            );
-            return true;
-        }
-
-        // Horse armor
-        if self.is_tame() && is_horse_armor(item) && !self.is_wearing_armor() && !self.is_baby() {
-            self.equip_armor(item_stack);
-            item_stack.decrement_unless_creative(player.gamemode.load(), 1);
-            return true;
-        }
-
-        // Riding
-        if !self.is_baby() {
-            let world = player.world();
-            let ent = &self.mob_entity.living_entity.entity;
-            if let Some(vehicle) = world.get_entity_by_id(ent.entity_id)
-                && let Some(passenger) = world.get_player_by_id(player.entity_id())
-            {
-                ent.add_passenger(vehicle, passenger as Arc<dyn EntityBase>);
+        self.abstract_horse_interact(player, item_stack, |horse, player, stack| {
+            // AbstractHorse.equipBodyArmor
+            if is_horse_armor(stack.get_item()) && !horse.is_wearing_armor() {
+                horse.equip_armor(stack);
+                stack.decrement_unless_creative(player.gamemode.load(), 1);
                 return true;
             }
-        }
+            false
+        })
+    }
+}
 
-        false
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::entity::ai::test_support::world;
+    use crate::entity::passive::abstract_horse::STAND_TICKS;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    fn horse_in(world: &Arc<World>) -> Arc<HorseEntity> {
+        HorseEntity::new(Entity::new(
+            world.clone(),
+            pumpkin_util::math::vector3::Vector3::new(0.5, 64.0, 0.5),
+            &EntityType::HORSE,
+        ))
+    }
+
+    #[tokio::test]
+    async fn a_horse_randomizes_its_attributes_only_when_it_spawns() -> TestResult {
+        let folder = tempfile::tempdir()?;
+        let world = world(&folder);
+        let horse = horse_in(&world);
+        let living = &horse.mob_entity.living_entity;
+        assert!((living.get_max_health() - 53.0).abs() < f32::EPSILON);
+        horse.randomize_attributes();
+        assert!((15.0..=30.0).contains(&living.get_max_health()));
+        let speed = living.get_attribute_value(&Attributes::MOVEMENT_SPEED);
+        assert!((MIN_MOVEMENT_SPEED..=MAX_MOVEMENT_SPEED).contains(&speed));
+        world.level.shutdown().await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn an_angry_horse_rears_and_settles_after_twenty_ticks() -> TestResult {
+        let folder = tempfile::tempdir()?;
+        let world = world(&folder);
+        let horse = horse_in(&world);
+        horse.make_mad();
+        assert!(horse.is_horse_standing());
+        for _ in 0..STAND_TICKS {
+            horse.mob_tick(horse.as_ref());
+        }
+        assert!(!horse.is_horse_standing());
+        world.level.shutdown().await;
+        Ok(())
     }
 }

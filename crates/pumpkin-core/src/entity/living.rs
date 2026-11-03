@@ -2350,6 +2350,19 @@ impl LivingEntity {
             return;
         }
 
+        // Entity.propagateFallToPassengers, riders take the same fall
+        let passengers = self
+            .entity
+            .passengers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        for passenger in passengers {
+            if let Some(living) = passenger.get_living_entity() {
+                living.handle_fall_damage(passenger.as_ref(), fall_distance, damage_per_distance);
+            }
+        }
+
         // Vanilla parity: the fall_damage gamerule only affects players.
         if caller.get_player().is_some()
             && !self

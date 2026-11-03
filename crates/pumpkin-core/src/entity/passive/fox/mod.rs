@@ -781,6 +781,11 @@ impl Mob for FoxEntity {
         self.set_variant(FoxVariant::from_name(name));
     }
 
+    // fox: canDispenserEquipIntoSlot, only the mouth of a fox that picks things up
+    fn can_dispenser_equip_into_slot(&self, slot: &EquipmentSlot) -> bool {
+        slot == &EquipmentSlot::MAIN_HAND && self.mob_entity.can_pick_up_loot()
+    }
+
     fn on_bred_by(&self, player: Uuid) {
         self.add_trusted(player);
     }

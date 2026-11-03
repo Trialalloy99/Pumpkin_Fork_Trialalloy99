@@ -1247,6 +1247,8 @@ pub struct Entity {
     pub entity_dimension: AtomicCell<EntityDimensions>,
     /// Vanilla `getLeashOffset` as (factor of eye height, factor of width) for the single rope.
     pub leash_offset_factors: AtomicCell<Option<(f64, f64)>>,
+    /// Vanilla `createQuadLeashOffsets(front, frontBack, leftRight, height)` of a quad capable mount.
+    pub quad_leash_params: AtomicCell<Option<[f64; 4]>>,
     default_dimensions: AtomicCell<Option<EntityDimensions>>,
     /// Whether this entity is invulnerable to all damage
     pub invulnerable: AtomicBool,
@@ -1530,6 +1532,7 @@ impl Entity {
             bounding_box,
             entity_dimension: AtomicCell::new(bounding_box_size),
             leash_offset_factors: AtomicCell::new(None),
+            quad_leash_params: AtomicCell::new(None),
             default_dimensions: AtomicCell::new(None),
             invulnerable: AtomicBool::new(false),
             damage_immunities: std::sync::Mutex::new(Vec::new()),
@@ -4715,6 +4718,7 @@ impl Entity {
     }
 
     // leash: damped spring between the attachment points (Leashable.checkElasticInteractions)
+    #[allow(clippy::too_many_lines)]
     fn check_elastic_leash(&self, holder: &Arc<dyn EntityBase>) -> bool {
         const AXIS_SPECIFIC_ELASTICITY: Vector3<f64> = Vector3::new(0.8, 0.2, 0.8);
         const TORSIONAL_ELASTICITY: f64 = 10.0;
@@ -4746,8 +4750,20 @@ impl Entity {
         );
         let quad = holder_entity.entity_type == &EntityType::HAPPY_GHAST
             && Self::supports_quad_leash(self.entity_type);
+        // leash: Leashable.createQuadLeashOffsets, normalised by width and height
+        let custom_quad: Option<[Vector3<f64>; 4]> =
+            self.quad_leash_params
+                .load()
+                .map(|[front, front_back, left_right, height]| {
+                    [
+                        Vector3::new(-left_right, height, front_back + front),
+                        Vector3::new(-left_right, height, -front_back + front),
+                        Vector3::new(left_right, height, -front_back + front),
+                        Vector3::new(left_right, height, front_back + front),
+                    ]
+                });
         let (entity_points, holder_points): (&[Vector3<f64>], &[Vector3<f64>]) = if quad {
-            (&QUAD, &QUAD)
+            (custom_quad.as_ref().map_or(&QUAD, |points| points), &QUAD)
         } else {
             (&SINGLE_ENTITY, &SINGLE_HOLDER)
         };
@@ -4822,6 +4838,13 @@ impl Entity {
     // leash: boats, rafts and happy ghasts take four ropes (supportQuadLeash)
     fn supports_quad_leash(entity_type: &EntityType) -> bool {
         entity_type == &EntityType::HAPPY_GHAST
+            || entity_type == &EntityType::HORSE
+            || entity_type == &EntityType::DONKEY
+            || entity_type == &EntityType::MULE
+            || entity_type == &EntityType::SKELETON_HORSE
+            || entity_type == &EntityType::ZOMBIE_HORSE
+            || entity_type == &EntityType::CAMEL
+            || entity_type == &EntityType::CAMEL_HUSK
             || entity_type == &EntityType::SNIFFER
             || entity_type.resource_name.ends_with("_boat")
             || entity_type.resource_name.ends_with("_raft")

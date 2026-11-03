@@ -1439,6 +1439,8 @@ pub trait Mob: EntityBase + Send + Sync {
     fn horse_is_bred(&self) -> bool {
         false
     }
+    // mob: RandomStandGoal.start, rears and whinnies
+    fn horse_stand_and_whinny(&self) {}
 
     fn mob_controlling_passenger(&self) -> Option<Arc<dyn EntityBase>> {
         if self.get_mob_entity().is_no_ai() {

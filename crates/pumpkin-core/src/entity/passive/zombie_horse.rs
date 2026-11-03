@@ -10,7 +10,7 @@ use pumpkin_data::data_component_impl::EquipmentSlot;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
-use pumpkin_data::sound::{Sound, SoundCategory};
+use pumpkin_data::sound::Sound;
 use pumpkin_data::tag::{self, Taggable};
 use pumpkin_inventory::mount_screen_handler::MountScreenHandler;
 use pumpkin_inventory::{Inventory, inventory::SimpleInventory};
@@ -19,6 +19,7 @@ use pumpkin_util::math::position::BlockPos;
 use rand::RngExt;
 use uuid::Uuid;
 
+use crate::entity::passive::abstract_horse::{HORSE_SOUND_VOLUME, HorseCore, HorseLike};
 use crate::entity::{
     Entity, EntityBase,
     ageable::{AgeableData, AgeableMob},
@@ -33,10 +34,7 @@ use crate::entity::{
         spawn::{SpawnGroupData, SpawnReason},
     },
     passive::{
-        abstract_horse::{
-            FLAG_SADDLE, FLAG_STANDING, FLAG_TAME, controlling_passenger_horse, feed_horse,
-            play_horse_step_sound, tame_horse, throw_rider_off, tick_ridden_horse,
-        },
+        abstract_horse::{FLAG_SADDLE, FLAG_TAME, controlling_passenger_horse, tick_ridden_horse},
         animal::Animal,
     },
     player::Player,
@@ -64,25 +62,18 @@ pub struct ZombieHorseEntity {
     pub owner: AtomicCell<Option<Uuid>>,
     pub saddle_inventory: Arc<SimpleInventory>,
     pub armor_inventory: Arc<SimpleInventory>,
+    core: HorseCore,
 }
 
 impl ZombieHorseEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
         let mob_entity = MobEntity::new(entity);
-        let mut rng = rand::rng();
-
-        // zombie_horse: vanilla attributes: 25.0 max health, jump strength, speed (ZombieHorse.createAttributes)
-        mob_entity.living_entity.set_max_health(25.0);
-        mob_entity.living_entity.health.store(25.0);
-        let speed = generate_zombie_horse_speed(&mut rng);
+        // zombie_horse: ZombieHorse.getQuadLeashOffsets
         mob_entity
             .living_entity
-            .set_attribute_base(&Attributes::MOVEMENT_SPEED, speed);
-        let jump = generate_zombie_horse_jump_strength(&mut rng);
-        mob_entity
-            .living_entity
-            .set_attribute_base(&Attributes::JUMP_STRENGTH, jump);
-
+            .entity
+            .quad_leash_params
+            .store(Some([0.04, 0.41, 0.18, 0.73]));
         let horse = Self {
             mob_entity,
             ageable_data: AgeableData::default(),
@@ -91,6 +82,7 @@ impl ZombieHorseEntity {
             owner: AtomicCell::new(None),
             saddle_inventory: Arc::new(SimpleInventory::new(1)),
             armor_inventory: Arc::new(SimpleInventory::new(1)),
+            core: HorseCore::default(),
         };
         let mob_arc = Arc::new(horse);
         let mob_weak: Weak<dyn Mob> = {
@@ -116,27 +108,34 @@ impl ZombieHorseEntity {
 
     #[must_use]
     pub fn has_flag(&self, flag: u8) -> bool {
-        (self.flags.load(Ordering::Relaxed) & flag) != 0
+        self.flag(flag)
     }
 
     pub fn set_flag(&self, flag: u8, val: bool) {
-        let current = self.flags.load(Ordering::Relaxed);
-        let new_flags = if val { current | flag } else { current & !flag };
-        self.flags.store(new_flags, Ordering::Relaxed);
-        let entity = self.get_entity();
-        entity.set_synced_data(
-            pumpkin_data::tracked_data::zombie_horse::DATA_ID_FLAGS,
-            new_flags as i8,
-        );
+        self.put_flag(flag, val);
     }
 
     #[must_use]
     pub fn is_tame(&self) -> bool {
-        self.has_flag(FLAG_TAME)
+        self.is_horse_tame()
     }
 
     pub fn set_tame(&self, val: bool) {
-        self.set_flag(FLAG_TAME, val);
+        self.put_flag(FLAG_TAME, val);
+    }
+
+    // zombie_horse: ZombieHorse.randomizeAttributes
+    fn randomize_attributes(&self) {
+        let mut rng = self.get_random();
+        let living = &self.mob_entity.living_entity;
+        living.set_attribute_base(
+            &Attributes::JUMP_STRENGTH,
+            generate_zombie_horse_jump_strength(&mut rng),
+        );
+        living.set_attribute_base(
+            &Attributes::MOVEMENT_SPEED,
+            generate_zombie_horse_speed(&mut rng),
+        );
     }
 
     #[must_use]
@@ -153,24 +152,55 @@ impl ZombieHorseEntity {
             self.saddle_inventory.set_stack(0, ItemStack::EMPTY.clone());
         }
     }
+}
 
-    #[must_use]
-    pub fn is_standing(&self) -> bool {
-        self.has_flag(FLAG_STANDING)
+impl HorseLike for ZombieHorseEntity {
+    fn core(&self) -> &HorseCore {
+        &self.core
     }
 
-    pub fn set_standing(&self, val: bool) {
-        self.set_flag(FLAG_STANDING, val);
+    fn horse_flags(&self) -> &AtomicU8 {
+        &self.flags
     }
 
-    pub fn play_jump_sound(&self) {
-        let entity = self.get_entity();
-        let world = entity.world.load();
-        world.play_sound(
-            Sound::EntityHorseJump,
-            SoundCategory::Neutral,
-            &entity.pos.load(),
+    fn horse_temper(&self) -> &AtomicI32 {
+        &self.temper
+    }
+
+    fn horse_owner(&self) -> &AtomicCell<Option<Uuid>> {
+        &self.owner
+    }
+
+    fn store_flags(&self, flags: u8) {
+        self.flags.store(flags, Ordering::Relaxed);
+        self.get_entity().set_synced_data(
+            pumpkin_data::tracked_data::zombie_horse::DATA_ID_FLAGS,
+            flags as i8,
         );
+    }
+
+    fn horse_saddled(&self) -> bool {
+        self.is_saddled()
+    }
+
+    fn set_horse_saddle(&self, saddled: bool) {
+        self.set_saddled(saddled);
+    }
+
+    fn horse_eat_sound(&self) -> Sound {
+        Sound::EntityZombieHorseEat
+    }
+
+    fn angry_sound(&self) -> Sound {
+        Sound::EntityZombieHorseAngry
+    }
+
+    fn jump_sound(&self) -> Sound {
+        Sound::EntityHorseJump
+    }
+
+    fn can_gallop(&self) -> bool {
+        false
     }
 }
 
@@ -194,6 +224,10 @@ impl Animal for ZombieHorseEntity {
 }
 
 impl CustomSound for ZombieHorseEntity {
+    fn sound_volume(&self) -> f32 {
+        HORSE_SOUND_VOLUME
+    }
+
     fn death_sound(&self) -> Option<Sound> {
         Some(Sound::EntityZombieHorseDeath)
     }
@@ -204,6 +238,9 @@ impl CustomSound for ZombieHorseEntity {
 }
 
 impl Mob for ZombieHorseEntity {
+    crate::horse_mob_hooks!();
+    crate::horse_mob_tick!();
+
     // zombie horse: spear charge mount factor (ZombieHorse.chargeSpeedModifier)
     fn charge_speed_modifier(&self) -> f32 {
         1.4
@@ -211,10 +248,6 @@ impl Mob for ZombieHorseEntity {
 
     fn remove_when_far_away(&self, _distance_sq: f64) -> bool {
         true
-    }
-
-    fn is_tamed(&self) -> bool {
-        self.is_tame()
     }
 
     fn as_custom_sound(&self) -> Option<&dyn CustomSound> {
@@ -226,7 +259,7 @@ impl Mob for ZombieHorseEntity {
     }
 
     fn mob_play_step_sound(&self, pos: &BlockPos, state: &BlockState) {
-        play_horse_step_sound(self, pos, state, false);
+        self.horse_step_sound(pos, state);
     }
 
     fn as_ageable(&self) -> Option<&dyn AgeableMob> {
@@ -249,27 +282,6 @@ impl Mob for ZombieHorseEntity {
         tick_ridden_horse(self, controller);
     }
 
-    fn on_player_start_jump(&self, jump_power: i32) {
-        let entity = self.get_entity();
-        let power_pct = (jump_power as f32 / 100.0).clamp(0.0, 1.0);
-        let max_jump = self
-            .mob_entity
-            .living_entity
-            .get_attribute_value(&Attributes::JUMP_STRENGTH) as f32;
-        let actual_jump_y = (max_jump * power_pct).max(0.4);
-
-        let mut vel = entity.velocity.load();
-        vel.y = actual_jump_y as f64;
-        entity.velocity.store(vel);
-
-        self.play_jump_sound();
-        self.set_standing(true);
-    }
-
-    fn on_player_stop_jump(&self) {
-        self.set_standing(false);
-    }
-
     fn open_custom_inventory(&self, player: &Arc<Player>) {
         if !self.is_baby() && self.is_tamed() {
             let handler = Arc::new(std::sync::Mutex::new(MountScreenHandler::new(
@@ -284,33 +296,12 @@ impl Mob for ZombieHorseEntity {
         }
     }
 
-    fn get_temper(&self) -> i32 {
-        self.temper.load(Ordering::Relaxed)
-    }
-
-    fn max_temper(&self) -> i32 {
-        100
-    }
-
-    fn modify_temper(&self, delta: i32) {
-        let cur = self.temper.load(Ordering::Relaxed);
-        self.temper
-            .store((cur + delta).clamp(0, 100), Ordering::Relaxed);
-    }
-
-    fn tame_with_name(&self, player: &Player) -> bool {
-        tame_horse(self, player, &self.flags, &self.owner)
-    }
-
-    fn make_mad(&self) {
-        throw_rider_off(self, &self.flags, Sound::EntityZombieHorseAngry);
-    }
-
     fn finalize_spawn(
         &self,
         world: &Arc<World>,
         group_data: Option<SpawnGroupData>,
     ) -> Option<SpawnGroupData> {
+        self.randomize_attributes();
         let result = self.finalize_spawn_super(group_data);
         // zombie_horse: natural jockey spawn holding iron spear (ZombieHorse.finalizeSpawn)
         let reason = self.get_mob_entity().spawn_reason.load(Ordering::Relaxed);
@@ -339,24 +330,12 @@ impl Mob for ZombieHorseEntity {
 
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
         self.write_ageable_nbt(nbt);
-        nbt.put_bool("Tame", self.is_tame());
-        nbt.put_int("Temper", self.temper.load(Ordering::Relaxed));
-        if let Some(owner) = self.owner.load() {
-            nbt.put_uuid("Owner", owner);
-        }
+        self.write_horse_nbt(nbt);
     }
 
     fn mob_read_nbt(&self, nbt: &NbtCompound) {
         self.read_ageable_nbt(nbt);
-        if let Some(tame) = nbt.get_bool("Tame") {
-            self.set_tame(tame);
-        }
-        if let Some(temper) = nbt.get_int("Temper") {
-            self.temper.store(temper, Ordering::Relaxed);
-        }
-        if let Some(owner) = nbt.get_uuid("Owner") {
-            self.owner.store(Some(owner));
-        }
+        self.read_horse_nbt(nbt);
     }
 
     fn get_mob_entity(&self) -> &MobEntity {
@@ -375,76 +354,40 @@ impl Mob for ZombieHorseEntity {
         );
     }
 
+    // zombie_horse: ZombieHorse.mobInteract and AbstractHorse.mobInteract with the body armor
     fn mob_interact(&self, player: &Arc<Player>, item_stack: &mut ItemStack) -> bool {
-        // Shift-right-click to open mount screen
-        if !self.is_baby() && self.is_tame() && player.living_entity.entity.is_sneaking() {
-            self.open_custom_inventory(player);
-            return true;
-        }
-
-        let item = item_stack.get_item();
-
-        // Feeding
-        if self.is_food(item_stack)
-            && feed_horse(
-                self,
-                player,
-                item_stack,
-                &self.flags,
-                &self.temper,
-                Sound::EntityZombieHorseEat,
-                false,
-            )
+        let sneaking = player.living_entity.entity.is_sneaking();
+        let should_open_inventory = !self.is_baby() && self.is_horse_tame() && sneaking;
+        let holds_golden_dandelion = player.inventory().held_item().get_item()
+            == &Item::GOLDEN_DANDELION
+            || player.inventory().off_hand_item().get_item() == &Item::GOLDEN_DANDELION;
+        if !self.get_entity().has_passengers()
+            && !should_open_inventory
+            && (!self.is_baby() || !holds_golden_dandelion)
+            && !item_stack.is_empty()
         {
-            return true;
-        }
-
-        // Holding an item on untamed zombie horse makes it mad
-        if !item_stack.is_empty() && !self.is_tame() {
-            self.make_mad();
-            return true;
-        }
-
-        // Saddling
-        if self.is_tame() && item == &Item::SADDLE && !self.is_saddled() && !self.is_baby() {
-            self.set_saddled(true);
-            item_stack.decrement_unless_creative(player.gamemode.load(), 1);
-            let entity = self.get_entity();
-            let world = entity.world.load();
-            world.play_sound(
-                Sound::EntityHorseSaddle,
-                SoundCategory::Neutral,
-                &entity.pos.load(),
-            );
-            return true;
-        }
-
-        // Horse armor equipping
-        if self.is_tame() && !self.is_baby() && super::horse::is_horse_armor(item) {
-            self.armor_inventory.set_stack(0, ItemStack::new(1, item));
-            item_stack.decrement_unless_creative(player.gamemode.load(), 1);
-            let entity = self.get_entity();
-            let world = entity.world.load();
-            world.play_sound(
-                Sound::EntityHorseArmor,
-                SoundCategory::Neutral,
-                &entity.pos.load(),
-            );
-            return true;
-        }
-
-        // Riding
-        if !self.is_baby() {
-            let world = player.world();
-            let ent = &self.mob_entity.living_entity.entity;
-            if let Some(vehicle) = world.get_entity_by_id(ent.entity_id)
-                && let Some(passenger) = world.get_player_by_id(player.entity_id())
-            {
-                ent.add_passenger(vehicle, passenger as Arc<dyn EntityBase>);
+            if self.is_food(item_stack) {
+                return self.horse_fed_food(player, item_stack);
+            }
+            if !self.is_horse_tame() {
+                self.horse_make_mad();
                 return true;
             }
         }
-
-        false
+        self.abstract_horse_interact(player, item_stack, |horse, player, stack| {
+            if super::horse::is_horse_armor(stack.get_item())
+                && horse.armor_inventory.get_stack(0).is_empty()
+            {
+                let armor = ItemStack::new(1, stack.get_item());
+                horse
+                    .mob_entity
+                    .set_item_slot_and_drop_when_killed(&EquipmentSlot::BODY, armor.clone());
+                horse.armor_inventory.set_stack(0, armor);
+                stack.decrement_unless_creative(player.gamemode.load(), 1);
+                horse.play_entity_sound(Sound::EntityHorseArmor, 1.0, 1.0);
+                return true;
+            }
+            false
+        })
     }
 }
