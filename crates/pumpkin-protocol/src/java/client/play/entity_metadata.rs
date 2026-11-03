@@ -339,6 +339,19 @@ impl MetadataSerializer for f32 {
     }
 }
 
+// metadata: EntityDataSerializers.ROTATIONS, three floats
+impl MetadataSerializer for pumpkin_util::math::euler_angle::EulerAngle {
+    fn write_metadata(
+        &self,
+        writer: &mut impl std::io::Write,
+        _version: &JavaMinecraftVersion,
+    ) -> Result<(), WritingError> {
+        writer.write_f32(self.pitch)?;
+        writer.write_f32(self.yaw)?;
+        writer.write_f32(self.roll)
+    }
+}
+
 impl MetadataSerializer for VarInt {
     fn write_metadata(
         &self,

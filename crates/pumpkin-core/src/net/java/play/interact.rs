@@ -108,8 +108,17 @@ impl JavaClient {
                             };
                             let mut stack = player.inventory().get_stack_in_hand(hand);
                             let mut before = stack.clone();
-                            let native_interaction =
-                                event.target.interact_with_hand(player, &mut stack, hand);
+                            let native_interaction = event
+                                .target
+                                .interact_at(
+                                    player,
+                                    &mut stack,
+                                    hand,
+                                    interact.target_position.unwrap_or_default(),
+                                )
+                                .or_else(|| {
+                                    event.target.interact_with_hand(player, &mut stack, hand)
+                                });
                             let interacted = if let Some(handled) = native_interaction {
                                 handled
                             } else {

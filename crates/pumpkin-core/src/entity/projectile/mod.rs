@@ -1,7 +1,9 @@
 use super::{Entity, EntityBase, living::LivingEntity};
 use crate::world::World;
+use crate::world::game_event::GameEventContext;
 use pumpkin_data::BlockDirection;
 use pumpkin_data::entity::EntityType;
+use pumpkin_data::game_event::GameEvent;
 use pumpkin_protocol::java::client::play::CEntityVelocity;
 use pumpkin_util::math::boundingbox::BoundingBox;
 use pumpkin_util::math::{position::BlockPos, vector3::Vector3};
@@ -179,6 +181,16 @@ impl ThrownItemEntity {
             .multiply(power, power, power);
 
         self.entity.velocity.store(velocity);
+        // projectile: PROJECTILE_SHOOT with the owner as source (Projectile.tick, first tick)
+        let world = self.entity.world.load();
+        let owner = self.owner.get(&world);
+        world.emit_game_event_with_context(
+            GameEvent::ProjectileShoot.name(),
+            self.entity.pos.load(),
+            &GameEventContext {
+                source_entity: owner.as_deref(),
+            },
+        );
         let len = velocity.horizontal_length();
         self.entity.set_rotation(
             velocity.x.atan2(velocity.z) as f32 * 57.295_776,
@@ -250,8 +262,20 @@ impl ThrownItemEntity {
                 entity.set_pos(*hit_pos);
             }
 
+            // projectile: Projectile.onHit game event PROJECTILE_LAND, block center or hit point
+            let land_pos = match &h {
+                ProjectileHit::Block { pos, .. } => pos.to_centered_f64(),
+                ProjectileHit::Entity { .. } => h.hit_pos(),
+            };
             // Just trigger hit effects and remove
             caller.on_hit(h);
+            world.emit_game_event_with_context(
+                GameEvent::ProjectileLand.name(),
+                land_pos,
+                &GameEventContext {
+                    source_entity: Some(caller),
+                },
+            );
             entity.remove();
         }
     }
@@ -354,7 +378,7 @@ impl ThrownItemEntity {
     ) -> bool {
         let other_ent = other.get_entity();
         // projectile: spectators are not pickable (Projectile.canHitEntity)
-        if other.is_spectator() {
+        if other.is_spectator() || !other.is_pickable() {
             return true;
         }
         // dragon: only its parts can be hit, never the body box, and never by its own projectiles

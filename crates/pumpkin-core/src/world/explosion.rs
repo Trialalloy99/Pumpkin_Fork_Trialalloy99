@@ -201,6 +201,21 @@ pub struct Explosion {
 }
 
 impl Explosion {
+    // explosion: ServerExplosion.shouldAffectBlocklikeEntities
+    #[must_use]
+    pub fn should_affect_blocklike_entities(&self, mob_griefing: bool) -> bool {
+        let is_not_wind_charge = self.source.as_ref().is_none_or(|source| {
+            let entity_type = source.get_entity().entity_type;
+            entity_type != &pumpkin_data::entity::EntityType::WIND_CHARGE
+                && entity_type != &pumpkin_data::entity::EntityType::BREEZE_WIND_CHARGE
+        });
+        let interaction_affects = matches!(
+            self.block_interaction,
+            BlockInteraction::Destroy | BlockInteraction::DestroyWithDecay
+        );
+        (mob_griefing || interaction_affects) && is_not_wind_charge
+    }
+
     #[must_use]
     pub const fn new(power: f32, pos: Vector3<f64>, block_interaction: BlockInteraction) -> Self {
         Self {
@@ -423,6 +438,7 @@ impl Explosion {
             .map(|source| source.get_entity().entity_id);
         for entity_base in entities {
             if entity_base.is_immune_to_explosion()
+                || entity_base.ignore_explosion(self)
                 || Some(entity_base.get_entity().entity_id) == source_id
             {
                 continue;

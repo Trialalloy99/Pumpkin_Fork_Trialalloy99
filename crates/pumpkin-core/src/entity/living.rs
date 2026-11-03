@@ -1800,6 +1800,9 @@ impl LivingEntity {
     }
 
     fn push_entities(&self, dyn_self: &dyn EntityBase) {
+        if dyn_self.custom_push_entities(dyn_self) {
+            return;
+        }
         let world = self.entity.world.load();
         let entity_bb = self.entity.bounding_box.load();
         let own_team = dyn_self.get_team();

@@ -396,6 +396,11 @@ pub trait EntityBase: Send + Sync + std::any::Any {
         false
     }
 
+    // entity: Entity.ignoreExplosion
+    fn ignore_explosion(&self, _explosion: &crate::world::explosion::Explosion) -> bool {
+        false
+    }
+
     fn get_gravity(&self) -> f64 {
         0.0
     }
@@ -550,6 +555,16 @@ pub trait EntityBase: Send + Sync + std::any::Any {
     }
 
     fn can_hit(&self) -> bool {
+        false
+    }
+
+    // entity: Entity.isPickable, projectiles and rays pass through what is not pickable
+    fn is_pickable(&self) -> bool {
+        true
+    }
+
+    // entity: overrides LivingEntity.pushEntities, returns true when it handled the pushing
+    fn custom_push_entities(&self, _caller: &dyn EntityBase) -> bool {
         false
     }
 
@@ -846,6 +861,17 @@ pub trait EntityBase: Send + Sync + std::any::Any {
         _player: &Arc<Player>,
         _item_stack: &mut ItemStack,
         _hand: pumpkin_util::Hand,
+    ) -> Option<bool> {
+        None
+    }
+
+    // entity: Entity.interact(player, hand, location), location is relative to the entity
+    fn interact_at(
+        &self,
+        _player: &Arc<Player>,
+        _item_stack: &mut ItemStack,
+        _hand: pumpkin_util::Hand,
+        _location: Vector3<f64>,
     ) -> Option<bool> {
         None
     }

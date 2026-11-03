@@ -628,7 +628,7 @@ impl DispenserBlock {
             return false;
         }
 
-        let _ = item.split(1);
+        let used = item.split(1);
         let facing = to_normal(ctx.facing);
         let entity = Entity::new(ctx.world.clone(), spawn_pos, &EntityType::ARMOR_STAND);
         entity.set_rotation(facing.x.atan2(facing.z) as f32 * 57.295_776, 0.0);
@@ -638,8 +638,10 @@ impl DispenserBlock {
             SoundCategory::Blocks,
             &spawn_pos,
         );
-        ctx.world
-            .spawn_entity(Arc::new(ArmorStandEntity::new(entity)));
+        let armor_stand = Arc::new(ArmorStandEntity::new(entity));
+        // dispenser: armor stand item components and entity_data
+        crate::item::items::spawn_egg::apply_entity_variant(&used, armor_stand.as_ref(), None);
+        ctx.world.spawn_entity(armor_stand);
 
         ctx.world
             .sync_world_event(WorldEvent::SoundDispenserDispense, *ctx.position, 0);
@@ -1303,6 +1305,10 @@ impl DispenserBlock {
                 || entity
                     .get_mob()
                     .is_some_and(|mob| !mob.can_dispenser_equip_into_slot(slot))
+                || entity
+                    .cast_any()
+                    .downcast_ref::<ArmorStandEntity>()
+                    .is_some_and(|stand| !stand.can_use_slot(slot))
                 || (equip_sound.is_none()
                     && entity
                         .cast_any()

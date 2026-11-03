@@ -1529,6 +1529,29 @@ impl World {
         self.broadcast_packet_all(&packet);
     }
 
+    // world: sendParticles with option data (block state id for block particles)
+    pub fn spawn_particles_with_data(
+        &self,
+        particle: pumpkin_data::particle::Particle,
+        pos: Vector3<f64>,
+        count: u32,
+        offset: Vector3<f32>,
+        max_speed: f32,
+        data: &[u8],
+    ) {
+        let packet = CParticle::new(
+            false,
+            false,
+            pos,
+            offset,
+            max_speed,
+            count as i32,
+            (particle.to_id() as i32).into(),
+            data,
+        );
+        self.broadcast_packet_all(&packet);
+    }
+
     /// Plays a Bedrock level sound for players close enough to hear it.
     pub fn play_bedrock_level_sound(
         &self,

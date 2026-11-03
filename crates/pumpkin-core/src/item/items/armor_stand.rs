@@ -4,8 +4,10 @@ use std::sync::Arc;
 use crate::entity::Entity;
 use crate::entity::decoration::armor_stand::ArmorStandEntity;
 use crate::entity::player::Player;
+use crate::item::items::spawn_egg::apply_entity_variant;
 use crate::item::{ItemBehaviour, ItemMetadata};
 use crate::server::Server;
+use crate::world::game_event::GameEventContext;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::game_event::GameEvent;
 use pumpkin_data::item::Item;
@@ -81,6 +83,11 @@ impl ItemBehaviour for ArmorStandItem {
             entity.set_rotation(rotation, 0.0);
 
             let pos = entity.pos.load();
+            let armor_stand = Arc::new(ArmorStandEntity::new(entity));
+            // armor stand: EntityType.createDefaultStackConfig, custom name and entity_data
+            apply_entity_variant(item, armor_stand.as_ref(), Some(player));
+
+            world.spawn_entity(armor_stand);
             world.play_sound_fine(
                 Sound::EntityArmorStandPlace,
                 SoundCategory::Blocks,
@@ -88,11 +95,13 @@ impl ItemBehaviour for ArmorStandItem {
                 0.75,
                 0.8,
             );
-
-            let armor_stand = ArmorStandEntity::new(entity);
-
-            world.spawn_entity(Arc::new(armor_stand));
-            world.emit_game_event(GameEvent::EntityPlace.name(), pos);
+            world.emit_game_event_with_context(
+                GameEvent::EntityPlace.name(),
+                pos,
+                &GameEventContext {
+                    source_entity: Some(player),
+                },
+            );
             item.decrement_unless_creative(player.gamemode.load(), 1);
             BlockActionResult::Success
         } else {

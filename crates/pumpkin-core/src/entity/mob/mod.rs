@@ -3346,5 +3346,10 @@ mod lifecycle_tests {
 // bat: Entity.isIgnoringBlockTriggers
 #[must_use]
 pub fn ignores_block_triggers(entity: &dyn EntityBase) -> bool {
+    // armor stand: isIgnoringBlockTriggers for a marker
     entity.get_mob().is_some_and(Mob::ignores_block_triggers)
+        || entity
+            .cast_any()
+            .downcast_ref::<crate::entity::decoration::armor_stand::ArmorStandEntity>()
+            .is_some_and(crate::entity::decoration::armor_stand::ArmorStandEntity::is_marker)
 }
