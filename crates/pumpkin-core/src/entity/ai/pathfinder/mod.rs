@@ -496,6 +496,8 @@ pub struct PathNavigation {
     pub avoid_sun: bool,
     pub max_fall_distance: f32,
     pub can_path_to_targets_below_surface: bool,
+    // frog: FrogPathNavigation.canCutCorner
+    pub water_border_blocks_corner_cuts: bool,
     path_finder: Option<PathFinder>,
     update_pathfinder_max_visited_nodes: bool,
     pub is_idle: AtomicBool,
@@ -540,6 +542,7 @@ impl PathNavigation {
             required_path_length: 16.0,
             path_type_overrides: FxHashMap::default(),
             has_pending_path: false,
+            water_border_blocks_corner_cuts: false,
             can_float: false,
             can_walk_over_fences: false,
             can_open_doors: false,
@@ -950,6 +953,13 @@ impl PathNavigation {
         }
     }
 
+    /// Vanilla `canCutCorner` with the frog override.
+    #[must_use]
+    pub fn can_cut_corner_for(&self, path_type: PathType) -> bool {
+        !(self.water_border_blocks_corner_cuts && path_type == PathType::WaterBorder)
+            && Self::can_cut_corner(path_type)
+    }
+
     /// Vanilla `PathNavigation.canCutCorner`.
     #[must_use]
     pub const fn can_cut_corner(path_type: PathType) -> bool {
@@ -1066,6 +1076,7 @@ impl PathNavigation {
 
         self.do_stuck_detection(mob_pos, entity);
 
+        let block_water_border = self.water_border_blocks_corner_cuts;
         if let Some(path) = &mut self.path {
             if path.is_done() {
                 self.stop();
@@ -1094,10 +1105,11 @@ impl PathNavigation {
                 let close_enough =
                     x_distance < reach && z_distance < reach && y_distance < NODE_REACH_Y;
 
-                let corner_cut = path
-                    .get_next_node()
-                    .is_some_and(|n| Self::can_cut_corner(n.path_type))
-                    && Self::should_target_next_node_in_direction(mob_pos, path, || false);
+                let corner_cut =
+                    path.get_next_node().is_some_and(|n| {
+                        !(block_water_border && n.path_type == PathType::WaterBorder)
+                            && Self::can_cut_corner(n.path_type)
+                    }) && Self::should_target_next_node_in_direction(mob_pos, path, || false);
 
                 if close_enough || corner_cut {
                     path.advance();
@@ -2170,6 +2182,19 @@ impl AmphibiousPathNavigation {
     }
 }
 
+impl AmphibiousPathNavigation {
+    /// Vanilla `Frog.FrogPathNavigation` with `FrogNodeEvaluator(true)`.
+    #[must_use]
+    pub fn frog() -> Self {
+        let mut evaluator = AmphibiousNodeEvaluator::new(true);
+        evaluator.frog = true;
+        evaluator.walk.prefer_jump_blocks_are_open = true;
+        let mut inner = PathNavigation::new(EvaluatorKind::Amphibious(evaluator));
+        inner.water_border_blocks_corner_cuts = true;
+        Self { inner }
+    }
+}
+
 impl PathNavigationTrait for AmphibiousPathNavigation {
     fn set_progress(&mut self, goal: NavigatorGoal) {
         self.inner.set_progress(goal);
@@ -2450,6 +2475,11 @@ impl Navigator {
     #[must_use]
     pub fn amphibious(prefers_shallow_swimming: bool) -> Self {
         Self::new(AmphibiousPathNavigation::new(prefers_shallow_swimming))
+    }
+
+    #[must_use]
+    pub fn frog() -> Self {
+        Self::new(AmphibiousPathNavigation::frog())
     }
 }
 

@@ -11,6 +11,7 @@ pub mod armadillo;
 pub mod axolotl;
 pub mod breeze_attack_entity;
 pub mod dummy;
+pub mod frog;
 pub mod hurt_by;
 pub mod nearest_items;
 pub mod nearest_living_entities;
@@ -52,6 +53,8 @@ pub enum SensorType {
     NearestBed,
     ArmadilloScareDetected,
     AxolotlAttackables,
+    FrogAttackables,
+    IsInWater,
 }
 
 impl SensorType {
@@ -76,6 +79,8 @@ impl SensorType {
             Self::NearestBed => "minecraft:nearest_bed",
             Self::ArmadilloScareDetected => "minecraft:armadillo_scare_detected",
             Self::AxolotlAttackables => "minecraft:axolotl_attackables",
+            Self::FrogAttackables => "minecraft:frog_attackables",
+            Self::IsInWater => "minecraft:is_in_water",
         }
     }
 
@@ -99,6 +104,8 @@ impl SensorType {
             | Self::VillagerHostiles
             | Self::VillagerBabies
             | Self::AxolotlAttackables
+            | Self::FrogAttackables
+            | Self::IsInWater
             | Self::NearestBed => DEFAULT_SCAN_RATE,
         }
     }
@@ -123,6 +130,8 @@ impl SensorType {
             Self::NearestBed => Box::new(villager::NearestBedSensor),
             Self::ArmadilloScareDetected => Box::new(armadillo::ArmadilloScareSensor),
             Self::AxolotlAttackables => Box::new(axolotl::AxolotlAttackablesSensor),
+            Self::FrogAttackables => Box::new(frog::FrogAttackablesSensor),
+            Self::IsInWater => Box::new(frog::IsInWaterSensor),
         }
     }
 

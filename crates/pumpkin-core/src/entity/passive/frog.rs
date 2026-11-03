@@ -1,35 +1,25 @@
+mod ai;
+
 use std::sync::{
-    Arc, Mutex, PoisonError,
-    atomic::{AtomicBool, AtomicI32, Ordering},
+    Arc, PoisonError,
+    atomic::{AtomicI32, Ordering},
 };
 
 use pumpkin_data::BlockState;
 use pumpkin_data::entity::EntityType;
-use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::sound::Sound;
 use pumpkin_data::tag::{self, Taggable};
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_protocol::codec::{optional_int::OptionalInt, var_int::VarInt};
 use pumpkin_util::math::position::BlockPos;
-use uuid::Uuid;
 
-use crate::entity::passive::frog_goals::{
-    self, CroakGoal, FrogStrollGoal, LongJumpGoal, LongJumpMidJumpGoal, ShootTongueGoal,
-    TryFindLandGoal, TryFindLandNearLiquidGoal, TryLaySpawnGoal,
-};
+use crate::entity::ai::brain::memory::{PackedMemories, types};
 use crate::entity::{
     Entity, EntityBase,
     ageable::{AgeableData, AgeableMob},
-    ai::behavior::hunting::{self, Hunt},
     ai::control::smooth_swimming_move_control::SmoothSwimmingMoveControl,
-    ai::goal::{
-        breed::BreedGoal, escape_danger::EscapeDangerGoal, gated::GatedGoal,
-        look_at_entity::LookAtEntityGoal, random_swimming::RandomSwimmingGoal, tempt::TemptGoal,
-    },
     ai::pathfinder::{Navigator, node::PathType},
-    ai::target_match::TargetMatch,
-    living::LivingEntity,
     mob::{Mob, MobEntity, spawn::SpawnGroupData},
     passive::animal::Animal,
     player::Player,
@@ -38,40 +28,11 @@ use crate::world::World;
 
 use pumpkin_data::frog_variant::FrogVariant;
 
-pub const FROG_FOOD: &[&Item] = &[&Item::SLIME_BALL];
-
-// frog: constants (Frog, FrogAi)
-const TONGUE_TARGET_RANGE_SQ: f64 = 100.0;
-const UNREACHABLE_TONGUE_TARGETS_TICKS: i64 = 100;
-const MAX_UNREACHABLE_TONGUE_TARGETS: usize = 5;
+// frog: constants (Frog)
 const FROG_FALL_DAMAGE_REDUCTION: i32 = 5;
-const SPEED_WHEN_TEMPTED: f64 = 1.25;
-const SPEED_WHEN_PANICKING: f64 = 2.0;
-
-// frog: FrogAttackablesSensor, eatable, close and not recently unreachable
-fn attackable_target(hunter: &dyn Mob, target: &LivingEntity, world: &World) -> bool {
-    let Some(frog) = hunter.cast_any().downcast_ref::<FrogEntity>() else {
-        return false;
-    };
-    !hunter.get_mob_entity().is_in_love()
-        && hunter
-            .get_entity()
-            .pos
-            .load()
-            .squared_distance_to_vec(&target.entity.pos.load())
-            < TONGUE_TARGET_RANGE_SQ
-        && frog.is_reachable_tongue_target(&target.entity.entity_uuid, world.get_world_age())
-        && world
-            .get_entity_by_id(target.entity.entity_id)
-            .is_some_and(|entity| FrogEntity::can_eat(entity.as_ref()))
-}
-
-const FROG_HUNTS: &[Hunt] = &[Hunt::new(
-    1,
-    TargetMatch::Tag(&tag::EntityType::MINECRAFT_FROG_FOOD),
-    true,
-)
-.matching(attackable_target)];
+const FROG_HEAD_ROT_SPEED: f32 = 35.0;
+const FROG_MAX_HEAD_Y_ROT: f32 = 5.0;
+const FROG_BREEDING_COOLDOWN: i32 = 6000;
 
 /// Represents a Frog, an amphibious mob that can eat small slimes and magma cubes.
 ///
@@ -81,10 +42,6 @@ pub struct FrogEntity {
     pub ageable_data: AgeableData,
     pub variant: AtomicI32,
     pub tongue_target_id: AtomicI32,
-    pub pregnant: AtomicBool,
-    pub mid_jump: AtomicBool,
-    pub long_jump_cooldown: AtomicI32,
-    unreachable_tongue_targets: Mutex<Vec<(Uuid, i64)>>,
 }
 
 impl FrogEntity {
@@ -94,8 +51,8 @@ impl FrogEntity {
             .navigator
             .get_mut()
             .unwrap_or_else(PoisonError::into_inner);
-        *navigator = Navigator::amphibious(true);
-        // frog: pathfinding malus (Frog constructor)
+        // frog: FrogPathNavigation, pathfinding malus (Frog constructor)
+        *navigator = Navigator::frog();
         navigator.set_pathfinding_malus(PathType::Water, 4.0);
         navigator.set_pathfinding_malus(PathType::Trapdoor, -1.0);
         *mob_entity
@@ -103,125 +60,38 @@ impl FrogEntity {
             .get_mut()
             .unwrap_or_else(PoisonError::into_inner) =
             Box::new(SmoothSwimmingMoveControl::new(85, 10, 0.02, 0.1, true));
-        let frog = Self {
+        Arc::new(Self {
             mob_entity,
             ageable_data: AgeableData::default(),
             variant: AtomicI32::new(FrogVariant::Temperate.id() as i32),
             tongue_target_id: AtomicI32::new(-1),
-            pregnant: AtomicBool::new(false),
-            mid_jump: AtomicBool::new(false),
-            long_jump_cooldown: AtomicI32::new(frog_goals::time_between_long_jumps()),
-            unreachable_tongue_targets: Mutex::new(Vec::new()),
-        };
-        let mob_arc = Arc::new(frog);
-        let mob_weak: std::sync::Weak<dyn Mob> = {
-            let mob_arc: Arc<dyn Mob> = mob_arc.clone();
-            Arc::downgrade(&mob_arc)
-        };
-
-        {
-            use frog_goals::{
-                idle_only, idle_or_swim, lay_spawn_only, long_jump_activity, swim_only,
-                tongue_activity,
-            };
-            let goals = &mob_arc.mob_entity.goals_selector;
-
-            // frog: CORE activity
-            goals.add_goal(0, EscapeDangerGoal::new(SPEED_WHEN_PANICKING));
-            // frog: TONGUE activity
-            goals.add_goal(
-                0,
-                Box::new(GatedGoal::new(ShootTongueGoal::new(), tongue_activity)),
-            );
-            // frog: LONG_JUMP activity
-            goals.add_goal(1, Box::new(LongJumpMidJumpGoal));
-            goals.add_goal(
-                2,
-                Box::new(GatedGoal::new(LongJumpGoal::new(), long_jump_activity)),
-            );
-            // frog: LAY_SPAWN activity
-            goals.add_goal(
-                3,
-                Box::new(GatedGoal::new(
-                    TryFindLandNearLiquidGoal::new(8, 1.0),
-                    lay_spawn_only,
-                )),
-            );
-            goals.add_goal(4, Box::new(GatedGoal::new(TryLaySpawnGoal, lay_spawn_only)));
-            // frog: IDLE and SWIM activities
-            goals.add_goal(
-                5,
-                Box::new(GatedGoal::new(
-                    *LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 6.0),
-                    idle_or_swim,
-                )),
-            );
-            goals.add_goal(5, Box::new(GatedGoal::new(*BreedGoal::new(1.0), idle_only)));
-            goals.add_goal(
-                6,
-                Box::new(GatedGoal::new(
-                    TemptGoal::new(SPEED_WHEN_TEMPTED, FROG_FOOD, false),
-                    idle_or_swim,
-                )),
-            );
-            goals.add_goal(
-                8,
-                Box::new(GatedGoal::new(TryFindLandGoal::new(8, 1.5), swim_only)),
-            );
-            goals.add_goal(
-                9,
-                Box::new(GatedGoal::new(
-                    RandomSwimmingGoal::new(0.75, 120),
-                    swim_only,
-                )),
-            );
-            goals.add_goal(
-                9,
-                Box::new(GatedGoal::new(FrogStrollGoal::new(1.0), idle_or_swim)),
-            );
-            goals.add_goal(10, Box::new(GatedGoal::new(CroakGoal::new(), idle_only)));
-            goals.add_goal(
-                10,
-                Box::new(GatedGoal::new(CroakGoal::new(), lay_spawn_only)),
-            );
-        };
-
-        {
-            let target_selector = &mob_arc.mob_entity.target_selector;
-            hunting::apply(target_selector, &mob_arc.mob_entity, FROG_HUNTS);
-        };
-
-        mob_arc
+        })
     }
 
+    // frog: getTargetFromBrain
+    fn sync_target_from_brain(&self) {
+        let target = self
+            .mob_entity
+            .with_brain(self, |brain| brain.get(types::ATTACK_TARGET).cloned());
+        self.apply_mob_target(target);
+    }
+
+    // frog: IS_PREGNANT memory
     #[must_use]
     pub fn is_pregnant(&self) -> bool {
-        self.pregnant.load(Ordering::Relaxed)
+        self.mob_entity.with_brain(self, |brain| {
+            brain.has_memory_value(types::IS_PREGNANT.id())
+        })
     }
 
     pub fn set_pregnant(&self, pregnant: bool) {
-        self.pregnant.store(pregnant, Ordering::Relaxed);
-    }
-
-    #[must_use]
-    pub fn is_mid_jump(&self) -> bool {
-        self.mid_jump.load(Ordering::Relaxed)
-    }
-
-    pub fn set_mid_jump(&self, mid_jump: bool) {
-        self.mid_jump.store(mid_jump, Ordering::Relaxed);
-    }
-
-    #[must_use]
-    pub fn is_tempted(&self) -> bool {
-        self.mob_entity.goals_selector.is_running::<TemptGoal>()
-    }
-
-    #[must_use]
-    pub fn is_panicking(&self) -> bool {
-        self.mob_entity
-            .goals_selector
-            .is_running::<EscapeDangerGoal>()
+        self.mob_entity.with_brain(self, |brain| {
+            if pregnant {
+                brain.set(types::IS_PREGNANT, ());
+            } else {
+                brain.erase(types::IS_PREGNANT.id());
+            }
+        });
     }
 
     // frog: Frog.canEat, small slimes and magma cubes only
@@ -268,31 +138,6 @@ impl FrogEntity {
             .flatten()
     }
 
-    // frog: UNREACHABLE_TONGUE_TARGETS memory, 5 entries for 100 ticks
-    pub fn add_unreachable_tongue_target(&self, uuid: Uuid, now: i64) {
-        let mut targets = self
-            .unreachable_tongue_targets
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner);
-        targets.retain(|(_, expiry)| *expiry > now);
-        if !targets.iter().any(|(known, _)| *known == uuid) {
-            if targets.len() >= MAX_UNREACHABLE_TONGUE_TARGETS {
-                targets.remove(0);
-            }
-            targets.push((uuid, now + UNREACHABLE_TONGUE_TARGETS_TICKS));
-        }
-    }
-
-    #[must_use]
-    pub fn is_reachable_tongue_target(&self, uuid: &Uuid, now: i64) -> bool {
-        !self
-            .unreachable_tongue_targets
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .iter()
-            .any(|(known, expiry)| known == uuid && *expiry > now)
-    }
-
     #[must_use]
     pub fn get_variant(&self) -> FrogVariant {
         FrogVariant::from_id(self.variant.load(Ordering::Relaxed) as u32)
@@ -325,25 +170,25 @@ impl Animal for FrogEntity {
         Some(pumpkin_data::sound::Sound::EntityFrogEat)
     }
 
-    // frog: Frog.getBreedOffspring, none (the mother lays frogspawn)
+    // frog: Frog.getBreedOffspring
     fn get_breed_offspring(&self, _partner: &dyn EntityBase) -> Arc<dyn EntityBase> {
         let entity = self.get_entity();
-        crate::entity::r#type::from_type(
-            entity.entity_type,
+        let frog = Self::new(Entity::new(
+            entity.world.load_full(),
             entity.pos.load(),
-            &entity.world.load(),
-            Uuid::new_v4(),
-        )
+            &EntityType::FROG,
+        ));
+        ai::init_memories(&frog);
+        frog
     }
 
     fn is_food(&self, item_stack: &ItemStack) -> bool {
         item_stack.item.has_tag(&tag::Item::MINECRAFT_FROG_FOOD)
-            || FROG_FOOD.iter().any(|i| i.id == item_stack.item.id)
     }
 }
 
 impl Mob for FrogEntity {
-    // frog: biome coat, long jump cooldown (Frog.finalizeSpawn)
+    // frog: variant by biome, long jump cooldown (Frog.finalizeSpawn)
     fn finalize_spawn(
         &self,
         world: &Arc<World>,
@@ -358,8 +203,7 @@ impl Mob for FrogEntity {
             FrogVariant::Temperate
         };
         self.set_variant(variant);
-        self.long_jump_cooldown
-            .store(frog_goals::time_between_long_jumps(), Ordering::Relaxed);
+        ai::init_memories(self);
         self.finalize_spawn_super(group_data)
     }
 
@@ -369,11 +213,10 @@ impl Mob for FrogEntity {
             return false;
         };
         crate::entity::ai::goal::breed::BreedGoal::award_breeding(self, mate, None);
-        self.set_pregnant(true);
         self.mob_entity
             .breeding_cooldown
-            .store(6000, Ordering::Relaxed);
-        mate.set_breeding_cooldown(6000);
+            .store(FROG_BREEDING_COOLDOWN, Ordering::Relaxed);
+        mate.set_breeding_cooldown(FROG_BREEDING_COOLDOWN);
         self.mob_entity.reset_love_ticks();
         mate_mob.get_mob_entity().reset_love_ticks();
         let entity = self.get_entity();
@@ -385,6 +228,7 @@ impl Mob for FrogEntity {
                 rand::random_range(1..=7),
             );
         }
+        self.set_pregnant(true);
         true
     }
 
@@ -402,18 +246,15 @@ impl Mob for FrogEntity {
         false
     }
 
-    // frog: CountDownCooldownTicks(LONG_JUMP_COOLDOWN_TICKS) and the tongue pose reset
+    fn make_brain(&self, packed: &PackedMemories) -> crate::entity::ai::brain::Brain {
+        ai::make_brain(self, packed)
+    }
+
+    // frog: customServerAiStep (frogBrain, frogActivityUpdate)
     fn custom_server_ai_step(&self, _caller: &dyn EntityBase) {
-        let cooldown = self.long_jump_cooldown.load(Ordering::Relaxed);
-        if cooldown > 0 {
-            self.long_jump_cooldown
-                .store(cooldown - 1, Ordering::Relaxed);
-        }
-        if self.tongue_target_id.load(Ordering::Relaxed) >= 0
-            && self.mob_entity.get_target().is_none()
-        {
-            self.set_tongue_target(None);
-        }
+        self.mob_entity.tick_brain(self);
+        self.mob_entity.with_brain(self, ai::update_activity);
+        self.sync_target_from_brain();
     }
 
     // frog: slow swim without gravity pull (Frog.travelInWater)
@@ -433,7 +274,17 @@ impl Mob for FrogEntity {
         Some(Sound::EntityFrogAmbient)
     }
 
-    // frog: head rotation limit (Frog.getMaxHeadYRot), look control keeps pitch while using the tongue
+    // frog: getHeadRotSpeed
+    fn get_max_look_yaw_change(&self) -> f32 {
+        FROG_HEAD_ROT_SPEED
+    }
+
+    // frog: getMaxHeadYRot
+    fn get_max_head_rotation(&self) -> f32 {
+        FROG_MAX_HEAD_Y_ROT
+    }
+
+    // frog: FrogLookControl.resetXRotOnTick, keeps the pitch while using the tongue
     fn look_resets_pitch(&self) -> bool {
         self.tongue_target_id.load(Ordering::Relaxed) < 0
     }
@@ -470,11 +321,9 @@ impl Mob for FrogEntity {
                 self.get_variant().asset_id().to_string()
             });
         nbt.put_string("variant", variant_str);
-        nbt.put_bool("IsPregnant", self.is_pregnant());
     }
 
     fn mob_read_nbt(&self, nbt: &NbtCompound) {
-        self.set_pregnant(nbt.get_bool("IsPregnant").unwrap_or(false));
         if let Some(variant_str) = nbt.get_string("variant")
             && let Some(id) =
                 self.resolve_dynamic_raw_id("minecraft:frog_variant", variant_str, |n| {
@@ -482,6 +331,10 @@ impl Mob for FrogEntity {
                 })
         {
             self.set_variant_id(id as i32);
+        }
+        // frog: older saves kept the pregnancy outside the brain
+        if nbt.get_bool("IsPregnant") == Some(true) {
+            self.set_pregnant(true);
         }
     }
 
@@ -511,5 +364,60 @@ impl Mob for FrogEntity {
 
     fn mob_interact(&self, player: &Arc<Player>, item_stack: &mut ItemStack) -> bool {
         self.animal_interact(player, item_stack, Sound::EntityFrogAmbient)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
+mod tests {
+    use pumpkin_data::environment_attribute::Activity;
+    use pumpkin_util::math::vector3::Vector3;
+
+    use super::*;
+    use crate::entity::ai::test_support::world;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    fn frog_in(world: &Arc<World>) -> Arc<FrogEntity> {
+        FrogEntity::new(Entity::new(
+            world.clone(),
+            Vector3::new(0.5, 64.0, 0.5),
+            &EntityType::FROG,
+        ))
+    }
+
+    #[tokio::test]
+    async fn activities_follow_the_frog_ai_priority() -> TestResult {
+        let folder = tempfile::tempdir()?;
+        let world = world(&folder);
+        let frog = frog_in(&world);
+        let victim = frog_in(&world);
+        let active = |frog: &Arc<FrogEntity>| {
+            frog.mob_entity.with_brain(frog.as_ref(), |brain| {
+                ai::update_activity(brain);
+                brain.get_active_non_core_activity()
+            })
+        };
+        assert_eq!(active(&frog), Some(Activity::LongJump));
+        frog.mob_entity.with_brain(frog.as_ref(), |brain| {
+            brain.set(types::LONG_JUMP_COOLDOWN_TICKS, 100);
+        });
+        assert_eq!(active(&frog), Some(Activity::Idle));
+        frog.mob_entity.with_brain(frog.as_ref(), |brain| {
+            brain.set(types::IS_IN_WATER, ());
+        });
+        assert_eq!(active(&frog), Some(Activity::Swim));
+        frog.mob_entity.with_brain(frog.as_ref(), |brain| {
+            brain.erase(types::IS_IN_WATER.id());
+        });
+        frog.set_pregnant(true);
+        assert!(frog.is_pregnant());
+        assert_eq!(active(&frog), Some(Activity::LaySpawn));
+        frog.mob_entity.with_brain(frog.as_ref(), |brain| {
+            brain.set(types::ATTACK_TARGET, victim as Arc<dyn EntityBase>);
+        });
+        assert_eq!(active(&frog), Some(Activity::Tongue));
+        world.level.shutdown().await;
+        Ok(())
     }
 }

@@ -10,6 +10,8 @@ use crate::entity::ai::pathfinder::{
 
 pub struct AmphibiousNodeEvaluator {
     pub walk: WalkNodeEvaluator,
+    // frog: FrogNodeEvaluator.getStart starts at the box floor
+    pub frog: bool,
     prefers_shallow_swimming: bool,
     old_walkable_cost: f32,
     old_water_border_cost: f32,
@@ -22,6 +24,7 @@ impl AmphibiousNodeEvaluator {
         walk.is_amphibious = true;
         Self {
             walk,
+            frog: false,
             prefers_shallow_swimming,
             old_walkable_cost: 0.0,
             old_water_border_cost: 0.0,
@@ -57,7 +60,11 @@ impl NodeEvaluator for AmphibiousNodeEvaluator {
         if mob_data.is_in_water {
             let half_width = f64::from(mob_data.width) / 2.0;
             let min_x = (mob_data.position.x - half_width).floor() as i32;
-            let min_y = (mob_data.position.y + 0.5).floor() as i32;
+            let min_y = if self.frog {
+                mob_data.position.y.floor()
+            } else {
+                (mob_data.position.y + 0.5).floor()
+            } as i32;
             let min_z = (mob_data.position.z - half_width).floor() as i32;
             Some(self.walk.get_start_node(Vector3::new(min_x, min_y, min_z)))
         } else {

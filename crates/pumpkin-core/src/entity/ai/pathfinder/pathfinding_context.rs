@@ -304,6 +304,11 @@ impl PathfindingContext {
     }
 
     #[must_use]
+    pub fn get_block(&self, pos: &BlockPos) -> &'static Block {
+        Block::from_state_id(self.world.get_block_state_id(pos))
+    }
+
+    #[must_use]
     pub fn get_block_state(&self, pos: &BlockPos) -> &'static BlockState {
         self.world.get_block_state(pos)
     }

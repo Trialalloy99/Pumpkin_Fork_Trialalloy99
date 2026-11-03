@@ -1,4 +1,5 @@
 use pumpkin_data::BlockDirection;
+use pumpkin_data::tag::Taggable;
 use pumpkin_util::math::{boundingbox::BoundingBox, position::BlockPos, vector3::Vector3};
 use rustc_hash::FxHashMap;
 
@@ -13,6 +14,8 @@ pub struct WalkNodeEvaluator {
     path_types_cache: FxHashMap<Vector3<i32>, PathType>,
     reusable_neighbors: [Option<Node>; 4],
     pub is_amphibious: bool,
+    // frog: FrogNodeEvaluator.getPathType, FROG_PREFER_JUMP_TO below counts as open
+    pub prefer_jump_blocks_are_open: bool,
 }
 
 impl WalkNodeEvaluator {
@@ -23,6 +26,7 @@ impl WalkNodeEvaluator {
             path_types_cache: FxHashMap::default(),
             reusable_neighbors: [None, None, None, None],
             is_amphibious: false,
+            prefer_jump_blocks_are_open: false,
         }
     }
 
@@ -641,6 +645,13 @@ impl NodeEvaluator for WalkNodeEvaluator {
     }
 
     fn get_path_type(&mut self, context: &mut PathfindingContext, pos: Vector3<i32>) -> PathType {
+        if self.prefer_jump_blocks_are_open
+            && context
+                .get_block(&BlockPos(pos.add_raw(0, -1, 0)))
+                .has_tag(&pumpkin_data::tag::Block::MINECRAFT_FROG_PREFER_JUMP_TO)
+        {
+            return PathType::Open;
+        }
         context.get_land_node_type(pos)
     }
 

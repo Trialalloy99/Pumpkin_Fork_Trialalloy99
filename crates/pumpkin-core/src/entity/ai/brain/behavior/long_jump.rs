@@ -5,6 +5,7 @@ use pumpkin_data::attributes::Attributes;
 use pumpkin_data::effect::StatusEffect;
 use pumpkin_data::entity::EntityPose;
 use pumpkin_data::sound::{Sound, SoundCategory};
+use pumpkin_data::tag::Taggable;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 use rand::RngExt;
@@ -69,6 +70,11 @@ pub struct LongJumpToRandomPos {
     chosen_jump: Option<Vector3<f64>>,
     find_jump_tries: i32,
     prepare_jump_start: i64,
+    acceptable_landing_spot: fn(&BrainTick<'_>, &BlockPos) -> bool,
+    // frog: LongJumpToPreferredBlock
+    preferred_block: Option<(&'static pumpkin_data::tag::Tag, f32)>,
+    not_preferred_jump_candidates: Vec<(BlockPos, i32)>,
+    currently_wanting_preferred_ones: bool,
 }
 
 impl LongJumpToRandomPos {
@@ -91,11 +97,36 @@ impl LongJumpToRandomPos {
             chosen_jump: None,
             find_jump_tries: 0,
             prepare_jump_start: 0,
+            acceptable_landing_spot: Self::default_acceptable_landing_spot,
+            preferred_block: None,
+            not_preferred_jump_candidates: Vec::new(),
+            currently_wanting_preferred_ones: false,
         }
     }
 
+    /// Vanilla `LongJumpToRandomPos(.., acceptableLandingSpot)`.
+    #[must_use]
+    pub const fn with_landing_spot(
+        mut self,
+        acceptable_landing_spot: fn(&BrainTick<'_>, &BlockPos) -> bool,
+    ) -> Self {
+        self.acceptable_landing_spot = acceptable_landing_spot;
+        self
+    }
+
+    /// Vanilla `LongJumpToPreferredBlock`.
+    #[must_use]
+    pub const fn with_preferred_block(
+        mut self,
+        tag: &'static pumpkin_data::tag::Tag,
+        chance: f32,
+    ) -> Self {
+        self.preferred_block = Some((tag, chance));
+        self
+    }
+
     // long jump: defaultAcceptableLandingSpot
-    fn acceptable_landing_spot(tick: &BrainTick<'_>, target: &BlockPos) -> bool {
+    pub fn default_acceptable_landing_spot(tick: &BrainTick<'_>, target: &BlockPos) -> bool {
         let entity = tick.mob.get_entity();
         let landing = tick.world.get_block_state(target);
         let path_type = PathfindingContext::new(target.0, tick.world.clone())
@@ -110,6 +141,29 @@ impl LongJumpToRandomPos {
         tick.world.get_block_state(&target.down()).is_solid_render()
             && malus == 0.0
             && !is_block_dangerous(entity.entity_type, landing)
+    }
+
+    // long jump: LongJumpToPreferredBlock.getJumpCandidate
+    fn get_jump_candidate(&mut self, tick: &BrainTick<'_>) -> Option<(BlockPos, i32)> {
+        let Some((tag, _)) = self.preferred_block else {
+            return self.take_candidate(tick);
+        };
+        if !self.currently_wanting_preferred_ones {
+            return self.take_candidate(tick);
+        }
+        while !self.jump_candidates.is_empty() {
+            if let Some(candidate) = self.take_candidate(tick) {
+                if tick.world.get_block(&candidate.0.down()).has_tag(tag) {
+                    return Some(candidate);
+                }
+                self.not_preferred_jump_candidates.push(candidate);
+            }
+        }
+        if self.not_preferred_jump_candidates.is_empty() {
+            None
+        } else {
+            Some(self.not_preferred_jump_candidates.remove(0))
+        }
     }
 
     // long jump: WeightedRandom.getRandomItem, removes the pick
@@ -151,14 +205,14 @@ impl LongJumpToRandomPos {
     // long jump: pickCandidate
     fn pick_candidate(&mut self, tick: &mut BrainTick<'_>) {
         while !self.jump_candidates.is_empty() {
-            let Some((target, _)) = self.take_candidate(tick) else {
+            let Some((target, _)) = self.get_jump_candidate(tick) else {
                 continue;
             };
             let body = tick.mob.get_entity().block_pos.load();
             if body.0.x == target.0.x && body.0.z == target.0.z {
                 continue;
             }
-            if !Self::acceptable_landing_spot(tick, &target) {
+            if !(self.acceptable_landing_spot)(tick, &target) {
                 continue;
             }
             let Some(jump) = self.calculate_optimal_jump_vector(tick, target.to_centered_f64())
@@ -253,6 +307,10 @@ impl Behavior for LongJumpToRandomPos {
             (pos, (dx * dx + dy * dy + dz * dz).ceil() as i32)
         })
         .collect();
+        self.not_preferred_jump_candidates.clear();
+        if let Some((_, chance)) = self.preferred_block {
+            self.currently_wanting_preferred_ones = tick.mob.get_random().random::<f32>() < chance;
+        }
     }
 
     fn tick(&mut self, tick: &mut BrainTick<'_>) {
