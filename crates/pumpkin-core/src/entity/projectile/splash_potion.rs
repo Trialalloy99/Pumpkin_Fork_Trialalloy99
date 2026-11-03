@@ -255,7 +255,7 @@ impl EntityBase for SplashPotionEntity {
 
         let mut affected: Vec<(Arc<dyn EntityBase>, f32)> = Vec::new();
         for cand in candidates {
-            if cand.get_living_entity().is_some() {
+            if cand.get_living_entity().is_some() && cand.is_affected_by_potions() {
                 let pos = cand.get_entity().pos.load();
                 let dx = pos.x - hit_pos.x;
                 let dy = pos.y - hit_pos.y;

@@ -407,7 +407,10 @@ impl EntityBase for AreaEffectCloudEntity {
             let mut will_apply = false;
 
             // Only living entities can receive effects
-            if let Some(living_ref) = cand_clone.get_living_entity() {
+            if let Some(living_ref) = cand_clone
+                .get_living_entity()
+                .filter(|_| cand_clone.is_affected_by_potions())
+            {
                 for (eff, _, _, _, _, _) in &effs_clone {
                     // Instant effects always apply
                     let is_instant = eff.id

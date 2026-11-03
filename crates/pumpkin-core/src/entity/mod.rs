@@ -558,6 +558,11 @@ pub trait EntityBase: Send + Sync + std::any::Any {
         false
     }
 
+    // entity: LivingEntity.isAffectedByPotions, splash potions and clouds skip it
+    fn is_affected_by_potions(&self) -> bool {
+        true
+    }
+
     // entity: Entity.isPickable, projectiles and rays pass through what is not pickable
     fn is_pickable(&self) -> bool {
         true

@@ -735,6 +735,11 @@ impl EntityBase for ArmorStandEntity {
         !explosion.should_affect_blocklike_entities(mob_griefing) || self.is_invisible()
     }
 
+    // armor_stand: isAffectedByPotions
+    fn is_affected_by_potions(&self) -> bool {
+        false
+    }
+
     // armor_stand: isPickable
     fn is_pickable(&self) -> bool {
         !self.is_marker()
