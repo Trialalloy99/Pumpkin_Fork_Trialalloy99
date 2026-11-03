@@ -208,6 +208,12 @@ impl ThrownItemEntity {
         self.owner.check_left_owner(entity);
         entity.update_last_pos();
 
+        // throwable: canUsePortal, ThrowableProjectile.tick (handlePortal, applyEffectsFromBlocks)
+        let uses_blocks = Self::uses_block_effects(entity.entity_type);
+        if uses_blocks {
+            entity.tick_portal(caller);
+        }
+
         // Apply gravity and inertia
         let mut velocity = entity.velocity.load();
         velocity.y -= self.get_gravity();
@@ -224,6 +230,9 @@ impl ThrownItemEntity {
         // Update position
         let new_pos = start_pos.add(&delta);
         entity.set_pos(new_pos);
+        if uses_blocks {
+            entity.tick_block_collisions(caller);
+        }
         // throwable: water state for next tick's drag (ThrowableProjectile.tick super.tick)
         entity.update_fluid_state(caller);
 
@@ -357,6 +366,15 @@ impl ThrownItemEntity {
     }
 
     /// Vanilla `getInertia` / `getLiquidInertia`; wind charges keep all their speed (`AbstractWindCharge`).
+    // throwable: ThrowableProjectile subclasses (the pearl keeps its own teleport rules)
+    fn uses_block_effects(entity_type: &EntityType) -> bool {
+        entity_type == &EntityType::SNOWBALL
+            || entity_type == &EntityType::EGG
+            || entity_type == &EntityType::EXPERIENCE_BOTTLE
+            || entity_type == &EntityType::SPLASH_POTION
+            || entity_type == &EntityType::LINGERING_POTION
+    }
+
     fn inertia(entity: &Entity) -> f64 {
         if entity.entity_type == &EntityType::WIND_CHARGE
             || entity.entity_type == &EntityType::BREEZE_WIND_CHARGE
