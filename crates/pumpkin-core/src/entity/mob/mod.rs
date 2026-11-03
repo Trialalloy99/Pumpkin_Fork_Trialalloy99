@@ -1435,6 +1435,10 @@ pub trait Mob: EntityBase + Send + Sync {
         false
     }
     fn make_mad(&self) {}
+    // mob: AbstractHorse.isBred, parents a bred foal follows
+    fn horse_is_bred(&self) -> bool {
+        false
+    }
 
     fn mob_controlling_passenger(&self) -> Option<Arc<dyn EntityBase>> {
         if self.get_mob_entity().is_no_ai() {

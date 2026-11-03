@@ -45,6 +45,40 @@ pub fn generate_speed(rng: &mut impl rand::Rng) -> f64 {
         * 0.25
 }
 
+// abstract_horse: MIN and MAX of the offspring ranges (AbstractHorse.MIN_HEALTH .. MAX_MOVEMENT_SPEED)
+pub const MIN_HEALTH: f64 = 15.0;
+pub const MAX_HEALTH: f64 = 30.0;
+pub const MIN_JUMP_STRENGTH: f64 = 0.4f32 as f64;
+pub const MAX_JUMP_STRENGTH: f64 = 0.4f32 as f64 + 0.6;
+pub const MIN_MOVEMENT_SPEED: f64 = 0.45f32 as f64 * 0.25;
+pub const MAX_MOVEMENT_SPEED: f64 = (0.45f32 as f64 + 0.9) * 0.25;
+
+// abstract_horse: AbstractHorse.createOffspringAttribute, the foal lands around the parents' average
+#[must_use]
+pub fn create_offspring_attribute(
+    parent_a: f64,
+    parent_b: f64,
+    range_min: f64,
+    range_max: f64,
+    rng: &mut impl rand::Rng,
+) -> f64 {
+    let a = parent_a.clamp(range_min, range_max);
+    let b = parent_b.clamp(range_min, range_max);
+    let margin = 0.15 * (range_max - range_min);
+    let range = (a - b).abs() + margin * 2.0;
+    let average = f64::midpoint(a, b);
+    let baby_quality =
+        (rng.random::<f64>() + rng.random::<f64>() + rng.random::<f64>()) / 3.0 - 0.5;
+    let new_value = average + range * baby_quality;
+    if new_value > range_max {
+        range_max - (new_value - range_max)
+    } else if new_value < range_min {
+        range_min + (range_min - new_value)
+    } else {
+        new_value
+    }
+}
+
 // abstract_horse: calculate offspring health, jump and speed (AbstractHorse.setOffspringAttributes)
 pub fn calculate_offspring_attributes(
     p1_health: f32,

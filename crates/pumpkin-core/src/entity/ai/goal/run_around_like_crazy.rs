@@ -1,4 +1,4 @@
-use super::{Controls, Goal};
+use super::{Controls, Goal, to_goal_ticks};
 use crate::entity::ai::pathfinder::NavigatorGoal;
 use crate::entity::ai::util::default_random_pos;
 use crate::entity::mob::Mob;
@@ -61,31 +61,36 @@ impl Goal for RunAroundLikeCrazyGoal {
 
     // run around like crazy: check taming chance or buck rider off (RunAroundLikeCrazyGoal.tick)
     fn tick(&mut self, mob: &dyn Mob) {
-        if mob.is_tamed() {
+        if mob.is_tamed() || mob.get_random().random_range(0..to_goal_ticks(50)) != 0 {
             return;
         }
-        let mut rng = rand::rng();
-        if rng.random_range(0..50) == 0 {
-            let entity = mob.get_entity();
-            let passengers = entity
-                .passengers
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .clone();
-            let Some(first) = passengers.first() else {
+        let entity = mob.get_entity();
+        let passengers = entity
+            .passengers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let Some(first) = passengers.first() else {
+            return;
+        };
+        if let Some(player) = first.get_player() {
+            let temper = mob.get_temper();
+            let max_temper = mob.max_temper();
+            if max_temper > 0 && mob.get_random().random_range(0..max_temper) < temper {
+                mob.tame_with_name(player);
                 return;
-            };
-            if let Some(player) = first.get_player() {
-                let temper = mob.get_temper();
-                let max_temper = mob.max_temper();
-                if max_temper > 0 && rng.random_range(0..max_temper) < temper {
-                    mob.tame_with_name(player);
-                    return;
-                }
-                mob.modify_temper(5);
             }
-            mob.make_mad();
+            mob.modify_temper(5);
         }
+        for passenger in &passengers {
+            entity.remove_passenger(passenger.get_entity().entity_id);
+        }
+        mob.make_mad();
+        entity.world.load().broadcast_entity_event(
+            entity,
+            pumpkin_data::entity_status::EntityStatus::TamingFailed,
+            pumpkin_protocol::bedrock::server::actor_event::ActorEventID::TamingFailed,
+        );
     }
 
     fn controls(&self) -> Controls {

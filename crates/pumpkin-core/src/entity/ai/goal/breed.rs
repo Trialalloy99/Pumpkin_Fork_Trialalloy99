@@ -20,6 +20,8 @@ pub struct BreedGoal {
     speed: f64,
     mate: Option<Arc<dyn EntityBase>>,
     timer: i32,
+    // horses: BreedGoal(this, speed, AbstractHorse.class)
+    partner_types: Option<&'static [&'static pumpkin_data::entity::EntityType]>,
 }
 
 impl BreedGoal {
@@ -29,6 +31,21 @@ impl BreedGoal {
             speed,
             mate: None,
             timer: 0,
+            partner_types: None,
+        })
+    }
+
+    /// Vanilla `BreedGoal(animal, speed, partnerClass)`: partners of these types.
+    #[must_use]
+    pub fn with_partner_types(
+        speed: f64,
+        partner_types: &'static [&'static pumpkin_data::entity::EntityType],
+    ) -> Box<Self> {
+        Box::new(Self {
+            speed,
+            mate: None,
+            timer: 0,
+            partner_types: Some(partner_types),
         })
     }
 
@@ -38,7 +55,7 @@ impl BreedGoal {
         self.mate.as_ref()
     }
 
-    fn find_mate(mob: &dyn Mob) -> Option<Arc<dyn EntityBase>> {
+    fn find_mate(&self, mob: &dyn Mob) -> Option<Arc<dyn EntityBase>> {
         let mob_entity = mob.get_mob_entity();
         if !mob_entity.is_in_love() {
             return None;
@@ -52,7 +69,10 @@ impl BreedGoal {
             .set_base_max_distance(PARTNER_RANGE);
         let area = SearchArea::from_feet(entity, PARTNER_RANGE, PARTNER_RANGE);
 
-        TargetMatch::Type(entity.entity_type).find_nearest(&world, &area, |candidate| {
+        let partner_type = self
+            .partner_types
+            .map_or(TargetMatch::Type(entity.entity_type), TargetMatch::AnyOf);
+        partner_type.find_nearest(&world, &area, |candidate| {
             candidate.is_in_love()
                 && candidate.is_breeding_ready()
                 && !candidate.is_panicking()
@@ -199,7 +219,7 @@ impl Goal for BreedGoal {
             return false;
         }
 
-        self.mate = Self::find_mate(mob);
+        self.mate = self.find_mate(mob);
         self.mate.is_some()
     }
 
