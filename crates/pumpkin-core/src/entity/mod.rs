@@ -548,6 +548,16 @@ pub trait EntityBase: Send + Sync + std::any::Any {
         false
     }
 
+    /// Vanilla `PartEntity`: part of another entity, never tracked, spawned or saved on its own.
+    fn is_sub_entity(&self) -> bool {
+        false
+    }
+
+    /// Vanilla `PartEntity.getParent`: the entity this part belongs to.
+    fn parent_entity_uuid(&self) -> Option<uuid::Uuid> {
+        None
+    }
+
     fn is_immobile(&self) -> bool {
         self.get_living_entity()
             .is_some_and(LivingEntity::is_dead_or_dying)
@@ -1423,6 +1433,13 @@ impl Entity {
 
     pub fn reserve_ids(count: i32) -> i32 {
         CURRENT_ID.fetch_add(count, Relaxed)
+    }
+
+    /// Reserves `count` ids directly after `id`; `false` when another entity took one meanwhile.
+    pub fn reserve_ids_after(id: i32, count: i32) -> bool {
+        CURRENT_ID
+            .compare_exchange(id + 1, id + 1 + count, Relaxed, Relaxed)
+            .is_ok()
     }
 
     pub fn from_uuid(
@@ -3739,9 +3756,18 @@ impl Entity {
     }
 
     pub fn set_fall_flying(&self, fall_flying: bool) {
-        assert_ne!(self.fall_flying.load(Relaxed), fall_flying);
-        self.fall_flying.store(fall_flying, Relaxed);
+        if self.fall_flying.swap(fall_flying, Relaxed) == fall_flying {
+            return;
+        }
         self.set_flag(Flag::FallFlying, fall_flying);
+    }
+
+    // elytra: set the gliding flag true then false so the client drops a predicted glide (LivingEntity.stopFallFlying)
+    pub fn resync_fall_flying_flag(&self) {
+        let mask = (1i8).wrapping_shl(Flag::FallFlying as u32);
+        let flags = self.flags.load(Ordering::Relaxed);
+        self.set_synced_data(tracked_data::entity::DATA_SHARED_FLAGS_ID, flags ^ mask);
+        self.set_synced_data(tracked_data::entity::DATA_SHARED_FLAGS_ID, flags);
     }
     pub fn is_fall_flying(&self) -> bool {
         self.fall_flying.load(Ordering::Relaxed)

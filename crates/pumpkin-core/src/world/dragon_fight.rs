@@ -15,10 +15,12 @@ use pumpkin_util::{
 };
 use pumpkin_world::world::BlockFlags;
 
+use super::end_podium;
 use super::{
     World,
     bossbar::{Bossbar, BossbarColor, BossbarDivisions, BossbarFlags},
 };
+use crate::entity::boss::ender_dragon::{EnderDragonEntity, phase::EnderDragonPhase};
 use crate::entity::{Entity, EntityBase, decoration::end_crystal::EndCrystalEntity};
 
 // ── Constants (match vanilla exactly) ────────────────────────────────────────
@@ -51,6 +53,31 @@ pub enum DragonRespawnStage {
     End,
 }
 
+impl DragonRespawnStage {
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Start => "start",
+            Self::PreparingToSummonPillars => "preparing_to_summon_pillars",
+            Self::SummoningPillars => "summoning_pillars",
+            Self::SummoningDragon => "summoning_dragon",
+            Self::End => "end",
+        }
+    }
+
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        Some(match name {
+            "start" => Self::Start,
+            "preparing_to_summon_pillars" => Self::PreparingToSummonPillars,
+            "summoning_pillars" => Self::SummoningPillars,
+            "summoning_dragon" => Self::SummoningDragon,
+            "end" => Self::End,
+            _ => return None,
+        })
+    }
+}
+
 // ── DragonFight ───────────────────────────────────────────────────────────────
 
 pub struct DragonFight {
@@ -76,6 +103,10 @@ pub struct DragonFight {
     // ── Boss bar ──────────────────────────────────────────────────────────────
     bossbar_uuid: Uuid,
     bossbar_players: Vec<Uuid>,
+
+    // ── Arena ticket and saved data ───────────────────────────────────────────
+    arena_ticket: bool,
+    ticks_since_save: i32,
 }
 
 impl Default for DragonFight {
@@ -124,6 +155,129 @@ impl DragonFight {
             ticks_since_last_player_scan: TIME_BETWEEN_PLAYER_SCANS + 1,
             bossbar_uuid: Uuid::new_v4(),
             bossbar_players: Vec::new(),
+            arena_ticket: false,
+            ticks_since_save: 0,
+        }
+    }
+
+    fn save_path(world: &World) -> std::path::PathBuf {
+        world
+            .level
+            .level_folder
+            .dim_folder
+            .join("data")
+            .join("minecraft")
+            .join("ender_dragon_fight.dat")
+    }
+
+    /// Vanilla `EnderDragonFight.CODEC`.
+    fn to_nbt(&self) -> pumpkin_nbt::compound::NbtCompound {
+        let mut nbt = pumpkin_nbt::compound::NbtCompound::new();
+        nbt.put_bool("needs_state_scanning", self.needs_state_scanning);
+        nbt.put_bool("dragon_killed", self.dragon_killed);
+        nbt.put_bool("previously_killed", self.previously_killed);
+        if let Some(stage) = self.respawn_stage {
+            nbt.put_string("respawn_stage", stage.name().to_string());
+        }
+        nbt.put_int("respawn_time", self.respawn_time);
+        if let Some(uuid) = self.dragon_uuid {
+            nbt.put_uuid("dragon_uuid", uuid);
+        }
+        if let Some(pos) = self.exit_portal_location {
+            nbt.put(
+                "exit_portal_location",
+                pumpkin_nbt::tag::NbtTag::IntArray(vec![pos.0.x, pos.0.y, pos.0.z]),
+            );
+        }
+        nbt.put(
+            "gateways",
+            pumpkin_nbt::tag::NbtTag::IntArray(self.gateways.clone()),
+        );
+        let crystals: Vec<i32> = self
+            .respawn_crystals
+            .iter()
+            .flat_map(|uuid| {
+                let (high, low) = uuid.as_u64_pair();
+                [
+                    (high >> 32) as i32,
+                    high as i32,
+                    (low >> 32) as i32,
+                    low as i32,
+                ]
+            })
+            .collect();
+        nbt.put(
+            "respawn_crystals",
+            pumpkin_nbt::tag::NbtTag::IntArray(crystals),
+        );
+        nbt
+    }
+
+    fn apply_nbt(&mut self, nbt: &pumpkin_nbt::compound::NbtCompound) {
+        self.needs_state_scanning = nbt.get_bool("needs_state_scanning").unwrap_or(true);
+        self.dragon_killed = nbt.get_bool("dragon_killed").unwrap_or(false);
+        self.previously_killed = nbt.get_bool("previously_killed").unwrap_or(false);
+        self.respawn_stage = nbt
+            .get_string("respawn_stage")
+            .and_then(DragonRespawnStage::from_name);
+        self.respawn_time = nbt.get_int("respawn_time").unwrap_or(0);
+        self.dragon_uuid = nbt.get_uuid("dragon_uuid");
+        self.exit_portal_location =
+            nbt.get_int_array("exit_portal_location")
+                .and_then(|pos| match pos {
+                    [x, y, z] => Some(BlockPos::new(*x, *y, *z)),
+                    _ => None,
+                });
+        if let Some(gateways) = nbt.get_int_array("gateways") {
+            self.gateways = gateways.to_vec();
+        }
+        if let Some(crystals) = nbt.get_int_array("respawn_crystals") {
+            self.respawn_crystals = (0..crystals.len() / 4)
+                .map(|i| {
+                    let ints = &crystals[i * 4..i * 4 + 4];
+                    let high = (u64::from(ints[0] as u32) << 32) | u64::from(ints[1] as u32);
+                    let low = (u64::from(ints[2] as u32) << 32) | u64::from(ints[3] as u32);
+                    Uuid::from_u64_pair(high, low)
+                })
+                .collect();
+        }
+    }
+
+    /// Fight from the saved data of the End dimension folder, or a fresh one.
+    #[must_use]
+    pub fn load(dim_folder: &std::path::Path) -> Self {
+        let mut fight = Self::new();
+        let path = dim_folder
+            .join("data")
+            .join("minecraft")
+            .join("ender_dragon_fight.dat");
+        if let Ok(file) = std::fs::File::open(&path) {
+            match pumpkin_nbt::nbt_compress::read_gzip_compound_tag(file) {
+                Ok(nbt) => fight.apply_nbt(&nbt),
+                Err(error) => {
+                    tracing::warn!("Could not read the ender dragon fight data: {error}");
+                }
+            }
+        }
+        fight
+    }
+
+    pub fn save(&self, world: &World) {
+        let path = Self::save_path(world);
+        if let Some(parent) = path.parent()
+            && let Err(error) = std::fs::create_dir_all(parent)
+        {
+            tracing::warn!("Could not create the ender dragon fight folder: {error}");
+            return;
+        }
+        let result = std::fs::File::create(&path)
+            .map_err(|error| error.to_string())
+            .and_then(|file| {
+                pumpkin_nbt::nbt_compress::write_gzip_compound_tag(self.to_nbt(), file)
+                    .map_err(|error| error.to_string())
+            });
+        if let Err(error) = result {
+            tracing::warn!("Could not save the ender dragon fight: {error}");
         }
     }
 
@@ -163,9 +317,17 @@ impl DragonFight {
             fight.ticks_since_last_player_scan = 0;
         }
 
-        // Nothing to do without nearby players
+        // The arena stays loaded while a player takes part (TicketType.DRAGON, radius 9).
         if fight.bossbar_players.is_empty() {
+            fight.set_arena_ticket(world, false);
             return;
+        }
+        fight.set_arena_ticket(world, true);
+
+        fight.ticks_since_save += 1;
+        if fight.ticks_since_save >= 6000 {
+            fight.ticks_since_save = 0;
+            fight.save(world);
         }
 
         if !fight.is_arena_loaded(world) {
@@ -203,6 +365,28 @@ impl DragonFight {
         }
     }
 
+    fn set_arena_ticket(&mut self, world: &World, active: bool) {
+        if self.arena_ticket == active {
+            return;
+        }
+        self.arena_ticket = active;
+        let level = pumpkin_world::chunk_system::ChunkLoading::get_level_from_simulation_distance(
+            ARENA_TICKET_LEVEL as u8,
+        );
+        let pos = Vector2::new(0, 0);
+        let mut chunk_loading = world
+            .level
+            .chunk_loading
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if active {
+            chunk_loading.add_ticket(pos, level);
+        } else {
+            chunk_loading.remove_ticket(pos, level);
+        }
+        chunk_loading.send_change();
+    }
+
     // ── State scanning ────────────────────────────────────────────────────────
 
     pub fn scan_state(&mut self, world: &Arc<World>) {
@@ -227,7 +411,7 @@ impl DragonFight {
             let entities = world.entities.load();
             entities
                 .iter()
-                .find(|e| e.get_entity().entity_type == &EntityType::ENDER_DRAGON)
+                .find(|e| e.cast_any().is::<EnderDragonEntity>())
                 .map(|e| (e.get_entity().entity_uuid, e.clone()))
         };
 
@@ -384,17 +568,14 @@ impl DragonFight {
         if self.skip_arena_loaded_check {
             return true;
         }
-        let center_chunk_x = self.origin.0.x >> 4;
-        let center_chunk_z = self.origin.0.z >> 4;
-        for dx in -3..=3 {
-            for dz in -3..=3 {
-                let cp = Vector2::new(center_chunk_x + dx, center_chunk_z + dz);
-                if !world.level.is_chunk_loaded(&cp) {
-                    return false;
-                }
-            }
-        }
-        true
+        // vanilla only checks the row at z + 8 of the arena
+        let chunk_x = self.origin.0.x >> 4;
+        let chunk_z = (self.origin.0.z >> 4) + 8;
+        (-8..=8).all(|dx| {
+            world
+                .level
+                .is_chunk_loaded(&Vector2::new(chunk_x + dx, chunk_z))
+        })
     }
 
     // ── Dragon lifecycle ──────────────────────────────────────────────────────
@@ -404,7 +585,7 @@ impl DragonFight {
             let entities = world.entities.load();
             entities
                 .iter()
-                .find(|e| e.get_entity().entity_type == &EntityType::ENDER_DRAGON)
+                .find(|e| e.cast_any().is::<EnderDragonEntity>())
                 .map(|e| e.get_entity().entity_uuid)
         };
 
@@ -424,20 +605,21 @@ impl DragonFight {
         }
 
         let uuid = Uuid::new_v4();
-        let spawn_y = self.origin.0.y + DRAGON_SPAWN_Y;
         let position = Vector3::new(
-            self.origin.0.x as f64 + 0.5,
-            spawn_y as f64,
-            self.origin.0.z as f64 + 0.5,
+            f64::from(self.origin.0.x),
+            f64::from(DRAGON_SPAWN_Y + self.origin.0.y),
+            f64::from(self.origin.0.z),
         );
         let dragon =
             crate::entity::r#type::from_type(&EntityType::ENDER_DRAGON, position, world, uuid);
 
-        if let Some(dragon_entity) = dragon
-            .cast_any()
-            .downcast_ref::<crate::entity::boss::ender_dragon::EnderDragonEntity>(
-        ) {
-            dragon_entity.set_fight_origin(self.exit_portal_location.unwrap_or(self.origin));
+        if let Some(dragon_entity) = dragon.cast_any().downcast_ref::<EnderDragonEntity>() {
+            dragon_entity.set_fight_origin(self.origin);
+            dragon_entity.set_phase(EnderDragonPhase::HoldingPattern);
+            dragon_entity
+                .get_entity()
+                .yaw
+                .store(rand::random::<f32>() * 360.0);
         }
 
         world.spawn_entity_non_save(dragon);
@@ -470,20 +652,6 @@ impl DragonFight {
         if let Some(name) = custom_name {
             self.update_bossbar_title(world, name);
         }
-
-        if let Some(loc) = self.exit_portal_location
-            && let Some(dragon_uuid) = self.dragon_uuid
-            && let Some(e) = world
-                .entities
-                .load()
-                .iter()
-                .find(|e| e.get_entity().entity_uuid == dragon_uuid)
-            && let Some(dragon) = e
-                .cast_any()
-                .downcast_ref::<crate::entity::boss::ender_dragon::EnderDragonEntity>()
-        {
-            dragon.set_fight_origin(loc);
-        }
     }
 
     pub fn set_dragon_killed(&mut self, world: &Arc<World>, killed_uuid: Uuid) {
@@ -500,20 +668,23 @@ impl DragonFight {
         // Spawn a new end gateway.
         self.spawn_new_gateway(world);
 
-        // Place the dragon egg on the first kill.
+        // Place the dragon egg on the first kill (EnderDragonFight.setDragonKilled).
         if !self.previously_killed {
-            let podium_pos = self.exit_portal_location.unwrap_or(self.origin);
-            let egg_pos = BlockPos::new(podium_pos.0.x, podium_pos.0.y + 4, podium_pos.0.z);
+            let podium = end_podium::get_location(self.origin);
+            let y = world.get_heightmap_height(
+                pumpkin_world::chunk::ChunkHeightmapType::MotionBlocking,
+                podium.0.x,
+                podium.0.z,
+            );
             world.set_block_state(
-                &egg_pos,
+                &BlockPos::new(podium.0.x, y, podium.0.z),
                 Block::DRAGON_EGG.default_state.id,
-                BlockFlags::NOTIFY_LISTENERS,
+                BlockFlags::NOTIFY_ALL,
             );
         }
 
         self.previously_killed = true;
         self.dragon_killed = true;
-        self.dragon_uuid = None;
     }
 
     pub fn update_crystal_count(&mut self, world: &Arc<World>) {
@@ -546,11 +717,14 @@ impl DragonFight {
 
     // ── Crystal destruction ───────────────────────────────────────────────────
 
-    pub fn on_crystal_destroyed(&mut self, world: &Arc<World>, crystal_uuid: Uuid) {
+    /// Vanilla `onCrystalDestroyed`; the dragon to tell (outside the fight lock) when there is one.
+    pub fn on_crystal_destroyed(&mut self, world: &Arc<World>, crystal_uuid: Uuid) -> Option<Uuid> {
         if self.respawn_stage.is_some() && self.respawn_crystals.contains(&crystal_uuid) {
             self.abort_respawn_sequence(world);
+            None
         } else {
             self.update_crystal_count(world);
+            self.dragon_uuid
         }
     }
 
@@ -731,11 +905,7 @@ impl DragonFight {
                                             spike.height + dy,
                                             spike.center_z + dz,
                                         );
-                                        let block = world.get_block(&pos);
-                                        if block != &Block::BEDROCK
-                                            && block != &Block::OBSIDIAN
-                                            && block != &Block::AIR
-                                        {
+                                        if world.get_block(&pos) != &Block::AIR {
                                             world.set_block_state(
                                                 &pos,
                                                 Block::AIR.default_state.id,
@@ -775,25 +945,8 @@ impl DragonFight {
                 } else if time >= 80 {
                     world.sync_world_event(WorldEvent::AnimationDragonSummonRoar, origin_target, 0);
                 } else if time == 0 {
-                    let spikes = Self::get_spikes();
-                    for spike in &spikes {
-                        let (min_x, min_y, min_z, max_x, max_y, max_z) = spike.top_bounding_box();
-                        for entity in entities.iter() {
-                            if entity.get_entity().entity_type == &EntityType::END_CRYSTAL {
-                                let p = entity.get_entity().pos.load();
-                                if p.x >= min_x
-                                    && p.x <= max_x
-                                    && p.y >= min_y
-                                    && p.y <= max_y
-                                    && p.z >= min_z
-                                    && p.z <= max_z
-                                    && let Some(crystal) =
-                                        entity.cast_any().downcast_ref::<EndCrystalEntity>()
-                                {
-                                    crystal.set_beam_target(Some(origin_target));
-                                }
-                            }
-                        }
+                    for crystal in &live_crystals {
+                        crystal.set_beam_target(Some(origin_target));
                     }
                 } else if time < 5 {
                     world.sync_world_event(WorldEvent::AnimationDragonSummonRoar, origin_target, 0);
@@ -902,15 +1055,6 @@ impl DragonFight {
     }
 
     pub fn spawn_new_gateway(&mut self, world: &Arc<World>) {
-        use rand::seq::SliceRandom;
-
-        if self.gateways.is_empty() {
-            let mut new_gateways: Vec<i32> = (0..(GATEWAY_COUNT as i32)).collect();
-            let mut rng = rand::rng();
-            new_gateways.shuffle(&mut rng);
-            self.gateways = new_gateways;
-        }
-
         if let Some(gateway) = self.gateways.pop() {
             let angle =
                 2.0 * (-std::f64::consts::PI + (std::f64::consts::PI / 20.0) * gateway as f64);
@@ -1009,17 +1153,23 @@ impl DragonFight {
 
     pub fn spawn_exit_portal(&mut self, world: &Arc<World>, active: bool) {
         if self.exit_portal_location.is_none() {
-            let mut portal_y = 65;
-            for y in (50..=100).rev() {
-                let b = world.get_block(&BlockPos::new(self.origin.0.x, y, self.origin.0.z));
-                if b == &Block::END_STONE || b == &Block::BEDROCK {
-                    portal_y = y;
-                    break;
-                }
+            let podium = end_podium::get_location(self.origin);
+            let surface = world.get_heightmap_height(
+                pumpkin_world::chunk::ChunkHeightmapType::MotionBlockingNoLeaves,
+                podium.0.x,
+                podium.0.z,
+            );
+            let mut y = surface - 1;
+            while y > 63
+                && world.get_block(&BlockPos::new(podium.0.x, y, podium.0.z)) == &Block::BEDROCK
+            {
+                y -= 1;
             }
-
-            self.exit_portal_location =
-                Some(BlockPos::new(self.origin.0.x, portal_y, self.origin.0.z));
+            self.exit_portal_location = Some(BlockPos::new(
+                podium.0.x,
+                y.max(world.min_y + 1),
+                podium.0.z,
+            ));
         }
 
         if let Some(loc) = self.exit_portal_location {
@@ -1134,5 +1284,39 @@ impl DragonFight {
     #[must_use]
     pub const fn dragon_uuid(&self) -> Option<Uuid> {
         self.dragon_uuid
+    }
+}
+
+#[cfg(test)]
+mod saved_data_tests {
+    use super::*;
+
+    #[test]
+    fn fight_data_round_trips() {
+        let mut fight = DragonFight::new_with_seed(7, BlockPos::new(0, 0, 0));
+        fight.needs_state_scanning = false;
+        fight.dragon_killed = true;
+        fight.previously_killed = true;
+        fight.respawn_stage = Some(DragonRespawnStage::SummoningPillars);
+        fight.respawn_time = 85;
+        fight.dragon_uuid = Some(Uuid::from_u128(0x0123_4567_89ab_cdef_0123_4567_89ab_cdef));
+        fight.exit_portal_location = Some(BlockPos::new(0, 64, 0));
+        fight.gateways.truncate(5);
+        fight.respawn_crystals = vec![Uuid::from_u128(1), Uuid::from_u128(u128::MAX)];
+
+        let mut loaded = DragonFight::new();
+        loaded.apply_nbt(&fight.to_nbt());
+
+        assert!(!loaded.needs_state_scanning);
+        assert!(loaded.dragon_killed && loaded.previously_killed);
+        assert_eq!(
+            loaded.respawn_stage,
+            Some(DragonRespawnStage::SummoningPillars)
+        );
+        assert_eq!(loaded.respawn_time, 85);
+        assert_eq!(loaded.dragon_uuid, fight.dragon_uuid);
+        assert_eq!(loaded.exit_portal_location, fight.exit_portal_location);
+        assert_eq!(loaded.gateways, fight.gateways);
+        assert_eq!(loaded.respawn_crystals, fight.respawn_crystals);
     }
 }

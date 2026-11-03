@@ -393,7 +393,7 @@ struct DolphinJumpGoal {
 const JUMP_STEPS_TO_CHECK: [i32; 6] = [0, 1, 4, 5, 6, 7];
 
 impl DolphinJumpGoal {
-    fn new(interval: i32) -> Self {
+    const fn new(interval: i32) -> Self {
         Self {
             interval: to_goal_ticks(interval),
             breached: false,

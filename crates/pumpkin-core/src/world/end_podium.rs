@@ -42,7 +42,7 @@ fn drop_previous_and_set_block(world: &Arc<World>, pos: &BlockPos, block: &Block
 /// Place the podium structure centred on `origin` into `world`.
 pub fn place(world: &Arc<World>, origin: BlockPos, active: bool) {
     let ox = origin.0.x;
-    let oy = if origin.0.y < 50 { 65 } else { origin.0.y };
+    let oy = origin.0.y;
     let oz = origin.0.z;
 
     for y in (oy - 1)..=(oy + 32) {

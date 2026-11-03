@@ -362,6 +362,7 @@ impl World {
     }
 
     #[must_use]
+    #[expect(clippy::too_many_lines)]
     pub fn load(
         level: Arc<Level>,
         level_info: Arc<ArcSwap<LevelData>>,
@@ -374,8 +375,12 @@ impl World {
 
         // Load portal POI from disk (PoiStorage::new automatically loads from disk if files exist)
         let portal_poi = portal::PortalPoiStorage::new(level.level_folder.poi_folder.clone());
-        let dragon_fight = (dimension.minecraft_name == Dimension::THE_END.minecraft_name)
-            .then(|| std::sync::Mutex::new(dragon_fight::DragonFight::new()));
+        let dragon_fight =
+            (dimension.minecraft_name == Dimension::THE_END.minecraft_name).then(|| {
+                std::sync::Mutex::new(dragon_fight::DragonFight::load(
+                    &level.level_folder.dim_folder,
+                ))
+            });
 
         let custom_data_path = level
             .level_folder
@@ -702,6 +707,13 @@ impl World {
             self.save_block_entities(chunk_pos);
         }
 
+        if let Some(fight) = self.dragon_fight.as_ref() {
+            fight
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .save(self);
+        }
+
         // Save portal POI to disk
         let save_result = self
             .portal_poi
@@ -726,7 +738,10 @@ impl World {
         let mut groups: FxHashMap<Vector2<i32>, Vec<NbtCompound>> = FxHashMap::default();
         for entity in entities {
             let base_entity = entity.get_entity();
-            if base_entity.is_removed() || is_saved_as_passenger(entity.as_ref()) {
+            if base_entity.is_removed()
+                || entity.is_sub_entity()
+                || is_saved_as_passenger(entity.as_ref())
+            {
                 continue;
             }
             let mut nbt = NbtCompound::new();
@@ -5142,6 +5157,29 @@ impl World {
         self.add_pending_riders(&entity);
     }
 
+    /// Adds parts of a multi-part entity to the world without a tracker or spawn packet.
+    pub fn add_sub_entities(&self, parts: &[Arc<dyn EntityBase>]) {
+        self.entities.rcu(|current_entities| {
+            let mut new_entities = (**current_entities).clone();
+            for part in parts {
+                if !new_entities
+                    .iter()
+                    .any(|e| e.get_entity().entity_uuid == part.get_entity().entity_uuid)
+                {
+                    new_entities.push(part.clone());
+                }
+            }
+            new_entities
+        });
+    }
+
+    /// Removes parts added with [`Self::add_sub_entities`].
+    pub fn remove_sub_entities(&self, parts: &[Arc<dyn EntityBase>]) {
+        for part in parts {
+            self.remove_entity(part.as_ref());
+        }
+    }
+
     /// Records the sequential order of an entity spawned while an entity ticks.
     fn record_tick_spawn(&self, entity_id: i32) {
         if let Some(order) = order::next_entity_order() {
@@ -5301,8 +5339,10 @@ impl World {
         }
         base_entity.removed.store(true, Ordering::Release);
 
-        self.spawn_state.load().remove_entity(self, entity);
-        self.entity_tracker.remove_entity(entity, self);
+        if !entity.is_sub_entity() {
+            self.spawn_state.load().remove_entity(self, entity);
+            self.entity_tracker.remove_entity(entity, self);
+        }
         self.entities.rcu(|current_entities| {
             let mut new_entities = (**current_entities).clone();
             new_entities.retain(|e| e.get_entity().entity_uuid != base_entity.entity_uuid);
@@ -5350,8 +5390,10 @@ impl World {
             {
                 base.removed.store(true, Ordering::Release);
             }
-            self.entity_tracker.remove_entity(entity.as_ref(), self);
-            self.spawn_state.load().remove_entity(self, entity.as_ref());
+            if !entity.is_sub_entity() {
+                self.entity_tracker.remove_entity(entity.as_ref(), self);
+                self.spawn_state.load().remove_entity(self, entity.as_ref());
+            }
             if let Some(mob) = entity.get_mob() {
                 mob.get_mob_entity().finish_removal(mob);
             }

@@ -1,18 +1,32 @@
+//! Ender dragon, ported from `net.minecraft.world.entity.boss.enderdragon.EnderDragon`,
+//! `EnderDragonPart` and the node pathfinding it uses.
+
+use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
+
+use pumpkin_data::BlockStateId;
+use pumpkin_data::attributes::Attributes;
 use pumpkin_data::damage::DamageType;
 use pumpkin_data::entity::EntityType;
-use pumpkin_data::{Block, BlockStateId};
+use pumpkin_data::tag::{self, Taggable};
+use pumpkin_data::tracked_data;
+use pumpkin_data::world::WorldEvent;
+use pumpkin_nbt::compound::NbtCompound;
+use pumpkin_util::GameMode;
+use pumpkin_util::math::boundingbox::{BoundingBox, EntityDimensions};
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
-use pumpkin_world::{chunk::ChunkHeightmapType, world::BlockFlags};
-use std::sync::atomic::Ordering;
-use std::sync::{Arc, Mutex};
+use pumpkin_util::math::wrap_degrees;
+use pumpkin_world::chunk::ChunkHeightmapType;
+use pumpkin_world::world::BlockFlags;
 
-use crate::entity::{
-    Entity, EntityBase,
-    living::LivingEntity,
-    mob::{Mob, MobEntity},
-    player::Player,
-};
+use crate::entity::experience_orb::ExperienceOrbEntity;
+use crate::entity::mob::{Mob, MobEntity};
+use crate::entity::player::Player;
+use crate::entity::{Entity, EntityBase};
+use crate::plugin::api::events::entity::ender_dragon_change_phase::EnderDragonChangePhaseEvent;
+use crate::server::Server;
+use crate::world::World;
 
 pub mod flight_history;
 pub mod phase;
@@ -21,14 +35,6 @@ use flight_history::DragonFlightHistory;
 use phase::{EnderDragonPhase, PhaseManager};
 
 pub const NODE_COUNT: usize = 24;
-pub const NODE_Y: i32 = 105;
-pub const NODE_REACH_SQ: f64 = 64.0;
-pub const DEATH_TIMER_MAX: i32 = 200;
-const GROWL_COOLDOWN_BASE: i32 = 200;
-const FLAP_SPEED: f32 = 0.2;
-pub const FLY_ACCEL: f64 = 0.1;
-pub const FLY_SPEED: f64 = 0.6;
-const ARENA_RADIUS: f64 = 192.0;
 
 const NODE_ADJACENCY: [u32; NODE_COUNT] = [
     6146, 8197, 8202, 16404, 32808, 32848, 65696, 131392, 131712, 263424, 526848, 525313, 1581057,
@@ -36,140 +42,174 @@ const NODE_ADJACENCY: [u32; NODE_COUNT] = [
     8257536,
 ];
 
-#[derive(Clone, Copy, Default, Debug)]
-pub struct DragonNode {
-    pub x: f64,
-    pub y: f64,
-    pub z: f64,
+const DEATH_TICKS: i32 = 200;
+const SITTING_ALLOWED_DAMAGE_PERCENTAGE: f32 = 0.25;
+
+fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex.lock().unwrap_or_else(PoisonError::into_inner)
 }
 
-impl DragonNode {
-    #[must_use]
-    pub const fn new(x: f64, y: f64, z: f64) -> Self {
-        Self { x, y, z }
+/// Vanilla `Node` of the dragon's flight graph.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct Node {
+    pub x: i32,
+    pub y: i32,
+    pub z: i32,
+}
+
+impl Node {
+    fn distance_to(self, other: Self) -> f32 {
+        self.distance_to_sqr(other).sqrt()
     }
 
-    #[inline]
-    #[must_use]
-    pub fn dist_sq(&self, other: &Self) -> f64 {
-        let (dx, dy, dz) = (self.x - other.x, self.y - other.y, self.z - other.z);
+    fn distance_to_sqr(self, other: Self) -> f32 {
+        let dx = (other.x - self.x) as f32;
+        let dy = (other.y - self.y) as f32;
+        let dz = (other.z - self.z) as f32;
         dx * dx + dy * dy + dz * dz
     }
+}
 
-    #[inline]
+/// Vanilla `Path`: nodes plus the index of the next one.
+#[derive(Clone, Debug)]
+pub struct DragonPath {
+    nodes: Vec<Node>,
+    next: usize,
+}
+
+impl DragonPath {
     #[must_use]
-    pub fn dist_sq_vec(&self, v: Vector3<f64>) -> f64 {
-        let (dx, dy, dz) = (self.x - v.x, self.y - v.y, self.z - v.z);
-        dx * dx + dy * dy + dz * dz
+    pub const fn is_done(&self) -> bool {
+        self.next >= self.nodes.len()
     }
 
-    #[inline]
+    pub const fn advance(&mut self) {
+        self.next += 1;
+    }
+
+    /// Vanilla `getNextNodePos`, only valid while not done.
     #[must_use]
-    pub const fn as_vec3(&self) -> Vector3<f64> {
-        Vector3::new(self.x, self.y, self.z)
+    pub fn next_node(&self) -> Node {
+        self.nodes[self.next.min(self.nodes.len() - 1)]
     }
 }
 
-#[derive(PartialEq, Clone, Copy)]
-struct OrderedFloat(f64);
-
-impl Eq for OrderedFloat {}
-
-impl PartialOrd for OrderedFloat {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for OrderedFloat {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.0.total_cmp(&other.0)
-    }
-}
-
+/// Vanilla `EnderDragon.findPath`, `min_index` is 12 while no crystal is alive.
 #[must_use]
-pub fn find_path(
-    nodes: &[Option<DragonNode>; NODE_COUNT],
-    from: usize,
-    to: usize,
-    final_node: Option<DragonNode>,
-) -> Vec<usize> {
-    if from == to && final_node.is_none() {
-        return vec![];
-    }
-
-    let mut g = [f64::MAX; NODE_COUNT];
-    let mut came_from = [NODE_COUNT; NODE_COUNT];
+pub fn find_path_between(
+    nodes: &[Node; NODE_COUNT],
+    start: usize,
+    end: usize,
+    final_node: Option<Node>,
+    min_index: usize,
+) -> Option<DragonPath> {
+    let mut g = [0.0f32; NODE_COUNT];
+    let mut f = [0.0f32; NODE_COUNT];
     let mut closed = [false; NODE_COUNT];
-    let mut open: std::collections::BinaryHeap<(OrderedFloat, usize)> =
-        std::collections::BinaryHeap::new();
+    let mut in_open = [false; NODE_COUNT];
+    let mut came_from: [Option<usize>; NODE_COUNT] = [None; NODE_COUNT];
 
-    let h = |n: usize| -> f64 {
-        if let Some(target) = final_node
-            && let Some(node) = nodes[n]
-        {
-            return node.dist_sq(&target).sqrt();
+    let target = nodes[end];
+    f[start] = nodes[start].distance_to(target);
+    let mut open = vec![start];
+    in_open[start] = true;
+    let mut closest = start;
+
+    let reconstruct = |last: usize, came_from: &[Option<usize>; NODE_COUNT]| {
+        let mut path = vec![nodes[last]];
+        let mut node = last;
+        while let Some(previous) = came_from[node] {
+            node = previous;
+            path.push(nodes[node]);
         }
-        match (nodes[n], nodes[to]) {
-            (Some(a), Some(b)) => a.dist_sq(&b).sqrt(),
-            _ => 0.0,
+        path.reverse();
+        if let Some(final_node) = final_node {
+            path.push(final_node);
+        }
+        DragonPath {
+            nodes: path,
+            next: 0,
         }
     };
 
-    g[from] = 0.0;
-    open.push((OrderedFloat(-h(from)), from));
+    while !open.is_empty() {
+        let (position, &current) = open
+            .iter()
+            .enumerate()
+            .min_by(|a, b| f[*a.1].total_cmp(&f[*b.1]))
+            .unwrap_or((0, &start));
+        open.swap_remove(position);
+        in_open[current] = false;
 
-    'outer: while let Some((_, cur)) = open.pop() {
-        if closed[cur] {
-            continue;
+        if nodes[current] == target {
+            return Some(reconstruct(current, &came_from));
         }
-        if cur == to {
-            break 'outer;
+        if nodes[current].distance_to(target) < nodes[closest].distance_to(target) {
+            closest = current;
         }
-        closed[cur] = true;
+        closed[current] = true;
 
-        let adj = NODE_ADJACENCY[cur];
-        for nbr in 0..NODE_COUNT {
-            if (adj >> nbr) & 1 == 0 || closed[nbr] {
+        for adjacent in min_index..NODE_COUNT {
+            if NODE_ADJACENCY[current] & (1 << adjacent) == 0 || closed[adjacent] {
                 continue;
             }
-            let (Some(cn), Some(nn)) = (nodes[cur], nodes[nbr]) else {
-                continue;
-            };
-            let ng = g[cur] + cn.dist_sq(&nn).sqrt();
-            if ng < g[nbr] {
-                g[nbr] = ng;
-                came_from[nbr] = cur;
-                open.push((OrderedFloat(-(ng + h(nbr))), nbr));
+            let tentative = g[current] + nodes[current].distance_to(nodes[adjacent]);
+            if !in_open[adjacent] || tentative < g[adjacent] {
+                came_from[adjacent] = Some(current);
+                g[adjacent] = tentative;
+                f[adjacent] = tentative + nodes[adjacent].distance_to(target);
+                if !in_open[adjacent] {
+                    open.push(adjacent);
+                    in_open[adjacent] = true;
+                }
             }
         }
     }
 
-    let mut path = Vec::new();
-    let mut cur = to;
-    while cur != NODE_COUNT {
-        path.push(cur);
-        cur = came_from[cur];
-    }
-    path.reverse();
-    if path.first() == Some(&from) {
-        path.remove(0);
-    }
-    path
+    (closest != start).then(|| reconstruct(closest, &came_from))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PartKind {
+    Head,
+    Neck,
+    Body,
+    Tail1,
+    Tail2,
+    Tail3,
+    Wing1,
+    Wing2,
+}
+
+impl PartKind {
+    const ALL: [Self; 8] = [
+        Self::Head,
+        Self::Neck,
+        Self::Body,
+        Self::Tail1,
+        Self::Tail2,
+        Self::Tail3,
+        Self::Wing1,
+        Self::Wing2,
+    ];
+
+    const fn size(self) -> (f32, f32) {
+        match self {
+            Self::Head => (1.0, 1.0),
+            Self::Neck => (3.0, 3.0),
+            Self::Body => (5.0, 3.0),
+            Self::Tail1 | Self::Tail2 | Self::Tail3 => (2.0, 2.0),
+            Self::Wing1 | Self::Wing2 => (4.0, 2.0),
+        }
+    }
+}
+
+/// Vanilla `EnderDragonPart`: a hit box of the dragon that damages it.
 pub struct EnderDragonPart {
     pub entity: Entity,
-    pub dragon_uuid: uuid::Uuid,
-}
-
-impl EnderDragonPart {
-    pub const fn new(entity: Entity, dragon_uuid: uuid::Uuid) -> Self {
-        Self {
-            entity,
-            dragon_uuid,
-        }
-    }
+    pub kind: PartKind,
+    dragon_uuid: uuid::Uuid,
+    dragon: Weak<EnderDragonEntity>,
 }
 
 impl EntityBase for EnderDragonPart {
@@ -177,687 +217,983 @@ impl EntityBase for EnderDragonPart {
         &self.entity
     }
 
-    fn damage(&self, source: &dyn EntityBase, amount: f32, damage_type: DamageType) -> bool {
-        let world = self.entity.world.load();
-        if let Some(dragon_base) = world
-            .entities
-            .load()
-            .iter()
-            .find(|e| e.get_entity().entity_uuid == self.dragon_uuid)
-        {
-            return dragon_base.damage(source, amount, damage_type);
-        }
-        false
+    fn get_living_entity(&self) -> Option<&crate::entity::living::LivingEntity> {
+        None
     }
 
     fn cast_any(&self) -> &dyn std::any::Any {
         self
     }
 
-    fn get_living_entity(&self) -> Option<&LivingEntity> {
-        None
-    }
+    fn tick(&self, _caller: &dyn EntityBase, _server: &Server) {}
+
     fn can_hit(&self) -> bool {
         true
     }
+
+    fn is_sub_entity(&self) -> bool {
+        true
+    }
+
+    fn parent_entity_uuid(&self) -> Option<uuid::Uuid> {
+        Some(self.dragon_uuid)
+    }
+
+    fn damage_with_context(
+        &self,
+        _caller: &dyn EntityBase,
+        amount: f32,
+        damage_type: DamageType,
+        position: Option<Vector3<f64>>,
+        source: Option<&dyn EntityBase>,
+        cause: Option<&dyn EntityBase>,
+    ) -> bool {
+        self.dragon.upgrade().is_some_and(|dragon| {
+            dragon.hurt_part(self.kind, amount, damage_type, position, source, cause)
+        })
+    }
+}
+
+struct DragonInner {
+    y_rot_a: f32,
+    in_wall: bool,
+    flight_history: DragonFlightHistory,
+    nodes: Option<[Node; NODE_COUNT]>,
+    sitting_damage_received: f32,
+    nearest_crystal: Option<Arc<dyn EntityBase>>,
 }
 
 pub struct EnderDragonEntity {
     pub mob_entity: MobEntity,
     pub parts: Vec<Arc<EnderDragonPart>>,
-
-    pub flight_history: Mutex<DragonFlightHistory>,
-    pub flap_time: Mutex<f32>,
-    pub o_flap_time: Mutex<f32>,
-
-    pub in_wall: Mutex<bool>,
-    pub dragon_death_time: Mutex<i32>,
-    pub sitting_damage_received: Mutex<f32>,
-
-    pub nodes_initialized: Mutex<bool>,
-
-    pub fight_origin: Mutex<BlockPos>,
-
-    pub phase_manager: PhaseManager,
-    pub phase: Mutex<EnderDragonPhase>,
-    pub growl_time: Mutex<i32>,
-    pub yaw_rot_accel: Mutex<f32>,
-    pub holding_pattern_clockwise: Mutex<bool>,
-    pub target_location: Mutex<Option<Vector3<f64>>>,
-    pub fireball_charge: Mutex<i32>,
-
-    pub nodes: Mutex<[Option<DragonNode>; NODE_COUNT]>,
-    pub path: Mutex<Vec<usize>>,
-    pub target_node: Mutex<usize>,
-
-    pub strafe_target: Mutex<Option<Vector3<f64>>>,
-    pub target_player: Mutex<Option<uuid::Uuid>>,
-    pub ticks_sitting: Mutex<i32>,
-    pub sit_attack_timer: Mutex<i32>,
-    pub breathing_timer: Mutex<i32>,
+    inner: Mutex<DragonInner>,
+    phases: PhaseManager,
+    fight_origin: Mutex<BlockPos>,
+    fight_linked: AtomicBool,
+    alive_crystals: AtomicI32,
+    dragon_death_time: AtomicI32,
+    parts_registered: AtomicBool,
 }
 
 impl EnderDragonEntity {
     pub fn new(entity: Entity) -> Arc<Self> {
         entity.no_physics.store(true, Ordering::Relaxed);
-        let base_id = entity.entity_id;
+        let world = entity.world.load_full();
         let dragon_uuid = entity.entity_uuid;
-        let world = entity.world.load();
-
-        let _ = Entity::reserve_ids(8);
-
-        let mut parts = Vec::new();
-        for i in 1..=8 {
-            let part_entity = Entity::from_uuid_with_id(
-                base_id + i,
-                uuid::Uuid::new_v4(),
-                world.clone(),
-                entity.pos.load(),
-                &EntityType::ENDER_DRAGON,
-            );
-            let part = Arc::new(EnderDragonPart::new(part_entity, dragon_uuid));
-            // TODO: world.add_entity_silent(part.clone() as Arc<dyn EntityBase>);
-            parts.push(part);
+        let pos = entity.pos.load();
+        let dragon_id = entity.entity_id;
+        // the client numbers the parts after the dragon, in the order of PartKind::ALL
+        let contiguous = Entity::reserve_ids_after(dragon_id, PartKind::ALL.len() as i32);
+        if !contiguous {
+            tracing::warn!("ender dragon {dragon_id} could not reserve ids for its parts");
         }
-
-        Arc::new(Self {
-            mob_entity: MobEntity::new(entity),
-            parts,
-            flight_history: Mutex::new(DragonFlightHistory::default()),
-            flap_time: Mutex::new(0.0),
-            o_flap_time: Mutex::new(0.0),
-            in_wall: Mutex::new(false),
-            dragon_death_time: Mutex::new(0),
-            sitting_damage_received: Mutex::new(0.0),
-            nodes_initialized: Mutex::new(false),
-            fight_origin: Mutex::new(BlockPos::new(0, 128, 0)),
-            phase_manager: PhaseManager::new(),
-            phase: Mutex::new(EnderDragonPhase::Circling),
-            growl_time: Mutex::new(GROWL_COOLDOWN_BASE),
-            yaw_rot_accel: Mutex::new(0.0),
-            holding_pattern_clockwise: Mutex::new(true),
-            target_location: Mutex::new(None),
-            fireball_charge: Mutex::new(0),
-            nodes: Mutex::new([None; NODE_COUNT]),
-            path: Mutex::new(Vec::new()),
-            target_node: Mutex::new(0),
-            strafe_target: Mutex::new(None),
-            target_player: Mutex::new(None),
-            ticks_sitting: Mutex::new(0),
-            sit_attack_timer: Mutex::new(0),
-            breathing_timer: Mutex::new(0),
+        Arc::new_cyclic(|weak: &Weak<Self>| {
+            let parts = PartKind::ALL
+                .iter()
+                .enumerate()
+                .map(|(index, &kind)| {
+                    let id = if contiguous {
+                        dragon_id + 1 + index as i32
+                    } else {
+                        Entity::reserve_ids(1)
+                    };
+                    let part_entity = Entity::from_uuid_with_id(
+                        id,
+                        uuid::Uuid::new_v4(),
+                        world.clone(),
+                        pos,
+                        &EntityType::ENDER_DRAGON,
+                    );
+                    let (width, height) = kind.size();
+                    part_entity.set_default_dimensions(EntityDimensions::new(
+                        width,
+                        height,
+                        height * 0.85,
+                    ));
+                    part_entity.no_physics.store(true, Ordering::Relaxed);
+                    Arc::new(EnderDragonPart {
+                        entity: part_entity,
+                        kind,
+                        dragon_uuid,
+                        dragon: weak.clone(),
+                    })
+                })
+                .collect();
+            Self {
+                mob_entity: MobEntity::new(entity),
+                parts,
+                inner: Mutex::new(DragonInner {
+                    y_rot_a: 0.0,
+                    in_wall: false,
+                    flight_history: DragonFlightHistory::default(),
+                    nodes: None,
+                    sitting_damage_received: 0.0,
+                    nearest_crystal: None,
+                }),
+                phases: PhaseManager::new(),
+                fight_origin: Mutex::new(BlockPos::new(0, 0, 0)),
+                fight_linked: AtomicBool::new(false),
+                alive_crystals: AtomicI32::new(0),
+                dragon_death_time: AtomicI32::new(0),
+                parts_registered: AtomicBool::new(false),
+            }
         })
     }
 
-    pub fn set_fight_origin(&self, pos: BlockPos) {
-        if let (Ok(mut initialized), Ok(mut origin)) = (
-            self.nodes_initialized.try_lock(),
-            self.fight_origin.try_lock(),
-        ) && *origin != pos
-        {
-            *origin = pos;
-            *initialized = false;
-        }
+    fn part(&self, kind: PartKind) -> &Arc<EnderDragonPart> {
+        &self.parts[kind as usize]
     }
 
-    pub fn set_phase(&self, phase_type: EnderDragonPhase) {
-        let mut phase_lock = self
-            .phase
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *phase_lock == phase_type {
-            return;
-        }
+    // ── accessors used by the phases ─────────────────────────────────────────
 
-        let old_phase = self.phase_manager.get_phase(*phase_lock);
-        old_phase.end(self);
-
-        *phase_lock = phase_type;
-
-        let new_phase = self.phase_manager.get_phase(phase_type);
-        new_phase.begin(self);
-    }
-
-    fn ensure_nodes_initialized(&self) {
-        let mut initialized = self
-            .nodes_initialized
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *initialized {
-            return;
-        }
-
-        let world = self.mob_entity.living_entity.entity.world.load();
-        let fight_origin = self
-            .fight_origin
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-
-        let mut nodes = self
-            .nodes
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        for i in 0..NODE_COUNT {
-            let mut y_adjustment = 5;
-            let node_x;
-            let node_z;
-
-            if i < 12 {
-                node_x = fight_origin.0.x
-                    + (60.0 * ((i as f32) * std::f32::consts::TAU / 12.0).cos()) as i32;
-                node_z = fight_origin.0.z
-                    + (60.0 * ((i as f32) * std::f32::consts::TAU / 12.0).sin()) as i32;
-            } else if i < 20 {
-                let multiplier = i - 12;
-                node_x = fight_origin.0.x
-                    + (40.0 * ((multiplier as f32) * std::f32::consts::TAU / 8.0).cos()) as i32;
-                node_z = fight_origin.0.z
-                    + (40.0 * ((multiplier as f32) * std::f32::consts::TAU / 8.0).sin()) as i32;
-                y_adjustment += 10;
-            } else {
-                let multiplier = i - 20;
-                node_x = fight_origin.0.x
-                    + (20.0 * ((multiplier as f32) * std::f32::consts::TAU / 4.0).cos()) as i32;
-                node_z = fight_origin.0.z
-                    + (20.0 * ((multiplier as f32) * std::f32::consts::TAU / 4.0).sin()) as i32;
-            }
-
-            let height =
-                world.get_heightmap_height(ChunkHeightmapType::MotionBlocking, node_x, node_z);
-            let node_y = 73.max(height + y_adjustment);
-            nodes[i] = Some(DragonNode::new(node_x as f64, node_y as f64, node_z as f64));
-        }
-
-        let pos = self.mob_entity.living_entity.entity.pos.load();
-        let nearest = Self::nearest_node_in(&nodes, pos);
-        let dest = Self::random_node_idx();
-        let new_path = find_path(&nodes, nearest, dest, None);
-        drop(nodes);
-
-        *self
-            .target_node
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = dest;
-        *self
-            .path
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = new_path;
-        *initialized = true;
-    }
-
-    pub fn find_closest_node(&self) -> usize {
-        let pos = self.mob_entity.living_entity.entity.pos.load();
-        self.find_closest_node_to(pos)
-    }
-
-    pub fn find_closest_node_to(&self, pos: Vector3<f64>) -> usize {
-        self.ensure_nodes_initialized();
-        let nodes = self
-            .nodes
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        Self::nearest_node_in(&nodes, pos)
-    }
-
-    fn nearest_node_in(nodes: &[Option<DragonNode>; NODE_COUNT], pos: Vector3<f64>) -> usize {
-        nodes
-            .iter()
-            .enumerate()
-            .filter_map(|(i, n)| n.map(|n| (i, n.dist_sq_vec(pos))))
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map_or(0, |(i, _)| i)
-    }
-
-    fn random_node_idx() -> usize {
-        rand::random_range(0..NODE_COUNT)
-    }
-
-    #[inline]
     #[must_use]
-    pub fn yaw_toward(from: Vector3<f64>, to: Vector3<f64>) -> f32 {
-        (-(to.z - from.z)).atan2(to.x - from.x).to_degrees() as f32 - 90.0
+    pub fn world(&self) -> Arc<World> {
+        self.get_entity().world.load_full()
     }
 
-    pub fn move_relative(&self, speed: f32, relative_movement: Vector3<f64>) {
-        let yaw = self.mob_entity.living_entity.entity.yaw.load();
-        let movement = Self::get_relative_movement(relative_movement, speed, yaw);
-        let entity = &self.mob_entity.living_entity.entity;
-        let vel = entity.velocity.load();
-        entity.velocity.store(vel + movement);
+    #[must_use]
+    pub fn position(&self) -> Vector3<f64> {
+        self.get_entity().pos.load()
     }
 
-    fn get_relative_movement(
-        relative_movement: Vector3<f64>,
-        speed: f32,
-        yaw: f32,
-    ) -> Vector3<f64> {
-        let dist = relative_movement.length_squared();
-        if dist < 1.0E-7 {
-            return Vector3::new(0.0, 0.0, 0.0);
-        }
-        let vec = if dist > 1.0 {
-            relative_movement.normalize()
+    #[must_use]
+    pub fn delta_movement(&self) -> Vector3<f64> {
+        self.get_entity().velocity.load()
+    }
+
+    #[must_use]
+    pub fn yaw(&self) -> f32 {
+        self.get_entity().yaw.load()
+    }
+
+    pub fn set_yaw(&self, yaw: f32) {
+        self.get_entity().yaw.store(yaw);
+    }
+
+    #[must_use]
+    pub fn y_rot_a(&self) -> f32 {
+        lock(&self.inner).y_rot_a
+    }
+
+    pub fn scale_y_rot_a(&self, factor: f32) {
+        lock(&self.inner).y_rot_a *= factor;
+    }
+
+    pub fn add_y_rot_a(&self, amount: f32) {
+        lock(&self.inner).y_rot_a += amount;
+    }
+
+    #[must_use]
+    pub const fn phases(&self) -> &PhaseManager {
+        &self.phases
+    }
+
+    #[must_use]
+    pub fn fight_origin(&self) -> BlockPos {
+        *lock(&self.fight_origin)
+    }
+
+    pub fn set_fight_origin(&self, origin: BlockPos) {
+        *lock(&self.fight_origin) = origin;
+    }
+
+    /// Vanilla `dragonFight != null`.
+    #[must_use]
+    pub fn has_fight(&self) -> bool {
+        self.fight_linked.load(Ordering::Relaxed)
+    }
+
+    #[must_use]
+    pub fn alive_crystals(&self) -> i32 {
+        self.alive_crystals.load(Ordering::Relaxed)
+    }
+
+    /// Position of the head part, `head.getX()/getY()/getZ()`.
+    #[must_use]
+    pub fn head_position(&self) -> Vector3<f64> {
+        self.part(PartKind::Head).entity.pos.load()
+    }
+
+    #[must_use]
+    pub fn view_vector(&self) -> Vector3<f64> {
+        let entity = self.get_entity();
+        Vector3::rotation_vector(f64::from(entity.pitch.load()), f64::from(entity.yaw.load()))
+    }
+
+    /// Vanilla `getHeadLookVector`.
+    #[must_use]
+    pub fn head_look_vector(&self) -> Vector3<f64> {
+        let entity = self.get_entity();
+        let phase = self.phases.current_type();
+        let x_rot = if matches!(phase, EnderDragonPhase::Landing | EnderDragonPhase::Takeoff) {
+            let world = self.world();
+            let egg = self.podium_surface(&world);
+            let center = Vector3::new(
+                f64::from(egg.0.x) + 0.5,
+                f64::from(egg.0.y) + 0.5,
+                f64::from(egg.0.z) + 0.5,
+            );
+            let dist =
+                ((center.squared_distance_to_vec(&self.position())).sqrt() as f32 / 4.0).max(1.0);
+            let y_offset = 6.0 / dist;
+            -y_offset * 1.5 * 5.0
+        } else if self.phases.current().is_sitting() {
+            -45.0
         } else {
-            relative_movement
-        } * (speed as f64);
-        let sin = (yaw * (std::f32::consts::PI / 180.0)).sin() as f64;
-        let cos = (yaw * (std::f32::consts::PI / 180.0)).cos() as f64;
-        Vector3::new(vec.x * cos - vec.z * sin, vec.y, vec.z * cos + vec.x * sin)
+            entity.pitch.load()
+        };
+        Vector3::rotation_vector(f64::from(x_rot), f64::from(entity.yaw.load()))
     }
 
-    pub fn steer_toward(
+    /// `getHeightmapPos(MOTION_BLOCKING_NO_LEAVES, podium)`.
+    #[must_use]
+    pub fn podium_surface(&self, world: &World) -> BlockPos {
+        let origin = self.fight_origin();
+        BlockPos::new(
+            origin.0.x,
+            world.get_heightmap_height(
+                ChunkHeightmapType::MotionBlockingNoLeaves,
+                origin.0.x,
+                origin.0.z,
+            ),
+            origin.0.z,
+        )
+    }
+
+    /// `getHeightmapPos(MOTION_BLOCKING, podium)`.
+    #[must_use]
+    pub fn podium_motion_blocking(&self, world: &World) -> BlockPos {
+        let origin = self.fight_origin();
+        BlockPos::new(
+            origin.0.x,
+            world.get_heightmap_height(ChunkHeightmapType::MotionBlocking, origin.0.x, origin.0.z),
+            origin.0.z,
+        )
+    }
+
+    pub fn set_health_direct(&self, health: f32) {
+        self.mob_entity.living_entity.set_health(health);
+    }
+
+    #[must_use]
+    pub fn has_line_of_sight_to(&self, target: &Player) -> bool {
+        Mob::has_line_of_sight(self, target.get_entity())
+    }
+
+    /// Vanilla `canAttack`: `target.canBeSeenAsEnemy()`.
+    #[must_use]
+    pub fn can_attack(&self, target: &Player) -> bool {
+        target.living_entity.health.load() > 0.0
+            && matches!(
+                target.gamemode.load(),
+                GameMode::Survival | GameMode::Adventure
+            )
+    }
+
+    /// Vanilla `Level.getNearestPlayer(TargetingConditions.forCombat()…, dragon, x, y, z)`,
+    /// `range` overrides the follow range of the dragon.
+    pub fn nearest_player(
         &self,
-        pos: Vector3<f64>,
-        target: Vector3<f64>,
-        fly_speed: f32,
-        turn_speed: f32,
-    ) {
-        let xdd = target.x - pos.x;
-        let mut ydd = target.y - pos.y;
-        let zdd = target.z - pos.z;
-        let dist_sq = xdd * xdd + ydd * ydd + zdd * zdd;
-
-        let horizontal_dist = xdd.hypot(zdd);
-        if horizontal_dist > 0.0 {
-            ydd = (ydd / horizontal_dist).clamp(-(fly_speed as f64), fly_speed as f64);
-        }
-
-        let entity = &self.mob_entity.living_entity.entity;
-        let mut vel = entity.velocity.load();
-        vel.y += ydd * 0.01;
-        entity.velocity.store(vel);
-
-        let yaw = entity.yaw.load();
-        let aim_diff = target - pos;
-        let aim = if aim_diff.length_squared() > 1e-6 {
-            aim_diff.normalize()
-        } else {
-            Vector3::new(0.0, 0.0, 0.0)
-        };
-
-        let dir_vec = Vector3::new(
-            (yaw * (std::f32::consts::PI / 180.0)).sin() as f64,
-            vel.y,
-            -(yaw * (std::f32::consts::PI / 180.0)).cos() as f64,
-        );
-        let dir = if dir_vec.length_squared() > 1e-6 {
-            dir_vec.normalize()
-        } else {
-            Vector3::new(0.0, 0.0, 0.0)
-        };
-
-        let dot = (dir.dot(&aim) as f32 + 0.5).max(0.0) / 1.5;
-        if xdd.abs() > 1.0E-5 || zdd.abs() > 1.0E-5 {
-            let mut y_rot_d =
-                (180.0 - (xdd.atan2(zdd).to_degrees() as f32) - yaw).rem_euclid(360.0);
-            if y_rot_d > 180.0 {
-                y_rot_d -= 360.0;
-            }
-            y_rot_d = y_rot_d.clamp(-50.0, 50.0);
-
-            let mut y_rot_a = self
-                .yaw_rot_accel
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            *y_rot_a *= 0.8;
-            *y_rot_a += y_rot_d * turn_speed;
-            entity.yaw.store(yaw + *y_rot_a * 0.1);
-        }
-
-        let span = (2.0 / (dist_sq + 1.0)) as f32;
-        self.move_relative(
-            0.06 * (dot * span + (1.0 - span)),
-            Vector3::new(0.0, 0.0, -1.0),
-        );
-
-        let actual_vel = entity.velocity.load();
-        let actual_dir = if actual_vel.length_squared() > 1e-6 {
-            actual_vel.normalize()
-        } else {
-            Vector3::new(0.0, 0.0, 0.0)
-        };
-        let slide = 0.8 + 0.15 * (actual_dir.dot(&dir) + 1.0) / 2.0;
-        entity.velocity.store(Vector3::new(
-            actual_vel.x * slide,
-            actual_vel.y * 0.91,
-            actual_vel.z * slide,
-        ));
-    }
-
-    fn update_flap_time(&self) {
-        let sitting = self
-            .phase
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_sitting();
-        let in_wall = *self
-            .in_wall
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut flap = self
-            .flap_time
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut o_flap = self
-            .o_flap_time
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-
-        *o_flap = *flap;
-        *flap += if sitting {
-            0.1
-        } else if in_wall {
-            FLAP_SPEED * 0.5
-        } else {
-            FLAP_SPEED
-        };
-        if *flap > std::f32::consts::TAU {
-            *flap -= std::f32::consts::TAU;
-        }
-    }
-
-    fn tick_growl(&self) {
-        if self
-            .phase
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_sitting()
-        {
-            return;
-        }
-        let mut t = self
-            .growl_time
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *t > 0 {
-            *t -= 1;
-        } else {
-            *t = GROWL_COOLDOWN_BASE + rand::random_range(0..100);
-        }
-    }
-
-    fn find_nearest_player(&self) -> Option<Arc<Player>> {
-        let world = self.mob_entity.living_entity.entity.world.load();
-        let pos = self.mob_entity.living_entity.entity.pos.load();
+        x: f64,
+        y: f64,
+        z: f64,
+        range: Option<f64>,
+        accept: impl Fn(&Player) -> bool,
+    ) -> Option<Arc<Player>> {
+        let world = self.world();
+        let me = self.position();
+        let follow = range.unwrap_or_else(|| {
+            self.mob_entity
+                .living_entity
+                .get_attribute_value(&Attributes::FOLLOW_RANGE)
+        });
+        let from = Vector3::new(x, y, z);
         world
             .players
             .load()
             .iter()
-            .filter(|p| {
-                let p_pos = p.living_entity.entity.pos.load();
-                p_pos.distance_squared(pos) < ARENA_RADIUS * ARENA_RADIUS
+            .filter(|player| {
+                let max_dist = (follow * Self::visibility(player)).max(2.0);
+                self.can_attack(player)
+                    && accept(player)
+                    && me.squared_distance_to_vec(&player.get_entity().pos.load())
+                        <= max_dist * max_dist
             })
             .min_by(|a, b| {
-                let a_pos = a.living_entity.entity.pos.load();
-                let b_pos = b.living_entity.entity.pos.load();
-                a_pos
-                    .distance_squared(pos)
-                    .total_cmp(&b_pos.distance_squared(pos))
+                from.squared_distance_to_vec(&a.get_entity().pos.load())
+                    .total_cmp(&from.squared_distance_to_vec(&b.get_entity().pos.load()))
             })
             .cloned()
     }
 
-    fn handle_player_collisions(&self) {
-        let world = self.mob_entity.living_entity.entity.world.load();
+    /// Vanilla `Player.getVisibilityPercent`, sneaking and invisibility (no mob heads).
+    fn visibility(player: &Player) -> f64 {
+        let mut visibility = 1.0;
+        if player.get_entity().is_sneaking() {
+            visibility *= 0.8;
+        }
+        if player
+            .living_entity
+            .has_effect(&pumpkin_data::effect::StatusEffect::INVISIBILITY)
+        {
+            let armor = (36..40)
+                .filter(|slot| !player.inventory().get_slot(*slot).is_empty())
+                .count();
+            let cover = (armor as f64 / 4.0).max(0.1);
+            visibility *= 0.7 * cover;
+        }
+        visibility
+    }
 
-        let dragon_bbox = self.mob_entity.living_entity.entity.bounding_box.load();
-        let xm = f64::midpoint(dragon_bbox.min.x, dragon_bbox.max.x);
-        let zm = f64::midpoint(dragon_bbox.min.z, dragon_bbox.max.z);
+    pub fn strafe_player(&self, player: &Arc<Player>) {
+        self.set_phase(EnderDragonPhase::StrafePlayer);
+        self.phases.strafe_player.set_target(self, player);
+    }
 
-        for player in world.players.load().iter() {
-            if player
-                .living_entity
-                .entity
+    // ── phases ───────────────────────────────────────────────────────────────
+
+    /// Vanilla `EnderDragonPhaseManager.setPhase`.
+    pub fn set_phase(&self, target: EnderDragonPhase) {
+        let current = self.phases.current_type();
+        if current == target {
+            return;
+        }
+        let world = self.world();
+        if let Some(server) = world.server.upgrade() {
+            let mut event = EnderDragonChangePhaseEvent {
+                entity_id: self.get_entity().entity_id,
+                current_phase: format!("{current:?}"),
+                new_phase: format!("{target:?}"),
+                cancelled: false,
+            };
+            server.plugin_manager.fire_blocking(&server, &mut event);
+            if event.cancelled {
+                return;
+            }
+        }
+        self.phases.get(current).end(self);
+        self.phases.store_current(target);
+        self.get_entity()
+            .set_synced_data(tracked_data::ender_dragon::DATA_PHASE, target.id());
+        self.phases.get(target).begin(self);
+    }
+
+    // ── flight graph ─────────────────────────────────────────────────────────
+
+    fn ensure_nodes(&self, world: &World) -> [Node; NODE_COUNT] {
+        let mut inner = lock(&self.inner);
+        if let Some(nodes) = inner.nodes {
+            return nodes;
+        }
+        let mut nodes = [Node::default(); NODE_COUNT];
+        for (i, node) in nodes.iter_mut().enumerate() {
+            let mut y_adjustment = 5;
+            let mut multiplier = i as f32;
+            let (radius, step) = if i < 12 {
+                (60.0f32, std::f32::consts::PI / 12.0)
+            } else if i < 20 {
+                multiplier -= 12.0;
+                y_adjustment += 10;
+                (40.0, std::f32::consts::PI / 8.0)
+            } else {
+                multiplier -= 20.0;
+                (20.0, std::f32::consts::PI / 4.0)
+            };
+            let angle = 2.0 * (-std::f32::consts::PI + step * multiplier);
+            let x = (radius * angle.cos()).floor() as i32;
+            let z = (radius * angle.sin()).floor() as i32;
+            let height =
+                world.get_heightmap_height(ChunkHeightmapType::MotionBlockingNoLeaves, x, z);
+            *node = Node {
+                x,
+                y: 73.max(height + y_adjustment),
+                z,
+            };
+        }
+        inner.nodes = Some(nodes);
+        nodes
+    }
+
+    fn min_node_index(&self) -> usize {
+        if self.has_fight() && self.alive_crystals() > 0 {
+            0
+        } else {
+            12
+        }
+    }
+
+    /// Vanilla `findClosestNode()`.
+    #[must_use]
+    pub fn find_closest_node(&self) -> usize {
+        let pos = self.position();
+        self.find_closest_node_to(pos.x, pos.y, pos.z)
+    }
+
+    /// Vanilla `findClosestNode(x, y, z)`.
+    #[must_use]
+    pub fn find_closest_node_to(&self, x: f64, y: f64, z: f64) -> usize {
+        let nodes = self.ensure_nodes(&self.world());
+        let current = Node {
+            x: x.floor() as i32,
+            y: y.floor() as i32,
+            z: z.floor() as i32,
+        };
+        let mut closest_dist = 10000.0f32;
+        let mut closest_index = 0;
+        for (i, node) in nodes.iter().enumerate().skip(self.min_node_index()) {
+            let dist = node.distance_to_sqr(current);
+            if dist < closest_dist {
+                closest_dist = dist;
+                closest_index = i;
+            }
+        }
+        closest_index
+    }
+
+    /// Vanilla `findPath`.
+    #[must_use]
+    pub fn find_path(
+        &self,
+        start: usize,
+        end: usize,
+        final_node: Option<Node>,
+    ) -> Option<DragonPath> {
+        let nodes = self.ensure_nodes(&self.world());
+        find_path_between(&nodes, start, end, final_node, self.min_node_index())
+    }
+
+    // ── per tick ─────────────────────────────────────────────────────────────
+
+    fn tick_part(&self, kind: PartKind, x: f64, y: f64, z: f64) {
+        let pos = self.position();
+        self.part(kind)
+            .entity
+            .set_pos(Vector3::new(pos.x + x, pos.y + y, pos.z + z));
+    }
+
+    fn register_parts(&self, world: &World) {
+        if !self.parts_registered.swap(true, Ordering::AcqRel) {
+            let parts: Vec<Arc<dyn EntityBase>> = self
+                .parts
+                .iter()
+                .map(|part| part.clone() as Arc<dyn EntityBase>)
+                .collect();
+            world.add_sub_entities(&parts);
+        }
+    }
+
+    fn sync_fight(&self, world: &World) {
+        let uuid = self.get_entity().entity_uuid;
+        if let Some(fight) = world.dragon_fight.as_ref()
+            && let Ok(fight) = fight.try_lock()
+        {
+            self.fight_linked
+                .store(fight.dragon_uuid() == Some(uuid), Ordering::Relaxed);
+            self.alive_crystals
+                .store(fight.alive_crystals(), Ordering::Relaxed);
+        }
+    }
+
+    fn update_fight(&self, world: &Arc<World>) {
+        if !self.has_fight() {
+            return;
+        }
+        if let Some(fight) = world.dragon_fight.as_ref()
+            && let Ok(mut fight) = fight.try_lock()
+        {
+            let living = &self.mob_entity.living_entity;
+            let custom_name = living.entity.custom_name.load();
+            fight.update_dragon(
+                world,
+                self.get_entity().entity_uuid,
+                living.health.load(),
+                living.get_max_health(),
+                custom_name.as_ref().as_ref(),
+            );
+        }
+    }
+
+    /// Vanilla `checkCrystals`.
+    fn check_crystals(&self, world: &World) {
+        let tick_count = self.get_entity().tick_count.load(Ordering::Relaxed);
+        let mut inner = lock(&self.inner);
+        if let Some(crystal) = inner.nearest_crystal.clone() {
+            if crystal.get_entity().is_removed() {
+                inner.nearest_crystal = None;
+            } else if tick_count % 10 == 0 {
+                let living = &self.mob_entity.living_entity;
+                if living.health.load() < living.get_max_health() {
+                    living.set_health(living.health.load() + 1.0);
+                }
+            }
+        }
+        if rand::random_range(0..10) == 0 {
+            drop(inner);
+            let area = self
+                .get_entity()
                 .bounding_box
                 .load()
-                .intersects(&dragon_bbox)
-            {
-                let player_pos = player.get_entity().pos.load();
-                let xd = player_pos.x - xm;
-                let zd = player_pos.z - zm;
-                let dd = (xd * xd + zd * zd).max(0.1);
+                .expand(32.0, 32.0, 32.0);
+            let me = self.position();
+            let nearest = world
+                .get_entities_at_box(&area)
+                .into_iter()
+                .filter(|entity| entity.get_entity().entity_type == &EntityType::END_CRYSTAL)
+                .min_by(|a, b| {
+                    a.get_entity()
+                        .pos
+                        .load()
+                        .squared_distance_to_vec(&me)
+                        .total_cmp(&b.get_entity().pos.load().squared_distance_to_vec(&me))
+                });
+            lock(&self.inner).nearest_crystal = nearest;
+        }
+    }
 
-                player
-                    .living_entity
-                    .entity
-                    .apply_knockback(4.0, xd / dd, zd / dd);
-                player.get_entity().send_velocity();
+    fn push_entity(target: &dyn EntityBase, push: Vector3<f64>) {
+        if let Some(player) = target.get_player() {
+            let current = Entity::known_movement(target);
+            player.set_velocity(current + push);
+        } else {
+            let entity = target.get_entity();
+            entity.velocity.store(entity.velocity.load() + push);
+            entity.velocity_dirty.store(true, Ordering::Relaxed);
+        }
+    }
 
-                if !self
-                    .phase
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .is_sitting()
-                {
-                    player.damage(self, 5.0, DamageType::MOB_ATTACK);
-                }
+    fn targets_in(&self, world: &World, area: &BoundingBox) -> Vec<Arc<dyn EntityBase>> {
+        let me = self.get_entity().entity_id;
+        world
+            .get_all_at_box(area)
+            .into_iter()
+            .filter(|entity| {
+                let base = entity.get_entity();
+                base.entity_id != me
+                    && !entity.is_sub_entity()
+                    && base.entity_type != &EntityType::ENDER_DRAGON
+                    && entity.get_living_entity().is_some()
+                    && !entity.get_player().is_some_and(|player| {
+                        matches!(
+                            player.gamemode.load(),
+                            GameMode::Creative | GameMode::Spectator
+                        )
+                    })
+            })
+            .collect()
+    }
+
+    /// Vanilla `knockBack`.
+    fn knock_back(&self, targets: &[Arc<dyn EntityBase>]) {
+        let body = self.part(PartKind::Body).entity.bounding_box.load();
+        let xm = f64::midpoint(body.min.x, body.max.x);
+        let zm = f64::midpoint(body.min.z, body.max.z);
+        let sitting = self.phases.current().is_sitting();
+        for target in targets {
+            let pos = target.get_entity().pos.load();
+            let xd = pos.x - xm;
+            let zd = pos.z - zm;
+            let dd = (xd * xd + zd * zd).max(0.1);
+            Self::push_entity(
+                target.as_ref(),
+                Vector3::new(xd / dd * 4.0, f64::from(0.2f32), zd / dd * 4.0),
+            );
+            if !sitting {
+                target.damage_with_context(
+                    target.as_ref(),
+                    5.0,
+                    DamageType::MOB_ATTACK,
+                    Some(self.position()),
+                    Some(self),
+                    Some(self),
+                );
             }
         }
     }
 
-    fn tick_crystal_healing(&self) {
-        let world = self.mob_entity.living_entity.entity.world.load();
-        let pos = self.mob_entity.living_entity.entity.pos.load();
-
-        let mut nearest_crystal = None;
-        let mut min_dist_sq = 1024.0; // 32 blocks
-
-        for entity in world.entities.load().iter() {
-            if entity.get_entity().entity_type == &EntityType::END_CRYSTAL {
-                let crystal_pos = entity.get_entity().pos.load();
-                let dist_sq = pos.distance_squared(crystal_pos);
-                if dist_sq < min_dist_sq {
-                    min_dist_sq = dist_sq;
-                    nearest_crystal = Some(entity.clone());
-                }
-            }
-        }
-
-        if let Some(_crystal) = nearest_crystal {
-            let living = &self.mob_entity.living_entity;
-            if living.health.load() < living.get_max_health() {
-                living.heal(1.0);
-            }
+    /// Vanilla `hurt(level, entities)`: head and neck bite.
+    fn bite(&self, targets: &[Arc<dyn EntityBase>]) {
+        for target in targets {
+            target.damage_with_context(
+                target.as_ref(),
+                10.0,
+                DamageType::MOB_ATTACK,
+                Some(self.position()),
+                Some(self),
+                Some(self),
+            );
         }
     }
 
-    fn tick_block_breaking(&self) {
-        let phase_type = *self
-            .phase
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if phase_type.is_sitting() || phase_type == EnderDragonPhase::Dying {
+    /// Vanilla `checkWalls`: the dragon eats through blocks.
+    fn check_walls(world: &Arc<World>, area: BoundingBox) -> bool {
+        let x0 = area.min.x.floor() as i32;
+        let y0 = area.min.y.floor() as i32;
+        let z0 = area.min.z.floor() as i32;
+        let x1 = area.max.x.floor() as i32;
+        let y1 = area.max.y.floor() as i32;
+        let z1 = area.max.z.floor() as i32;
+        let griefing = world.level_info.load().game_rules.mob_griefing;
+        let mut hit_wall = false;
+        let mut destroyed = false;
+        for x in x0..=x1 {
+            for y in y0..=y1 {
+                for z in z0..=z1 {
+                    let pos = BlockPos::new(x, y, z);
+                    let (block, state) = world.get_block_and_state(&pos);
+                    if state.is_air() || block.has_tag(&tag::Block::MINECRAFT_DRAGON_TRANSPARENT) {
+                        continue;
+                    }
+                    if griefing && !block.has_tag(&tag::Block::MINECRAFT_DRAGON_IMMUNE) {
+                        world.set_block_state(&pos, BlockStateId::AIR, BlockFlags::NOTIFY_ALL);
+                        destroyed = true;
+                    } else {
+                        hit_wall = true;
+                    }
+                }
+            }
+        }
+        if destroyed {
+            let pos = BlockPos::new(
+                x0 + rand::random_range(0..=(x1 - x0)),
+                y0 + rand::random_range(0..=(y1 - y0)),
+                z0 + rand::random_range(0..=(z1 - z0)),
+            );
+            world.sync_world_event(WorldEvent::ParticlesDragonBlockBreak, pos, 0);
+        }
+        hit_wall
+    }
+
+    /// Vanilla `EnderDragon.aiStep` (server side).
+    #[expect(clippy::too_many_lines)]
+    fn ai_step(&self) {
+        let entity = self.get_entity();
+        let world = self.world();
+        self.register_parts(&world);
+        self.sync_fight(&world);
+        if self.mob_entity.living_entity.is_dead_or_dying() {
             return;
         }
+        self.check_crystals(&world);
 
-        let world = self.mob_entity.living_entity.entity.world.load();
-        let bbox = self.mob_entity.living_entity.entity.bounding_box.load();
+        entity.yaw.store(wrap_degrees(entity.yaw.load()));
+        if self.mob_entity.is_no_ai() {
+            return;
+        }
+        lock(&self.inner)
+            .flight_history
+            .record(entity.pos.load().y, entity.yaw.load());
 
-        let min = bbox.min_block_pos();
-        let max = bbox.max_block_pos();
+        let mut phase = self.phases.current();
+        phase.server_tick(self, &world);
+        if self.phases.current_type() != phase.phase() {
+            phase = self.phases.current();
+            phase.server_tick(self, &world);
+        }
 
-        for pos in BlockPos::iterate(min, max) {
-            let block = world.get_block(&pos);
-            if block != &Block::BEDROCK
-                && block != &Block::END_STONE
-                && block != &Block::OBSIDIAN
-                && block != &Block::IRON_BARS
-                && block != &Block::END_PORTAL
-                && block != &Block::END_PORTAL_FRAME
-            {
-                world.set_block_state(&pos, BlockStateId::AIR, BlockFlags::NOTIFY_ALL);
+        if let Some(target) = phase.fly_target_location() {
+            let pos = entity.pos.load();
+            let xdd = target.x - pos.x;
+            let mut ydd = target.y - pos.y;
+            let zdd = target.z - pos.z;
+            let dist_to_target = xdd * xdd + ydd * ydd + zdd * zdd;
+            let max = f64::from(phase.fly_speed());
+            let horizontal_dist = xdd.hypot(zdd);
+            if horizontal_dist > 0.0 {
+                ydd = (ydd / horizontal_dist).clamp(-max, max);
+            }
+            let mut velocity = entity.velocity.load();
+            velocity.y += ydd * 0.01;
+            entity.velocity.store(velocity);
+            entity.yaw.store(wrap_degrees(entity.yaw.load()));
+            let aim = (target - pos).normalize();
+            let yaw_rad = (entity.yaw.load() * (std::f32::consts::PI / 180.0)).sin();
+            let yaw_cos = (entity.yaw.load() * (std::f32::consts::PI / 180.0)).cos();
+            let dir = Vector3::new(f64::from(yaw_rad), velocity.y, -f64::from(yaw_cos)).normalize();
+            let dot = ((dir.dot(&aim) as f32 + 0.5) / 1.5).max(0.0);
+            if xdd.abs() > f64::from(1.0E-5f32) || zdd.abs() > f64::from(1.0E-5f32) {
+                let y_rot_d =
+                    wrap_degrees(180.0 - (xdd.atan2(zdd).to_degrees() as f32) - entity.yaw.load())
+                        .clamp(-50.0, 50.0);
+                let mut inner = lock(&self.inner);
+                inner.y_rot_a *= 0.8;
+                inner.y_rot_a += y_rot_d * phase.turn_speed(self);
+                let y_rot_a = inner.y_rot_a;
+                drop(inner);
+                entity.yaw.store(entity.yaw.load() + y_rot_a * 0.1);
+            }
+            let span = (2.0 / (dist_to_target + 1.0)) as f32;
+            self.move_relative(
+                0.06 * (dot * span + (1.0 - span)),
+                Vector3::new(0.0, 0.0, -1.0),
+            );
+            let in_wall = lock(&self.inner).in_wall;
+            let velocity = entity.velocity.load();
+            let step = if in_wall {
+                velocity * f64::from(0.8f32)
+            } else {
+                velocity
+            };
+            entity.set_pos(entity.pos.load() + step);
+            let actual = entity.velocity.load().normalize();
+            let slide = 0.8 + 0.15 * (actual.dot(&dir) + 1.0) / 2.0;
+            let velocity = entity.velocity.load();
+            entity.velocity.store(Vector3::new(
+                velocity.x * slide,
+                velocity.y * f64::from(0.91f32),
+                velocity.z * slide,
+            ));
+            entity.velocity_dirty.store(true, Ordering::Relaxed);
+        }
+
+        entity.body_yaw.store(entity.yaw.load());
+        entity.head_yaw.store(entity.yaw.load());
+
+        let (tilt, p1, history_5, history_0) = {
+            let inner = lock(&self.inner);
+            let h = &inner.flight_history;
+            (
+                (h.get(5).y - h.get(10).y) as f32 * 10.0 * (std::f32::consts::PI / 180.0),
+                h.get(5),
+                h.get(5).y,
+                h.get(0).y,
+            )
+        };
+        let cc_tilt = tilt.cos();
+        let ss_tilt = tilt.sin();
+        let rot1 = entity.yaw.load() * (std::f32::consts::PI / 180.0);
+        let ss1 = rot1.sin();
+        let cc1 = rot1.cos();
+        self.tick_part(
+            PartKind::Body,
+            f64::from(ss1 * 0.5),
+            0.0,
+            f64::from(-cc1 * 0.5),
+        );
+        self.tick_part(
+            PartKind::Wing1,
+            f64::from(cc1 * 4.5),
+            2.0,
+            f64::from(ss1 * 4.5),
+        );
+        self.tick_part(
+            PartKind::Wing2,
+            f64::from(cc1 * -4.5),
+            2.0,
+            f64::from(ss1 * -4.5),
+        );
+
+        if self
+            .mob_entity
+            .living_entity
+            .hurt_cooldown
+            .load(Ordering::Relaxed)
+            <= 10
+        {
+            for kind in [PartKind::Wing1, PartKind::Wing2] {
+                let area = self
+                    .part(kind)
+                    .entity
+                    .bounding_box
+                    .load()
+                    .expand(4.0, 2.0, 4.0)
+                    .shift(Vector3::new(0.0, -2.0, 0.0));
+                let targets = self.targets_in(&world, &area);
+                self.knock_back(&targets);
+            }
+            for kind in [PartKind::Head, PartKind::Neck] {
+                let area = self
+                    .part(kind)
+                    .entity
+                    .bounding_box
+                    .load()
+                    .expand(1.0, 1.0, 1.0);
+                let targets = self.targets_in(&world, &area);
+                self.bite(&targets);
             }
         }
-    }
 
-    fn tick_parts(&self) {
-        let history = self
-            .flight_history
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let p5 = history.get(5);
-        let p10 = history.get(10);
-        let p0 = history.get(0);
-
-        let tilt = (p5.y - p10.y) as f32 * 10.0 * (std::f32::consts::PI / 180.0);
-        let cc_tilt = tilt.cos() as f64;
-        let ss_tilt = tilt.sin() as f64;
-
-        let yaw = self.mob_entity.living_entity.entity.yaw.load();
-        let rot1 = yaw * (std::f32::consts::PI / 180.0);
-        let ss1 = rot1.sin() as f64;
-        let cc1 = rot1.cos() as f64;
-
-        let pos = self.mob_entity.living_entity.entity.pos.load();
-
-        // Body
-        self.parts[2]
-            .entity
-            .set_pos(Vector3::new(pos.x + ss1 * 0.5, pos.y, pos.z - cc1 * 0.5));
-
-        // Wings
-        self.parts[6].entity.set_pos(Vector3::new(
-            pos.x + cc1 * 4.5,
-            pos.y + 2.0,
-            pos.z + ss1 * 4.5,
-        ));
-        self.parts[7].entity.set_pos(Vector3::new(
-            pos.x - cc1 * 4.5,
-            pos.y + 2.0,
-            pos.z - ss1 * 4.5,
-        ));
-
-        let head_y_offset = if self
-            .phase
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .is_sitting()
-        {
+        let y_rot_a = self.y_rot_a();
+        let rot2 = entity.yaw.load() * (std::f32::consts::PI / 180.0) - y_rot_a * 0.01;
+        let ss2 = rot2.sin();
+        let cc2 = rot2.cos();
+        let y_offset = if self.phases.current().is_sitting() {
             -1.0
         } else {
-            p5.y - p0.y
+            (history_5 - history_0) as f32
         };
-
-        let yaw_accel = *self
-            .yaw_rot_accel
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let rot2 = (yaw - yaw_accel * 0.01) * (std::f32::consts::PI / 180.0);
-        let ss2 = rot2.sin() as f64;
-        let cc2 = rot2.cos() as f64;
-
-        // Head & Neck
-        self.parts[0].entity.set_pos(Vector3::new(
-            pos.x + ss2 * 6.5 * cc_tilt,
-            pos.y + head_y_offset + ss_tilt * 6.5,
-            pos.z - cc2 * 6.5 * cc_tilt,
-        ));
-        self.parts[1].entity.set_pos(Vector3::new(
-            pos.x + ss2 * 5.5 * cc_tilt,
-            pos.y + head_y_offset + ss_tilt * 5.5,
-            pos.z - cc2 * 5.5 * cc_tilt,
-        ));
-
-        // Tails
-        for i in 0..3 {
-            let pi = history.get(12 + i * 2);
-            let rot = yaw * (std::f32::consts::PI / 180.0)
-                + (pi.y_rot - p5.y_rot).rem_euclid(360.0).to_radians();
-            let ss = rot.sin() as f64;
-            let cc = rot.cos() as f64;
-            let dd = (i + 1) as f64 * 2.0;
-
-            self.parts[3 + i as usize].entity.set_pos(Vector3::new(
-                pos.x - (ss1 * 1.5 + ss * dd) * cc_tilt,
-                pos.y + (pi.y - p5.y) - (dd + 1.5) * ss_tilt + 1.5,
-                pos.z + (cc1 * 1.5 + cc * dd) * cc_tilt,
-            ));
+        self.tick_part(
+            PartKind::Head,
+            f64::from(ss2 * 6.5 * cc_tilt),
+            f64::from(y_offset + ss_tilt * 6.5),
+            f64::from(-cc2 * 6.5 * cc_tilt),
+        );
+        self.tick_part(
+            PartKind::Neck,
+            f64::from(ss2 * 5.5 * cc_tilt),
+            f64::from(y_offset + ss_tilt * 5.5),
+            f64::from(-cc2 * 5.5 * cc_tilt),
+        );
+        for (i, kind) in [PartKind::Tail1, PartKind::Tail2, PartKind::Tail3]
+            .into_iter()
+            .enumerate()
+        {
+            let p0 = lock(&self.inner).flight_history.get(12 + i as i32 * 2);
+            let rot = entity.yaw.load() * (std::f32::consts::PI / 180.0)
+                + wrap_degrees(p0.y_rot - p1.y_rot) * (std::f32::consts::PI / 180.0);
+            let ss = rot.sin();
+            let cc = rot.cos();
+            let dd = (i as f32 + 1.0) * 2.0;
+            self.tick_part(
+                kind,
+                f64::from(-(ss1 * 1.5 + ss * dd) * cc_tilt),
+                p0.y - p1.y - f64::from((dd + 1.5) * ss_tilt) + 1.5,
+                f64::from((cc1 * 1.5 + cc * dd) * cc_tilt),
+            );
         }
+
+        let in_wall =
+            Self::check_walls(&world, self.part(PartKind::Head).entity.bounding_box.load())
+                | Self::check_walls(&world, self.part(PartKind::Neck).entity.bounding_box.load())
+                | Self::check_walls(&world, self.part(PartKind::Body).entity.bounding_box.load());
+        lock(&self.inner).in_wall = in_wall;
+        self.update_fight(&world);
     }
 
-    pub fn ai_step(&self) {
-        if self.mob_entity.living_entity.entity.is_removed() {
+    /// Vanilla `Entity.moveRelative`.
+    fn move_relative(&self, speed: f32, input: Vector3<f64>) {
+        let entity = self.get_entity();
+        let len = input.length_squared();
+        if len < 1.0E-7 {
             return;
         }
-        self.mob_entity.living_entity.entity.update_last_pos();
-        self.ensure_nodes_initialized();
-        self.update_flap_time();
+        let movement = if len > 1.0 { input.normalize() } else { input } * f64::from(speed);
+        let yaw = entity.yaw.load() * (std::f32::consts::PI / 180.0);
+        let sin = f64::from(yaw.sin());
+        let cos = f64::from(yaw.cos());
+        entity.velocity.store(
+            entity.velocity.load()
+                + Vector3::new(
+                    movement.x * cos - movement.z * sin,
+                    movement.y,
+                    movement.z * cos + movement.x * sin,
+                ),
+        );
+    }
 
+    /// Vanilla `hurt(level, part, source, damage)`.
+    pub fn hurt_part(
+        &self,
+        part: PartKind,
+        amount: f32,
+        damage_type: DamageType,
+        position: Option<Vector3<f64>>,
+        source: Option<&dyn EntityBase>,
+        cause: Option<&dyn EntityBase>,
+    ) -> bool {
+        let phase = self.phases.current();
+        if phase.phase() == EnderDragonPhase::Dying {
+            return false;
+        }
+        let mut damage = phase.on_hurt(source, amount);
+        if !matches!(part, PartKind::Head | PartKind::Neck) {
+            damage = damage / 4.0 + damage.min(1.0);
+        }
+        if damage < 0.01 {
+            return false;
+        }
+        let by_player = cause
+            .or(source)
+            .is_some_and(|attacker| attacker.get_player().is_some());
+        if by_player || damage_type.has_tag(&tag::DamageType::MINECRAFT_ALWAYS_HURTS_ENDER_DRAGONS)
         {
-            let y = self.mob_entity.living_entity.entity.pos.load().y;
-            let yaw = self.mob_entity.living_entity.entity.yaw.load();
-            self.flight_history
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-                .record(y, yaw);
-        };
-
-        self.tick_growl();
-        self.tick_crystal_healing();
-
-        {
-            let world = self.mob_entity.living_entity.entity.world.load();
-            if let Some(ref fight_mutex) = world.dragon_fight {
-                let living = &self.mob_entity.living_entity;
-                if let Ok(mut fight) = fight_mutex.lock() {
-                    let custom_name = living.entity.custom_name.load();
-                    fight.update_dragon(
-                        &world,
-                        living.entity.entity_uuid,
-                        living.health.load(),
-                        living.get_max_health(),
-                        custom_name.as_ref().as_ref(),
-                    );
+            let living = &self.mob_entity.living_entity;
+            let health_before = living.health.load();
+            living.damage_with_context(self, damage, damage_type, position, source, cause);
+            if self.phases.current().is_sitting() {
+                let mut inner = lock(&self.inner);
+                inner.sitting_damage_received += health_before - living.health.load();
+                if inner.sitting_damage_received
+                    > SITTING_ALLOWED_DAMAGE_PERCENTAGE * living.get_max_health()
+                {
+                    inner.sitting_damage_received = 0.0;
+                    drop(inner);
+                    self.set_phase(EnderDragonPhase::Takeoff);
                 }
             }
         }
-
-        let phase_type: EnderDragonPhase = *self
-            .phase
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let phase = self.phase_manager.get_phase(phase_type);
-
-        if phase_type.is_sitting() {
-            *self
-                .ticks_sitting
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) += 1;
-        } else {
-            self.handle_player_collisions();
-            self.tick_block_breaking();
-        }
-
-        phase.tick(self);
-
-        if self.mob_entity.living_entity.entity.is_removed() {
-            return;
-        }
-
-        if phase_type != EnderDragonPhase::Dying {
-            let target_location = *self
-                .target_location
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some(target) = target_location {
-                let pos = self.mob_entity.living_entity.entity.pos.load();
-                self.steer_toward(pos, target, phase.get_fly_speed(), phase.get_turn_speed());
-            }
-        }
-
-        self.tick_parts();
+        true
     }
 
-    pub fn hurt(&self, damage: f32) {
-        let phase_type: EnderDragonPhase = *self
-            .phase
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if phase_type.is_sitting() {
-            *self
-                .sitting_damage_received
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) += damage;
+    /// Vanilla `onCrystalDestroyed`.
+    pub fn on_crystal_destroyed(
+        &self,
+        crystal: &dyn EntityBase,
+        crystal_pos: Vector3<f64>,
+        attacker: Option<Arc<Player>>,
+    ) {
+        let world = self.world();
+        let player = attacker.or_else(|| {
+            world.get_nearest_player(crystal_pos, 64.0, |player| self.can_attack(player))
+        });
+        let is_nearest = lock(&self.inner)
+            .nearest_crystal
+            .as_ref()
+            .is_some_and(|nearest| {
+                nearest.get_entity().entity_id == crystal.get_entity().entity_id
+            });
+        if is_nearest {
+            self.hurt_part(
+                PartKind::Head,
+                10.0,
+                DamageType::EXPLOSION,
+                Some(crystal_pos),
+                Some(crystal),
+                player.as_deref().map(|p| p as &dyn EntityBase),
+            );
+        }
+        self.phases.current().on_crystal_destroyed(self, player);
+    }
+
+    /// Vanilla `tickDeath`, runs every tick while the health is zero.
+    fn tick_death(&self) {
+        let entity = self.get_entity();
+        let world = self.world();
+        self.update_fight(&world);
+        let time = self.dragon_death_time.fetch_add(1, Ordering::Relaxed) + 1;
+        let previously_killed = world
+            .dragon_fight
+            .as_ref()
+            .and_then(|fight| fight.try_lock().ok())
+            .is_some_and(|fight| fight.has_previously_killed_dragon());
+        let xp_count: f32 = if self.has_fight() && !previously_killed {
+            12000.0
+        } else {
+            500.0
+        };
+        let mob_drops = world.level_info.load().game_rules.mob_drops;
+        let pos = entity.pos.load();
+        if time > 150 && time % 5 == 0 && mob_drops {
+            ExperienceOrbEntity::spawn(&world, pos, (xp_count * 0.08).floor() as u32);
+        }
+        if time == 1 && !entity.silent.load(Ordering::Relaxed) {
+            world.sync_global_world_event(WorldEvent::SoundDragonDeath, entity.block_pos.load(), 0);
+        }
+        let lift = Vector3::new(0.0, f64::from(0.1f32), 0.0);
+        entity.set_pos(pos + lift);
+        for part in &self.parts {
+            part.entity.set_pos(part.entity.pos.load() + lift);
+        }
+        if time >= DEATH_TICKS {
+            if mob_drops {
+                ExperienceOrbEntity::spawn(&world, pos, (xp_count * 0.2).floor() as u32);
+            }
+            if let Some(fight) = world.dragon_fight.as_ref() {
+                let mut fight = lock(fight);
+                if self.has_fight() {
+                    fight.set_dragon_killed(&world, entity.entity_uuid);
+                }
+            }
+            entity.remove();
         }
     }
 }
@@ -871,25 +1207,146 @@ impl Mob for EnderDragonEntity {
         self.ai_step();
     }
 
-    fn on_damage(&self, _damage_type: DamageType, _source: Option<&dyn EntityBase>) {
-        let living = &self.mob_entity.living_entity;
-        if living.health.load() <= 0.0 {
-            self.set_phase(EnderDragonPhase::Dying);
-        }
+    fn travel(&self, _caller: &dyn EntityBase) -> bool {
+        true
     }
 
     fn get_mob_gravity(&self) -> f64 {
         0.0
     }
+
+    fn requires_custom_persistence(&self) -> bool {
+        true
+    }
+
+    fn get_base_experience_reward(&self) -> u32 {
+        0
+    }
+
+    fn damage_override(
+        &self,
+        amount: f32,
+        damage_type: DamageType,
+        position: Option<Vector3<f64>>,
+        source: Option<&dyn EntityBase>,
+        cause: Option<&dyn EntityBase>,
+    ) -> Option<bool> {
+        Some(self.hurt_part(PartKind::Body, amount, damage_type, position, source, cause))
+    }
+
+    fn knockback_override(
+        &self,
+        _power: f64,
+        _dx: f64,
+        _dz: f64,
+        _damage: f32,
+        _attacker: Option<&dyn EntityBase>,
+    ) -> bool {
+        self.phases.current().is_sitting()
+    }
+
+    fn handle_killing_blow(&self) -> bool {
+        if self.phases.current().is_sitting() {
+            true
+        } else {
+            // the kill still counts for stats and advancements (LivingEntity.die awardKillScore)
+            let living = &self.mob_entity.living_entity;
+            let credit = living.get_kill_credit();
+            living.update_death_stats(self, credit.as_deref());
+            self.set_health_direct(1.0);
+            self.set_phase(EnderDragonPhase::Dying);
+            false
+        }
+    }
+
+    fn custom_tick_death(&self) -> bool {
+        self.tick_death();
+        true
+    }
+
+    fn on_removed(&self) {
+        let parts: Vec<Arc<dyn EntityBase>> = self
+            .parts
+            .iter()
+            .map(|part| part.clone() as Arc<dyn EntityBase>)
+            .collect();
+        self.world().remove_sub_entities(&parts);
+    }
+
+    fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
+        nbt.put_int("DragonPhase", self.phases.current_type().id());
+        nbt.put_int(
+            "DragonDeathTime",
+            self.dragon_death_time.load(Ordering::Relaxed),
+        );
+        nbt.put_float(
+            "sitting_damage_received",
+            lock(&self.inner).sitting_damage_received,
+        );
+    }
+
+    fn mob_read_nbt(&self, nbt: &NbtCompound) {
+        if let Some(phase) = nbt.get_int("DragonPhase") {
+            self.set_phase(EnderDragonPhase::from_id(phase));
+        }
+        self.dragon_death_time.store(
+            nbt.get_int("DragonDeathTime").unwrap_or(0),
+            Ordering::Relaxed,
+        );
+        lock(&self.inner).sitting_damage_received =
+            nbt.get_float("sitting_damage_received").unwrap_or(0.0);
+    }
 }
 
-pub trait Vector3Ext {
-    fn distance_squared(self, other: Self) -> f64;
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl Vector3Ext for Vector3<f64> {
-    fn distance_squared(self, other: Self) -> f64 {
-        let (dx, dy, dz) = (self.x - other.x, self.y - other.y, self.z - other.z);
-        dx * dx + dy * dy + dz * dz
+    fn ring() -> [Node; NODE_COUNT] {
+        let mut nodes = [Node::default(); NODE_COUNT];
+        for (i, node) in nodes.iter_mut().enumerate() {
+            *node = Node {
+                x: i as i32 * 10,
+                y: 80,
+                z: 0,
+            };
+        }
+        nodes
+    }
+
+    #[test]
+    fn path_follows_the_adjacency_graph_to_the_end_node() {
+        let nodes = ring();
+        let path = find_path_between(&nodes, 0, 6, None, 0).expect("path");
+        assert_eq!(path.nodes.first(), Some(&nodes[0]));
+        assert_eq!(path.nodes.last(), Some(&nodes[6]));
+        for pair in path.nodes.windows(2) {
+            let a = nodes.iter().position(|n| n == &pair[0]).unwrap();
+            let b = nodes.iter().position(|n| n == &pair[1]).unwrap();
+            assert_ne!(NODE_ADJACENCY[a] & (1 << b), 0);
+        }
+    }
+
+    #[test]
+    fn final_node_is_appended_after_the_end_node() {
+        let nodes = ring();
+        let final_node = Node { x: 5, y: 70, z: 5 };
+        let path = find_path_between(&nodes, 0, 6, Some(final_node), 0).expect("path");
+        assert_eq!(path.nodes.last(), Some(&final_node));
+        assert_eq!(path.nodes[path.nodes.len() - 2], nodes[6]);
+    }
+
+    #[test]
+    fn inner_ring_only_when_no_crystal_is_alive() {
+        let nodes = ring();
+        let path = find_path_between(&nodes, 12, 15, None, 12).expect("path");
+        assert!(path.nodes.iter().all(|node| node.x >= 120));
+    }
+
+    #[test]
+    fn path_to_the_start_node_is_a_single_node() {
+        let nodes = ring();
+        let path = find_path_between(&nodes, 3, 3, None, 0).expect("path");
+        assert_eq!(path.nodes.len(), 1);
     }
 }

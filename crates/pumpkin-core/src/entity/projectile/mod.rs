@@ -10,6 +10,7 @@ use std::{
     sync::atomic::{AtomicBool, Ordering},
 };
 pub mod arrow;
+pub mod dragon_fireball;
 pub mod egg;
 pub mod ender_pearl;
 pub mod evoker_fangs;
@@ -49,6 +50,30 @@ pub fn is_projectile(entity_type: &EntityType) -> bool {
         || *entity_type == EntityType::FISHING_BOBBER
         || *entity_type == EntityType::WITHER_SKULL
         || *entity_type == EntityType::LLAMA_SPIT
+}
+
+/// Vanilla `ProjectileUtil.rotateTowardsMovement(projectile, 0.2)`.
+pub(crate) fn rotate_towards_movement(entity: &Entity) {
+    fn lerp_rotation(current: f32, target: f32) -> f32 {
+        let mut current = current;
+        while target - current < -180.0 {
+            current -= 360.0;
+        }
+        while target - current >= 180.0 {
+            current += 360.0;
+        }
+        0.2f32.mul_add(target - current, current)
+    }
+    let movement = entity.velocity.load();
+    let horizontal = movement.horizontal_length();
+    entity.pitch.store(lerp_rotation(
+        entity.pitch.load(),
+        movement.y.atan2(horizontal).to_degrees() as f32,
+    ));
+    entity.yaw.store(lerp_rotation(
+        entity.yaw.load(),
+        movement.x.atan2(movement.z).to_degrees() as f32,
+    ));
 }
 
 /// Helper to apply projectile spawned enchantment effects matching vanilla `Projectile::applyOnProjectileSpawned`.
@@ -170,6 +195,53 @@ impl ThrownItemEntity {
         let chunk_pos = entity.chunk_pos.load();
         world.broadcast_to_chunk(chunk_pos, &packet);
 
+        let hit = self.find_hit(caller, &world, start_pos, delta);
+
+        // Handle hit or continue
+        if let Some(h) = hit {
+            // projectile: Projectile.hitTargetOrDeflectSelf
+            if let ProjectileHit::Entity { entity: target, .. } = &h
+                && crate::entity::projectile_deflection::try_deflect(caller, target.as_ref())
+            {
+                return;
+            }
+            // Ensure hit is only processed once per projectile
+            if self.has_hit.swap(true, Ordering::SeqCst) {
+                return;
+            }
+
+            if let ProjectileHit::Block { pos, hit_pos, .. } = &h {
+                let block = world.get_block(pos);
+                let state = world.get_block_state(pos);
+                if let Some(server) = world.server.upgrade() {
+                    world
+                        .block_registry
+                        .on_projectile_hit(block, &world, caller, pos, state, hit_pos, &server);
+                }
+            }
+
+            // projectile: hit position is where it entered the target, so knockback pushes away (Projectile.onHit)
+            if let ProjectileHit::Entity { hit_pos, .. } = &h {
+                entity.set_pos(*hit_pos);
+            }
+
+            // Just trigger hit effects and remove
+            caller.on_hit(h);
+            entity.remove();
+        }
+    }
+
+    /// Closest block or entity along `start_pos + delta` (Vanilla `ProjectileUtil.getHitResultOnMoveVector`).
+    pub(crate) fn find_hit(
+        &self,
+        caller: &dyn EntityBase,
+        world: &Arc<World>,
+        start_pos: Vector3<f64>,
+        delta: Vector3<f64>,
+    ) -> Option<ProjectileHit> {
+        let entity = self.get_entity();
+        let new_pos = start_pos.add(&delta);
+
         // Calculate search box for collisions
         let search_box = BoundingBox::new(
             Vector3::new(
@@ -214,7 +286,7 @@ impl ThrownItemEntity {
         // Entity collisions
         let candidates = world.get_all_at_box(&search_box);
         for cand in candidates {
-            if self.should_skip_collision(&world, entity, &cand) {
+            if self.should_skip_collision(world, entity, &cand) {
                 continue;
             }
 
@@ -232,38 +304,7 @@ impl ThrownItemEntity {
             }
         }
 
-        // Handle hit or continue
-        if let Some(h) = hit {
-            // projectile: Projectile.hitTargetOrDeflectSelf
-            if let ProjectileHit::Entity { entity: target, .. } = &h
-                && crate::entity::projectile_deflection::try_deflect(caller, target.as_ref())
-            {
-                return;
-            }
-            // Ensure hit is only processed once per projectile
-            if self.has_hit.swap(true, Ordering::SeqCst) {
-                return;
-            }
-
-            if let ProjectileHit::Block { pos, hit_pos, .. } = &h {
-                let block = world.get_block(pos);
-                let state = world.get_block_state(pos);
-                if let Some(server) = world.server.upgrade() {
-                    world
-                        .block_registry
-                        .on_projectile_hit(block, &world, caller, pos, state, hit_pos, &server);
-                }
-            }
-
-            // projectile: hit position is where it entered the target, so knockback pushes away (Projectile.onHit)
-            if let ProjectileHit::Entity { hit_pos, .. } = &h {
-                entity.set_pos(*hit_pos);
-            }
-
-            // Just trigger hit effects and remove
-            caller.on_hit(h);
-            entity.remove();
-        }
+        hit
     }
 
     /// Vanilla `getInertia` / `getLiquidInertia`; wind charges keep all their speed (`AbstractWindCharge`).
@@ -289,6 +330,18 @@ impl ThrownItemEntity {
         let other_ent = other.get_entity();
         // projectile: spectators are not pickable (Projectile.canHitEntity)
         if other.is_spectator() {
+            return true;
+        }
+        // dragon: only its parts can be hit, never the body box, and never by its own projectiles
+        if other
+            .cast_any()
+            .is::<crate::entity::boss::ender_dragon::EnderDragonEntity>()
+        {
+            return true;
+        }
+        if let Some(parent) = other.parent_entity_uuid()
+            && self.owner.uuid() == Some(parent)
+        {
             return true;
         }
         if other_ent.entity_id == self_ent.entity_id {

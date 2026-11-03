@@ -121,8 +121,8 @@ impl JavaClient {
 
                 let new_on_ground = packet.collision & FLAG_ON_GROUND != 0;
                 entity.on_ground.store(new_on_ground, Ordering::Relaxed);
-                if new_on_ground && entity.is_fall_flying() {
-                    entity.set_fall_flying(false);
+                if packet.collision & FLAG_IN_WALL != 0 && entity.is_fall_flying() {
+                    player.handle_fall_flying_collision(pos - last_pos);
                 }
                 let world = &player.world();
 
@@ -268,6 +268,9 @@ impl JavaClient {
                     .store((packet.collision & FLAG_ON_GROUND) != 0, Ordering::Relaxed);
 
                 entity.set_rotation(wrap_degrees(packet.yaw) % 360.0, wrap_degrees(packet.pitch));
+                if packet.collision & FLAG_IN_WALL != 0 && entity.is_fall_flying() {
+                    player.handle_fall_flying_collision(pos - last_pos);
+                }
 
                 let entity_id = entity.entity_id;
 

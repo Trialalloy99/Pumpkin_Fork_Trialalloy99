@@ -21,6 +21,9 @@ impl Default for DragonFlightHistory {
 
 impl DragonFlightHistory {
     pub const fn record(&mut self, y: f64, y_rot: f32) {
+        if self.head < 0 {
+            self.samples = [Sample { y, y_rot }; 64];
+        }
         self.head += 1;
         if self.head >= 64 {
             self.head = 0;

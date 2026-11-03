@@ -474,6 +474,8 @@ pub struct Player {
     pub tick_counter: AtomicI32,
     // elytra: glide tick counter (LivingEntity.fallFlyTicks)
     pub fall_fly_ticks: AtomicI32,
+    // elytra: ticks the server-side glide velocity stays authoritative after a rocket boost
+    glide_boost_ticks: AtomicI32,
     pub mining_pos: Mutex<BlockPos>,
     pub last_input: AtomicI8,
     /// A counter for teleport IDs used to track pending teleports.
@@ -920,6 +922,7 @@ impl Player {
             entered_lava_pos: AtomicCell::new(None),
             tick_counter: AtomicI32::new(0),
             fall_fly_ticks: AtomicI32::new(0),
+            glide_boost_ticks: AtomicI32::new(0),
             start_mining_time: AtomicI32::new(0),
             last_input: AtomicI8::new(0),
             carried_item: Mutex::new(None),
@@ -2445,14 +2448,18 @@ impl Player {
             || entity.touching_water.load(Ordering::Relaxed)
             || entity.touching_lava.load(Ordering::Relaxed)
         {
+            // elytra: refused start also stops and resyncs (ServerGamePacketListenerImpl START_FALL_FLYING)
+            self.stop_fall_flying(server);
             return;
         }
         let mut event = EntityToggleGlideEvent::new(entity.entity_id, true);
         server.plugin_manager.fire_blocking(server, &mut event);
         if !event.cancelled && event.is_gliding {
             entity.set_fall_flying(true);
-            self.living_entity.fall_distance.store(0.0);
+            self.glide_boost_ticks.store(0, Ordering::Relaxed);
             self.update_player_pose();
+        } else {
+            entity.resync_fall_flying_flag();
         }
     }
 
@@ -2465,12 +2472,17 @@ impl Player {
             && !stack.next_damage_will_break()
     }
 
-    // elytra: glide conditions (LivingEntity.canGlide)
+    // elytra: glide conditions, never while creative flying (Player.canGlide, LivingEntity.canGlide)
     fn can_glide(&self) -> bool {
         let entity = self.get_entity();
         if entity.on_ground.load(Ordering::Relaxed)
             || self.is_passenger()
             || self.living_entity.has_effect(&StatusEffect::LEVITATION)
+            || self
+                .abilities
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .flying
         {
             return false;
         }
@@ -2483,14 +2495,50 @@ impl Player {
             .any(|(slot, stack)| Self::can_glide_using(stack, slot))
     }
 
+    // elytra: where the rocket sits beside the gliding player (Entity.getHandHoldingItemAngle)
+    #[must_use]
+    pub fn hand_holding_firework_angle(&self) -> Vector3<f64> {
+        let rocket = pumpkin_data::item::Item::FIREWORK_ROCKET.id;
+        let item_only_in_off_hand = self.inventory().off_hand_item().item.id == rocket
+            && self.inventory().held_item().item.id != rocket;
+        let main_arm_right = self.config.load().main_hand as u8 == 1;
+        let item_arm_right = main_arm_right != item_only_in_off_hand;
+        let yaw =
+            f64::from(self.get_entity().yaw.load()) + if item_arm_right { 80.0 } else { -80.0 };
+        let yaw_rad = yaw.to_radians();
+        Vector3::new(-yaw_rad.sin() * 0.5, 0.0, yaw_rad.cos() * 0.5)
+    }
+
+    // elytra: velocity a rocket boost starts from, the server glide velocity while boosted else the client's last movement
+    #[must_use]
+    pub fn fall_flying_velocity(&self) -> Vector3<f64> {
+        let entity = self.get_entity();
+        if self.glide_boost_ticks.load(Ordering::Relaxed) > 0 {
+            entity.velocity.load()
+        } else {
+            entity.movement.load()
+        }
+    }
+
+    // elytra: rocket boost, sent to the client and kept as glide velocity for the next ticks (FireworkRocketEntity.tick)
+    pub fn boost_fall_flying(&self, velocity: Vector3<f64>) {
+        self.glide_boost_ticks.store(2, Ordering::Relaxed);
+        self.get_entity().set_velocity(velocity);
+    }
+
     // elytra: stop when unable, durability every 20 ticks, glide event every 10 (LivingEntity.updateFallFlying)
     fn update_fall_flying(&self) {
         let entity = self.get_entity();
         if !entity.is_fall_flying() {
             self.fall_fly_ticks.store(0, Ordering::Relaxed);
+            self.glide_boost_ticks.store(0, Ordering::Relaxed);
             return;
         }
-        let ticks = self.fall_fly_ticks.fetch_add(1, Ordering::Relaxed) + 1;
+        let fall_fly_ticks = self.fall_fly_ticks.fetch_add(1, Ordering::Relaxed) + 1;
+        // elytra: fall distance stays capped while gliding level (Entity.checkFallDistanceAccumulation)
+        if self.fall_flying_velocity().y > -0.5 && self.living_entity.fall_distance.load() > 1.0 {
+            self.living_entity.fall_distance.store(1.0);
+        }
         if !self.can_glide() {
             let mut event = EntityToggleGlideEvent::new(entity.entity_id, false);
             if let Some(server) = entity.world.load().server.upgrade() {
@@ -2502,10 +2550,13 @@ impl Player {
             }
             return;
         }
-        if ticks % 10 != 0 {
+        self.tick_fall_flying_velocity();
+        // vanilla counts fallFlyTicks before this check, so the check sees one more
+        let check_ticks = fall_fly_ticks + 1;
+        if check_ticks % 10 != 0 {
             return;
         }
-        if (ticks / 10) % 2 == 0 {
+        if (check_ticks / 10) % 2 == 0 {
             let slot = {
                 let equipment = self
                     .living_entity
@@ -2531,6 +2582,73 @@ impl Player {
             .emit_game_event("elytra_glide", entity.pos.load());
     }
 
+    // elytra: server glide physics while boosted, else follow the client (LivingEntity.travelFallFlying)
+    fn tick_fall_flying_velocity(&self) {
+        let entity = self.get_entity();
+        let boost_ticks = self.glide_boost_ticks.load(Ordering::Relaxed);
+        if boost_ticks > 0 {
+            self.glide_boost_ticks
+                .store(boost_ticks - 1, Ordering::Relaxed);
+            let gravity = self.living_entity.get_effective_gravity(self);
+            entity
+                .velocity
+                .store(LivingEntity::update_fall_flying_movement(
+                    entity.velocity.load(),
+                    entity.rotation().to_f64(),
+                    entity.pitch.load(),
+                    gravity,
+                ));
+        } else {
+            entity.velocity.store(entity.movement.load());
+        }
+    }
+
+    // elytra: kinetic damage when a glide ends in a wall (LivingEntity.handleFallFlyingCollisions)
+    pub fn handle_fall_flying_collision(&self, moved: Vector3<f64>) {
+        let entity = self.get_entity();
+        let (last_speed, wanted) = if self.glide_boost_ticks.load(Ordering::Relaxed) > 0 {
+            let wanted = entity.velocity.load();
+            (wanted.horizontal_length(), wanted)
+        } else {
+            let last = entity.movement.load();
+            let gravity = self.living_entity.get_effective_gravity(self);
+            (
+                last.horizontal_length(),
+                LivingEntity::update_fall_flying_movement(
+                    last,
+                    entity.rotation().to_f64(),
+                    entity.pitch.load(),
+                    gravity,
+                ),
+            )
+        };
+        let blocked = |wanted: f64, moved: f64| moved.abs() + 1.0E-5 < wanted.abs();
+        let new_x = if blocked(wanted.x, moved.x) {
+            0.0
+        } else {
+            wanted.x
+        };
+        let new_z = if blocked(wanted.z, moved.z) {
+            0.0
+        } else {
+            wanted.z
+        };
+        let new_speed = new_x.hypot(new_z);
+        let damage = ((last_speed - new_speed) * 10.0 - 3.0) as f32;
+        if damage > 0.0 {
+            self.play_entity_sound(
+                if damage as i32 > 4 {
+                    Sound::EntityPlayerBigFall
+                } else {
+                    Sound::EntityPlayerSmallFall
+                },
+                1.0,
+                1.0,
+            );
+            self.damage(self, damage, DamageType::FLY_INTO_WALL);
+        }
+    }
+
     pub fn stop_fall_flying(&self, server: &Arc<Server>) {
         let entity = self.get_entity();
         if entity.is_fall_flying() {
@@ -2540,6 +2658,9 @@ impl Player {
                 entity.set_fall_flying(false);
                 self.update_player_pose();
             }
+        }
+        if !entity.is_fall_flying() {
+            entity.resync_fall_flying_flag();
         }
     }
 

@@ -1,9 +1,12 @@
+use crate::entity::player::Player;
+use crate::entity::projectile::ProjectileHit;
 use crate::entity::projectile::owner::ProjectileOwner;
 use crate::{
     entity::{Entity, EntityBase, projectile::ThrownItemEntity},
     server::Server,
     world::World,
 };
+use pumpkin_data::BlockDirection;
 use pumpkin_data::damage::DamageType;
 use pumpkin_data::data_component_impl::FireworksImpl;
 use pumpkin_data::entity::EntityStatus;
@@ -18,7 +21,7 @@ use pumpkin_util::{
     random::{RandomGenerator, RandomImpl, get_seed, xoroshiro128::Xoroshiro},
 };
 use std::sync::{
-    RwLock,
+    Arc, RwLock,
     atomic::{AtomicBool, AtomicU32, Ordering},
 };
 
@@ -137,16 +140,51 @@ impl FireworkRocketEntity {
         entity.remove();
     }
 
+    fn explosion_count(&self) -> usize {
+        self.item_stack
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_data_component::<FireworksImpl>()
+            .map_or(0, |fw| fw.explosions.len())
+    }
+
+    fn has_explosion(&self) -> bool {
+        self.explosion_count() > 0
+    }
+
+    // firework: boost of a gliding shooter (FireworkRocketEntity.tick attachedToEntity.isFallFlying)
+    fn boost_shooter(&self, world: &World, shooter: &Arc<dyn EntityBase>) {
+        let entity = self.get_entity();
+        if let Some(player) = self.entity.owner.get_player(world)
+            && let Some(server) = world.server.upgrade()
+        {
+            let mut event =
+                crate::plugin::api::events::player::player_elytra_boost::PlayerElytraBoostEvent {
+                    player,
+                    firework_id: entity.entity_id,
+                    cancelled: false,
+                };
+            server.plugin_manager.fire_blocking(&server, &mut event);
+            if event.cancelled {
+                return;
+            }
+        }
+        let shooter_entity = shooter.get_entity();
+        let look = shooter_entity.rotation().to_f64();
+        let movement = shooter.get_player().map_or_else(
+            || shooter_entity.velocity.load(),
+            Player::fall_flying_velocity,
+        );
+        let boosted = movement + (look * 0.1 + (look * 1.5 - movement) * 0.5);
+        if let Some(player) = shooter.get_player() {
+            player.boost_fall_flying(boosted);
+        } else {
+            shooter_entity.set_velocity(boosted);
+        }
+    }
+
     fn deal_explosion_damage(&self, world: &World) {
-        let explosion_count = {
-            let stack = self
-                .item_stack
-                .read()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            stack
-                .get_data_component::<FireworksImpl>()
-                .map_or(0, |fw| fw.explosions.len())
-        };
+        let explosion_count = self.explosion_count();
         if explosion_count == 0 {
             return;
         }
@@ -186,6 +224,26 @@ impl FireworkRocketEntity {
             let target_pos = target_entity.pos.load();
             let dist_sq = rocket_pos.squared_distance_to_vec(&target_pos);
             if dist_sq > 25.0 {
+                continue;
+            }
+            // firework: line of sight to feet or half the height (FireworkRocketEntity.dealExplosionDamage)
+            let height = f64::from(target_entity.height());
+            let can_see = (0..2).any(|step| {
+                let to = Vector3::new(
+                    target_pos.x,
+                    target_pos.y + height * 0.5 * f64::from(step),
+                    target_pos.z,
+                );
+                world
+                    .clip(&pumpkin_world::clip::ClipContext::new(
+                        rocket_pos,
+                        to,
+                        pumpkin_world::clip::ClipBlock::Collider,
+                        pumpkin_world::clip::ClipFluid::None,
+                    ))
+                    .is_miss
+            });
+            if !can_see {
                 continue;
             }
             let dist = dist_sq.sqrt();
@@ -234,55 +292,81 @@ impl EntityBase for FireworkRocketEntity {
         }
     }
 
+    // firework: tick order of FireworkRocketEntity.tick
     fn tick(&self, caller: &dyn EntityBase, _server: &Server) {
-        self.entity.process_tick(caller);
-
         let entity = self.get_entity();
-        let world = entity.world.load();
-        let mut velocity = entity.velocity.load();
+        let world = entity.world.load_full();
+        self.entity.owner.check_left_owner(entity);
+        entity.update_last_pos();
 
-        if let Some(shooter_id) = self.attached_to_entity {
-            if let Some(shooter) = world.get_entity_by_id(shooter_id) {
-                let shooter = shooter.get_entity();
-
-                if shooter.is_fall_flying() {
-                    let mut boost_cancelled = false;
-                    if let Some(player) = self.entity.owner.get_player(&world)
-                        && let Some(server) = world.server.upgrade()
-                    {
-                        let mut event = crate::plugin::api::events::player::player_elytra_boost::PlayerElytraBoostEvent {
-                            player,
-                            firework_id: entity.entity_id,
-                            cancelled: false,
-                        };
-                        server.plugin_manager.fire_blocking(&server, &mut event);
-                        if event.cancelled {
-                            boost_cancelled = true;
-                        }
-                    }
-                    if !boost_cancelled {
-                        let rotation = shooter.rotation().to_f64();
-                        let shooter_vel = shooter.velocity.load();
-
-                        let new_shooter_vel =
-                            shooter_vel + (rotation * 0.1 + (rotation * 1.5 - shooter_vel) * 0.5);
-
-                        shooter.set_velocity(new_shooter_vel);
-
-                        entity.set_pos(shooter.pos.load());
-                        entity.set_velocity(new_shooter_vel);
-                    }
-                }
+        let hit = if self.attached_to_entity.is_some() {
+            if let Some(shooter) = self.entity.owner.get(&world) {
+                let shooter_entity = shooter.get_entity();
+                let hand_angle = if shooter_entity.is_fall_flying() {
+                    self.boost_shooter(&world, &shooter);
+                    shooter
+                        .get_player()
+                        .map_or(Vector3::default(), Player::hand_holding_firework_angle)
+                } else {
+                    Vector3::default()
+                };
+                entity.set_pos(shooter_entity.pos.load() + hand_angle);
+                entity.velocity.store(shooter.get_player().map_or_else(
+                    || shooter_entity.velocity.load(),
+                    Player::fall_flying_velocity,
+                ));
             }
-        } else if !self.shot_at_angle.load(Ordering::Relaxed) {
-            velocity.x *= 1.15;
-            velocity.z *= 1.15;
-            velocity.y += 0.04;
-            entity.set_velocity(velocity);
+            self.entity
+                .find_hit(caller, &world, entity.pos.load(), entity.velocity.load())
+        } else {
+            let mut movement = entity.velocity.load();
+            if !self.shot_at_angle.load(Ordering::Relaxed) {
+                let horizontal_acceleration = if entity.horizontal_collision.load(Ordering::Relaxed)
+                {
+                    1.0
+                } else {
+                    1.15
+                };
+                movement = movement
+                    .multiply(horizontal_acceleration, 1.0, horizontal_acceleration)
+                    .add_raw(0.0, 0.04, 0.0);
+                entity.velocity.store(movement);
+            }
+            let start_pos = entity.pos.load();
+            let hit = self.entity.find_hit(caller, &world, start_pos, movement);
+            let mut horizontal_collision = false;
+            let new_pos = match &hit {
+                Some(ProjectileHit::Block { hit_pos, face, .. }) => {
+                    horizontal_collision =
+                        !matches!(face, BlockDirection::Up | BlockDirection::Down);
+                    *hit_pos
+                }
+                Some(ProjectileHit::Entity { hit_pos, .. }) => *hit_pos,
+                None => start_pos + movement,
+            };
+            entity.set_pos(new_pos);
+            entity
+                .horizontal_collision
+                .store(horizontal_collision, Ordering::Relaxed);
+            hit
+        };
+
+        if let Some(hit) = hit {
+            if let ProjectileHit::Entity { entity: target, .. } = &hit
+                && crate::entity::projectile_deflection::try_deflect(caller, target.as_ref())
+            {
+                return;
+            }
+            self.on_hit(hit);
+            if entity.is_removed() {
+                return;
+            }
         }
 
-        let current_life = self.life.fetch_add(1, Ordering::Relaxed);
-        if current_life == 0 && !entity.silent.load(Ordering::Relaxed) {
+        super::rotate_towards_movement(entity);
+
+        let life = self.life.fetch_add(1, Ordering::Relaxed);
+        if life == 0 && !entity.silent.load(Ordering::Relaxed) {
             world.play_sound_fine(
                 Sound::EntityFireworkRocketLaunch,
                 SoundCategory::Ambient,
@@ -291,7 +375,7 @@ impl EntityBase for FireworkRocketEntity {
                 1.0,
             );
         }
-        if current_life > self.life_time.load(Ordering::Relaxed) {
+        if life + 1 > self.life_time.load(Ordering::Relaxed) {
             self.explode_and_remove(&world);
         }
     }
@@ -308,8 +392,24 @@ impl EntityBase for FireworkRocketEntity {
         self
     }
 
-    fn on_hit(&self, _hit: crate::entity::projectile::ProjectileHit) {
-        let world = self.get_entity().world.load();
-        self.explode_and_remove(&world);
+    // firework: entities always explode it, blocks only with stars (FireworkRocketEntity.onHitEntity/onHitBlock)
+    fn on_hit(&self, hit: ProjectileHit) {
+        let entity = self.get_entity();
+        let world = entity.world.load_full();
+        match hit {
+            ProjectileHit::Entity { .. } => self.explode_and_remove(&world),
+            ProjectileHit::Block { pos, hit_pos, .. } => {
+                if let Some(server) = world.server.upgrade() {
+                    let block = world.get_block(&pos);
+                    let state = world.get_block_state(&pos);
+                    world
+                        .block_registry
+                        .on_projectile_hit(block, &world, self, &pos, state, &hit_pos, &server);
+                }
+                if self.has_explosion() {
+                    self.explode_and_remove(&world);
+                }
+            }
+        }
     }
 }

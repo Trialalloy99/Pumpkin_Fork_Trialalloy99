@@ -1533,6 +1533,42 @@ impl LivingEntity {
             .has_tag(&tag::EntityType::MINECRAFT_FALL_DAMAGE_IMMUNE)
     }
 
+    // elytra: glide physics for one tick (LivingEntity.updateFallFlyingMovement)
+    #[must_use]
+    pub fn update_fall_flying_movement(
+        mut movement: Vector3<f64>,
+        look: Vector3<f64>,
+        x_rot: f32,
+        gravity: f64,
+    ) -> Vector3<f64> {
+        let lean_angle = x_rot * (std::f32::consts::PI / 180.0);
+        let look_hor_length = look.x.hypot(look.z);
+        let move_hor_length = movement.horizontal_length();
+        let lift_force = f64::from(lean_angle).cos().powi(2);
+        movement.y += gravity * (lift_force.mul_add(0.75, -1.0));
+        if movement.y < 0.0 && look_hor_length > 0.0 {
+            let convert = movement.y * -0.1 * lift_force;
+            movement.x += look.x * convert / look_hor_length;
+            movement.y += convert;
+            movement.z += look.z * convert / look_hor_length;
+        }
+        if lean_angle < 0.0 && look_hor_length > 0.0 {
+            let convert = move_hor_length * -f64::from(lean_angle.sin()) * 0.04;
+            movement.x += -look.x * convert / look_hor_length;
+            movement.y += convert * 3.2;
+            movement.z += -look.z * convert / look_hor_length;
+        }
+        if look_hor_length > 0.0 {
+            movement.x += (look.x / look_hor_length * move_hor_length - movement.x) * 0.1;
+            movement.z += (look.z / look_hor_length * move_hor_length - movement.z) * 0.1;
+        }
+        Vector3::new(
+            movement.x * f64::from(0.99f32),
+            movement.y * f64::from(0.98f32),
+            movement.z * f64::from(0.99f32),
+        )
+    }
+
     pub(crate) fn get_effective_gravity(&self, caller: &dyn EntityBase) -> f64 {
         let final_gravity = if self.entity.has_no_gravity() {
             0.0
@@ -2645,7 +2681,11 @@ impl LivingEntity {
         }
     }
 
-    fn update_death_stats(&self, dyn_self: &dyn EntityBase, cause: Option<&dyn EntityBase>) {
+    pub(crate) fn update_death_stats(
+        &self,
+        dyn_self: &dyn EntityBase,
+        cause: Option<&dyn EntityBase>,
+    ) {
         if let Some(victim_player) = dyn_self.get_player() {
             victim_player.increment_custom_stat(CustomStatistic::Deaths, 1);
             victim_player.set_stat(
@@ -3878,6 +3918,12 @@ impl LivingEntity {
         }
 
         if new_health <= 0.0 {
+            if caller
+                .get_mob()
+                .is_some_and(|mob| !mob.handle_killing_blow())
+            {
+                return true;
+            }
             let mut death_event =
                 crate::plugin::api::events::entity::entity_death::EntityDeathEvent::new(
                     self.entity.entity_id,
@@ -4215,6 +4261,12 @@ impl EntityBase for LivingEntity {
         self.refresh_dirty_attributes(caller);
 
         if self.health.load() <= 0.0 {
+            if caller
+                .get_mob()
+                .is_some_and(super::mob::Mob::custom_tick_death)
+            {
+                return;
+            }
             let time = self
                 .death_time
                 .fetch_update(Relaxed, Relaxed, |time| Some(time.saturating_add(1)))
@@ -5463,5 +5515,35 @@ mod ai_step_tests {
         assert_eq!(age, -19);
         assert_eq!(tick_count, 7);
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod fall_flying_tests {
+    use super::LivingEntity;
+    use pumpkin_util::math::vector3::Vector3;
+
+    #[test]
+    fn straight_down_look_only_applies_gravity_and_drag() {
+        let movement = LivingEntity::update_fall_flying_movement(
+            Vector3::new(0.0, 0.0, 0.0),
+            Vector3::new(0.0, -1.0, 0.0),
+            90.0,
+            0.08,
+        );
+        assert!(movement.x == 0.0 && movement.z == 0.0);
+        assert!((movement.y - -0.08 * f64::from(0.98f32)).abs() < 1.0E-9);
+    }
+
+    #[test]
+    fn level_glide_converts_sink_into_forward_speed() {
+        let movement = LivingEntity::update_fall_flying_movement(
+            Vector3::new(0.0, 0.0, 1.0),
+            Vector3::new(0.0, 0.0, 1.0),
+            0.0,
+            0.08,
+        );
+        assert!(movement.z > 0.9 && movement.z < 1.0);
+        assert!(movement.y < 0.0 && movement.y > -0.03);
     }
 }

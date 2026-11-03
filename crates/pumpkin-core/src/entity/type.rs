@@ -257,6 +257,9 @@ pub fn from_type(
             crate::entity::projectile::evoker_fangs::EvokerFangsEntity::new(entity, 0, 0.0, None),
         ),
         id if id == EntityType::END_CRYSTAL.id => Arc::new(EndCrystalEntity::new(entity)),
+        id if id == EntityType::DRAGON_FIREBALL.id => {
+            Arc::new(crate::entity::projectile::dragon_fireball::DragonFireballEntity::new(entity))
+        }
         id if id == EntityType::ENDER_PEARL.id => Arc::new(EnderPearlEntity::new(entity)),
         id if id == EntityType::SNOWBALL.id => Arc::new(SnowballEntity::new(entity)),
         id if id == EntityType::EGG.id => Arc::new(EggEntity::new(entity)),

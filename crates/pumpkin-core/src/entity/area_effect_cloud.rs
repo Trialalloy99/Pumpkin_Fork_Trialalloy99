@@ -52,6 +52,8 @@ pub struct AreaEffectCloudEntity {
     pub duration_on_use: Mutex<i32>,
     /// ticks to wait before the cloud becomes active and applies effects (grace period)
     pub wait_time: Mutex<i32>,
+    /// entity that created the cloud, credited for its damage (vanilla `AreaEffectCloud.owner`)
+    pub owner: Mutex<Option<uuid::Uuid>>,
 }
 
 impl AreaEffectCloudEntity {
@@ -73,6 +75,7 @@ impl AreaEffectCloudEntity {
             radius_on_use: Mutex::new(0.0),
             duration_on_use: Mutex::new(0),
             wait_time: Mutex::new(20),
+            owner: Mutex::new(None),
         };
 
         Arc::new(cloud)
@@ -106,6 +109,47 @@ impl AreaEffectCloudEntity {
             radius_on_use: Mutex::new(radius_on_use_in),
             duration_on_use: Mutex::new(duration_on_use_in),
             wait_time: Mutex::new(wait_time_in),
+            owner: Mutex::new(None),
+        };
+
+        Arc::new(cloud)
+    }
+
+    /// Dragon breath cloud (vanilla `DragonFireball.onHit` / `DragonSittingFlamingPhase`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_dragon_breath(
+        entity: Entity,
+        owner: Option<uuid::Uuid>,
+        duration: i32,
+        radius: f32,
+        radius_per_tick: f32,
+        amplifier: u8,
+        effect_duration: i32,
+    ) -> Arc<dyn EntityBase> {
+        entity
+            .no_physics
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+        let cloud = Self {
+            entity,
+            item_stack: Mutex::new(ItemStack::new(1, &pumpkin_data::item::Item::DRAGON_BREATH)),
+            effects: Mutex::new(vec![(
+                &StatusEffect::INSTANT_DAMAGE,
+                effect_duration,
+                amplifier,
+                false,
+                true,
+                true,
+            )]),
+            radius: Mutex::new(radius),
+            duration: Mutex::new(duration),
+            age: Mutex::new(0),
+            reapplication_delay: Mutex::new(20),
+            reapplication_map: Mutex::new(HashMap::new()),
+            radius_on_tick: Mutex::new(radius_per_tick),
+            radius_on_use: Mutex::new(0.0),
+            duration_on_use: Mutex::new(0),
+            wait_time: Mutex::new(20),
+            owner: Mutex::new(owner),
         };
 
         Arc::new(cloud)
@@ -176,11 +220,20 @@ impl EntityBase for AreaEffectCloudEntity {
         // Build raw particle option bytes for ENTITY_EFFECT
         let data_bytes = color.to_be_bytes();
 
-        let meta = ParticleMeta {
-            particle_id: pumpkin_protocol::codec::var_int::VarInt(
-                pumpkin_data::particle::Particle::EntityEffect as i32,
-            ),
-            data: Box::new(data_bytes),
+        let meta = if stack.item.id == pumpkin_data::item::Item::DRAGON_BREATH.id {
+            ParticleMeta {
+                particle_id: pumpkin_protocol::codec::var_int::VarInt(
+                    pumpkin_data::particle::Particle::DragonBreath as i32,
+                ),
+                data: Box::new(1.0f32.to_be_bytes()),
+            }
+        } else {
+            ParticleMeta {
+                particle_id: pumpkin_protocol::codec::var_int::VarInt(
+                    pumpkin_data::particle::Particle::EntityEffect as i32,
+                ),
+                data: Box::new(data_bytes),
+            }
         };
 
         self.entity.set_synced_data(
@@ -380,6 +433,11 @@ impl EntityBase for AreaEffectCloudEntity {
 
             // Apply scaled effects inside a spawned task
             if let Some(living) = cand_clone.get_living_entity() {
+                let owner = self
+                    .owner
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .and_then(|uuid| world.get_entity_by_uuid(uuid));
                 crate::item::potion::PotionContents::apply_effects_to(
                     living,
                     effs_clone,
@@ -387,7 +445,7 @@ impl EntityBase for AreaEffectCloudEntity {
                     crate::item::potion::PotionApplicationSource::AreaEffectCloud,
                     Some(crate::entity::living::EffectSource {
                         direct: self,
-                        owner: None,
+                        owner: owner.as_deref(),
                     }),
                 );
             }

@@ -1622,6 +1622,16 @@ pub trait Mob: EntityBase + Send + Sync {
         false
     }
 
+    /// Vanilla `LivingEntity.handleKillingBlow`: `false` keeps the mob alive after lethal damage.
+    fn handle_killing_blow(&self) -> bool {
+        true
+    }
+
+    /// Vanilla `LivingEntity.tickDeath` override: `true` replaces the generic 20 tick death animation.
+    fn custom_tick_death(&self) -> bool {
+        false
+    }
+
     fn wants_to_pick_up(&self, _stack: &ItemStack) -> bool {
         false
     }
