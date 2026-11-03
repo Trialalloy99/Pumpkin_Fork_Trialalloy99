@@ -8,6 +8,7 @@ use crate::entity::projectile::fishing_bobber::FishingBobberEntity;
 use crate::item::{ItemBehaviour, ItemMetadata};
 use pumpkin_data::data_component_impl::EquipmentSlot;
 use pumpkin_data::entity::EntityType;
+use pumpkin_data::game_event::GameEvent;
 use pumpkin_data::item::Item;
 use pumpkin_data::sound::{Sound, SoundCategory};
 use pumpkin_data::statistic::StatisticCategory;
@@ -47,6 +48,9 @@ impl ItemBehaviour for FishingRodItem {
                 (crate::enchantment::helper::EnchantmentHelper::modify_fishing_time_reduction(
                     &rod, 0.0,
                 ) * 20.0) as i32;
+            let luck =
+                crate::enchantment::helper::EnchantmentHelper::modify_fishing_luck_bonus(&rod, 0.0)
+                    as i32;
             let player_pos = player.position();
             let y_angle = -yaw.to_radians() - std::f32::consts::PI;
             let x_angle = -pitch.to_radians();
@@ -60,7 +64,8 @@ impl ItemBehaviour for FishingRodItem {
                 player_pos.z - f64::from(y_cos) * 0.3,
             );
             let bobber_entity = Entity::new(world.clone(), spawn_pos, &EntityType::FISHING_BOBBER);
-            let bobber = FishingBobberEntity::new_with_rod(bobber_entity, player, time_reduction);
+            let bobber =
+                FishingBobberEntity::new_with_rod(bobber_entity, player, time_reduction, luck);
             bobber.entity.pos.store(spawn_pos);
 
             let dir = Vector3::new(
@@ -76,6 +81,11 @@ impl ItemBehaviour for FishingRodItem {
                 0.6 / dist + triangle(),
             );
             bobber.entity.velocity.store(velocity);
+            // fishing rod: yaw and pitch from the throw (FishingHook constructor)
+            bobber.entity.set_rotation(
+                velocity.x.atan2(velocity.z).to_degrees() as f32,
+                velocity.y.atan2(velocity.horizontal_length()).to_degrees() as f32,
+            );
 
             player
                 .fishing_bobber
@@ -84,6 +94,7 @@ impl ItemBehaviour for FishingRodItem {
             let bobber_arc: Arc<FishingBobberEntity> = Arc::new(bobber);
             world.spawn_entity(bobber_arc);
 
+            world.emit_game_event(GameEvent::ItemInteractStart.name(), player.position());
             player.increment_stat(StatisticCategory::Used, i32::from(item.id), 1);
         } else {
             // Reel in
@@ -105,6 +116,7 @@ impl ItemBehaviour for FishingRodItem {
                 player.damage_item_in_slot(&slot, dmg);
             }
 
+            world.emit_game_event(GameEvent::ItemInteractFinish.name(), player.position());
             world.play_sound_fine(
                 Sound::EntityFishingBobberRetrieve,
                 SoundCategory::Neutral,

@@ -53,6 +53,7 @@ struct FishingState {
     biting: bool,
     open_water: bool,
     lure_speed: i32,
+    luck: i32,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -72,10 +73,10 @@ impl FishingBobberEntity {
     const MAX_RANGE_SQ: f64 = 1024.0;
 
     pub fn new(entity: Entity, owner: &Player) -> Self {
-        Self::new_with_rod(entity, owner, 0)
+        Self::new_with_rod(entity, owner, 0, 0)
     }
 
-    pub fn new_with_rod(entity: Entity, owner: &Player, lure_speed: i32) -> Self {
+    pub fn new_with_rod(entity: Entity, owner: &Player, lure_speed: i32, luck: i32) -> Self {
         let mut owner_pos = owner.living_entity.entity.pos.load();
         owner_pos.y += owner.living_entity.entity.get_eye_height() - 0.1;
         entity.pos.store(owner_pos);
@@ -95,6 +96,7 @@ impl FishingBobberEntity {
                 biting: false,
                 open_water: true,
                 lure_speed: lure_speed.max(0),
+                luck: luck.max(0),
             }),
         }
     }
@@ -137,6 +139,13 @@ impl FishingBobberEntity {
     }
 
     fn set_biting(&self, biting: bool) {
+        if biting {
+            let velocity = self.entity.velocity.load();
+            let dip = -0.4 * rand::random_range(0.6f32..1.0);
+            self.entity
+                .velocity
+                .store(Vector3::new(velocity.x, f64::from(dip), velocity.z));
+        }
         self.entity.set_synced_data(
             pumpkin_data::tracked_data::fishing_bobber::DATA_BITING,
             biting,
@@ -203,9 +212,8 @@ impl FishingBobberEntity {
                 5
             };
         } else if nibble > 0 {
-            let luck =
-                crate::enchantment::helper::EnchantmentHelper::modify_fishing_luck_bonus(rod, 0.0)
-                    + player.living_entity.get_attribute_value(&Attributes::LUCK) as f32;
+            let luck = self.lock_state().luck as f32
+                + player.living_entity.get_attribute_value(&Attributes::LUCK) as f32;
             let params = LootContextParameters {
                 position: Some(bobber_pos),
                 tool: Some(rod.clone()),
@@ -384,6 +392,7 @@ impl FishingBobberEntity {
         }
 
         entity.move_entity(caller, entity.velocity.load());
+        super::rotate_towards_movement(entity);
         if hook_state == HookState::Flying
             && (entity.on_ground.load(Ordering::Relaxed)
                 || entity.horizontal_collision.load(Ordering::Relaxed))
