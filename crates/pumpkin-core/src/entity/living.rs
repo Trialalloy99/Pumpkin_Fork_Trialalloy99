@@ -86,6 +86,9 @@ pub struct LivingEntity {
     pub entity: Entity,
     /// Tracks the remaining time until the entity can regenerate health.
     pub hurt_cooldown: AtomicI32,
+    /// Vanilla `LivingEntity.DATA_STINGER_COUNT_ID`, stingers stuck in the body.
+    pub stinger_count: AtomicI32,
+    remove_stinger_time: AtomicI32,
     /// Stores the amount of damage the entity last received.
     pub last_damage_taken: AtomicCell<f32>,
     /// The current health level of the entity.
@@ -342,6 +345,8 @@ impl LivingEntity {
             health: AtomicCell::new(max_health), // Initial health value from attributes
             entity,
             hurt_cooldown: AtomicI32::new(0),
+            stinger_count: AtomicI32::new(0),
+            remove_stinger_time: AtomicI32::new(0),
             last_damage_taken: AtomicCell::new(0.0),
             absorption: AtomicCell::new(0.0),
             fall_distance: AtomicCell::new(0.0),
@@ -417,6 +422,34 @@ impl LivingEntity {
         }));
         self.last_hurt_by_mob_timestamp
             .store(self.entity.tick_count.load(Relaxed), Relaxed);
+    }
+
+    #[must_use]
+    pub fn get_stinger_count(&self) -> i32 {
+        self.stinger_count.load(Relaxed)
+    }
+
+    // living: setStingerCount
+    pub fn set_stinger_count(&self, count: i32) {
+        self.stinger_count.store(count, Relaxed);
+        self.entity.set_synced_data(
+            pumpkin_data::tracked_data::living_entity::DATA_STINGER_COUNT_ID,
+            pumpkin_protocol::codec::var_int::VarInt(count),
+        );
+    }
+
+    // living: LivingEntity.tick, stingers fall out one by one
+    pub(crate) fn tick_stingers(&self) {
+        let count = self.get_stinger_count();
+        if count > 0 {
+            if self.remove_stinger_time.load(Relaxed) <= 0 {
+                self.remove_stinger_time.store(20 * (30 - count), Relaxed);
+            }
+            let left = self.remove_stinger_time.fetch_sub(1, Relaxed) - 1;
+            if left <= 0 {
+                self.set_stinger_count(count - 1);
+            }
+        }
     }
 
     fn tick_last_hurt_by_mob(&self) {
@@ -1678,7 +1711,9 @@ impl LivingEntity {
                 velo.y += if in_lava && self.entity.entity_type == &EntityType::MAGMA_CUBE {
                     0.22 + f64::from(self.entity.data.load(Ordering::Relaxed)) * 0.05
                 } else {
-                    0.04
+                    caller
+                        .get_mob()
+                        .map_or(0.04, crate::entity::mob::Mob::liquid_jump_boost)
                 };
 
                 self.entity.velocity.store(velo);
@@ -3988,6 +4023,7 @@ impl EntityBase for LivingEntity {
     fn tick(&self, caller: &dyn EntityBase, server: &Server) {
         self.entity.tick(caller, server);
         self.tick_last_hurt_by_mob();
+        self.tick_stingers();
         if let Some(mob) = caller.get_mob() {
             mob.tick_ambient_sound();
             mob.base_tick();

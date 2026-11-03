@@ -1358,6 +1358,11 @@ pub trait Mob: EntityBase + Send + Sync {
     // parrot: LivingEntity.setRecordPlayingNearby (jukebox song start and stop)
     fn set_record_playing_nearby(&self, _jukebox: BlockPos, _playing: bool) {}
 
+    // bee: Entity.jumpInLiquid upward push
+    fn liquid_jump_boost(&self) -> f64 {
+        0.04
+    }
+
     // cat, ocelot: Entity.isSteppingCarefully (crouching), mutes step vibrations
     fn mob_is_stepping_carefully(&self) -> bool {
         self.get_entity().is_sneaking()

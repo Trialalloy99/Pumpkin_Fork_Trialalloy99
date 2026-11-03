@@ -523,7 +523,7 @@ impl Goal for LocateHiveGoal {
 // bee: Bee.BeeGoToHiveGoal
 pub struct GoToHiveGoal {
     travelling_ticks: i32,
-    last_path_target: Option<(BlockPos, usize, usize)>,
+    last_path: Option<crate::entity::ai::pathfinder::path::Path>,
     ticks_stuck: i32,
 }
 
@@ -532,7 +532,7 @@ impl GoToHiveGoal {
     pub const fn new() -> Self {
         Self {
             travelling_ticks: 0,
-            last_path_target: None,
+            last_path: None,
             ticks_stuck: 0,
         }
     }
@@ -646,21 +646,21 @@ impl Goal for GoToHiveGoal {
             Self::drop_and_blacklist_hive(bee);
             return;
         }
-        let current = nav_of(bee).get_path().map(|path| {
-            (
-                path.get_target(),
-                path.get_node_count(),
-                path.get_next_node_index(),
-            )
-        });
-        if current.is_some() && current == self.last_path_target {
+        let current = nav_of(bee)
+            .get_path()
+            .map(crate::entity::ai::pathfinder::path::Path::copy);
+        let same_path = current
+            .as_ref()
+            .zip(self.last_path.as_ref())
+            .is_some_and(|(current, last)| current.same_as_path(last));
+        if same_path {
             self.ticks_stuck += 1;
             if self.ticks_stuck > TICKS_BEFORE_HIVE_DROP {
                 bee.drop_hive();
                 self.ticks_stuck = 0;
             }
         } else {
-            self.last_path_target = current;
+            self.last_path = current;
         }
     }
 }

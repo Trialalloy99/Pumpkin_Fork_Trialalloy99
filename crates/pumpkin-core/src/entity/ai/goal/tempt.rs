@@ -84,6 +84,16 @@ impl TemptGoal {
         self
     }
 
+    /// Vanilla `TemptGoal(.., Predicate<ItemStack> items, ..)` on a pathfinding mob.
+    #[must_use]
+    pub const fn with_item_predicate(
+        mut self,
+        predicate: fn(&dyn Mob, &ItemStack) -> bool,
+    ) -> Self {
+        self.predicate = Some(predicate);
+        self
+    }
+
     /// Vanilla `CatTemptGoal`: only while the gate holds, with a picked player that never scares.
     #[must_use]
     pub const fn for_cat(mut self, use_gate: fn(&dyn Mob) -> bool) -> Self {

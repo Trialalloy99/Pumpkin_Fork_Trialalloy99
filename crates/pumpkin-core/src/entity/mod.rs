@@ -1245,6 +1245,8 @@ pub struct Entity {
     pub bounding_box: EntityBoundingBox,
     ///The size (width and height) of the bounding box
     pub entity_dimension: AtomicCell<EntityDimensions>,
+    /// Vanilla `getLeashOffset` as (factor of eye height, factor of width) for the single rope.
+    pub leash_offset_factors: AtomicCell<Option<(f64, f64)>>,
     default_dimensions: AtomicCell<Option<EntityDimensions>>,
     /// Whether this entity is invulnerable to all damage
     pub invulnerable: AtomicBool,
@@ -1527,6 +1529,7 @@ impl Entity {
             pose: AtomicCell::new(EntityPose::Standing),
             bounding_box,
             entity_dimension: AtomicCell::new(bounding_box_size),
+            leash_offset_factors: AtomicCell::new(None),
             default_dimensions: AtomicCell::new(None),
             invulnerable: AtomicBool::new(false),
             damage_immunities: std::sync::Mutex::new(Vec::new()),
@@ -4753,14 +4756,19 @@ impl Entity {
         let mut torque = 0.0;
         let mut any = false;
         for (entity_point, holder_point) in entity_points.iter().zip(holder_points) {
-            let lever = rotate(
-                Vector3::new(
+            let own_point = match self.leash_offset_factors.load() {
+                Some((eye_factor, width_factor)) if !quad => Vector3::new(
+                    0.0,
+                    eye_factor * f64::from(self.entity_dimension.load().eye_height),
+                    width_factor * own_dims.x,
+                ),
+                _ => Vector3::new(
                     entity_point.x * own_dims.x,
                     entity_point.y * own_dims.y,
                     entity_point.z * own_dims.z,
                 ),
-                self.yaw.load(),
-            );
+            };
+            let lever = rotate(own_point, self.yaw.load());
             let attach = self.pos.load() + lever;
             let pivot = holder_entity.pos.load()
                 + rotate(

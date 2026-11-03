@@ -1362,6 +1362,8 @@ impl PathNavigationTrait for GroundPathNavigation {
 
 pub struct FlyingPathNavigation {
     pub inner: PathNavigation,
+    // bee: isStableDestination needs a non-air block below
+    pub stable_needs_block_below: bool,
 }
 
 impl Default for FlyingPathNavigation {
@@ -1375,6 +1377,7 @@ impl FlyingPathNavigation {
     pub fn new() -> Self {
         Self {
             inner: PathNavigation::new(EvaluatorKind::Fly(FlyNodeEvaluator::default())),
+            stable_needs_block_below: false,
         }
     }
 }
@@ -1382,6 +1385,14 @@ impl FlyingPathNavigation {
 impl PathNavigationTrait for FlyingPathNavigation {
     fn set_progress(&mut self, goal: NavigatorGoal) {
         self.inner.set_progress(goal);
+    }
+
+    fn is_stable_destination(&self, world: &World, pos: &BlockPos) -> bool {
+        if self.stable_needs_block_below {
+            !world.get_block_state(&pos.down()).is_air()
+        } else {
+            world.get_block_state(&pos.down()).is_solid_render()
+        }
     }
 
     fn set_speed(&mut self, speed: f64) {
@@ -2460,6 +2471,14 @@ impl Navigator {
     #[must_use]
     pub fn flying() -> Self {
         Self::new(FlyingPathNavigation::new())
+    }
+
+    /// Vanilla `Bee.createNavigation`, a flying navigation that wants a block below its stops.
+    #[must_use]
+    pub fn bee_flying() -> Self {
+        let mut navigation = FlyingPathNavigation::new();
+        navigation.stable_needs_block_below = true;
+        Self::new(navigation)
     }
 
     #[must_use]

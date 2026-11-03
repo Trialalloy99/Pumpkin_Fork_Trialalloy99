@@ -21,6 +21,7 @@ use pumpkin_util::math::vector3::Vector3;
 use crate::block::entities::beehive::BeehiveBlockEntity;
 use crate::entity::ai::pathfinder::node::PathType;
 use crate::entity::ai::util::air_random_pos;
+use crate::entity::custom_sound::CustomSound;
 use crate::entity::passive::bee_goals;
 
 use crate::entity::ai::behavior::hunting::{self, Hunt};
@@ -56,6 +57,11 @@ const TOO_FAR_DISTANCE: i32 = 48;
 
 /// Vanilla `Bee.TICKS_PER_FLAP`, `Mth.ceil(1.4959966F)`.
 const TICKS_PER_FLAP: i32 = 2;
+
+// bee: TemptGoal item predicate, ItemTags.BEE_FOOD
+fn is_bee_food(_mob: &dyn Mob, stack: &ItemStack) -> bool {
+    stack.item.has_tag(&tag::Item::MINECRAFT_BEE_FOOD)
+}
 
 fn is_angry(mob: &dyn Mob) -> bool {
     mob.as_neutral().is_some_and(NeutralMob::is_angry)
@@ -109,7 +115,7 @@ impl BeeEntity {
             .navigator
             .get_mut()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        *navigator = Navigator::flying();
+        *navigator = Navigator::bee_flying();
         navigator.set_can_open_doors(false);
         navigator.set_can_float(false);
         navigator.set_required_path_length(48.0);
@@ -119,6 +125,12 @@ impl BeeEntity {
         navigator.set_pathfinding_malus(PathType::WaterBorder, 16.0);
         navigator.set_pathfinding_malus(PathType::Cocoa, -1.0);
         navigator.set_pathfinding_malus(PathType::Fence, -1.0);
+        // bee: getLeashOffset, (0, 0.5 * eyeHeight, width * 0.2)
+        mob_entity
+            .living_entity
+            .entity
+            .leash_offset_factors
+            .store(Some((0.5, 0.2)));
         let bee = Self {
             mob_entity,
             ageable_data: AgeableData::default(),
@@ -146,7 +158,10 @@ impl BeeEntity {
             );
             goal_selector.add_goal(1, Box::new(bee_goals::EnterHiveGoal));
             goal_selector.add_goal(2, BreedGoal::new(1.0));
-            goal_selector.add_goal(3, Box::new(TemptGoal::new(1.25, &[], false)));
+            goal_selector.add_goal(
+                3,
+                Box::new(TemptGoal::new(1.25, &[], false).with_item_predicate(is_bee_food)),
+            );
             goal_selector.add_goal(3, Box::new(bee_goals::ValidateHiveGoal::new()));
             goal_selector.add_goal(3, Box::new(bee_goals::ValidateFlowerGoal::new()));
             goal_selector.add_goal(4, Box::new(bee_goals::PollinateGoal::new()));
@@ -430,8 +445,22 @@ impl Animal for BeeEntity {
     }
 
     fn is_food(&self, item_stack: &ItemStack) -> bool {
-        item_stack.item.has_tag(&tag::Item::MINECRAFT_FLOWERS)
-            || item_stack.item.has_tag(&tag::Item::MINECRAFT_BEE_FOOD)
+        item_stack.item.has_tag(&tag::Item::MINECRAFT_BEE_FOOD)
+    }
+}
+
+// bee: getHurtSound, getDeathSound, getSoundVolume
+impl CustomSound for BeeEntity {
+    fn death_sound(&self) -> Option<Sound> {
+        Some(Sound::EntityBeeDeath)
+    }
+
+    fn hurt_sound(&self) -> Option<Sound> {
+        Some(Sound::EntityBeeHurt)
+    }
+
+    fn sound_volume(&self) -> f32 {
+        0.4
     }
 }
 
@@ -476,6 +505,15 @@ impl LookControlTrait for BeeLookControl {
 }
 
 impl Mob for BeeEntity {
+    fn as_custom_sound(&self) -> Option<&dyn CustomSound> {
+        Some(self)
+    }
+
+    // bee: jumpInLiquid
+    fn liquid_jump_boost(&self) -> f64 {
+        0.01
+    }
+
     fn mob_is_flapping(&self) -> bool {
         let entity = self.get_entity();
         !entity.on_ground.load(Ordering::Relaxed)
@@ -507,6 +545,7 @@ impl Mob for BeeEntity {
     // bee: Bee.doHurtTarget sting effects
     fn on_attack(&self, target: &dyn EntityBase) {
         if let Some(living) = target.get_living_entity() {
+            living.set_stinger_count(living.get_stinger_count() + 1);
             let world = self.get_entity().world.load();
             let seconds = match world.level_info.load().difficulty {
                 pumpkin_util::Difficulty::Normal => 10,
@@ -729,5 +768,57 @@ impl Mob for BeeEntity {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
+mod tests {
+    use super::*;
+    use crate::entity::ai::test_support::world;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    fn bee_in(world: &Arc<crate::world::World>) -> Arc<BeeEntity> {
+        BeeEntity::new(Entity::new(
+            world.clone(),
+            Vector3::new(0.5, 64.0, 0.5),
+            &EntityType::BEE,
+        ))
+    }
+
+    #[tokio::test]
+    async fn only_bee_food_tempts_and_breeds_bees() -> TestResult {
+        let folder = tempfile::tempdir()?;
+        let world = world(&folder);
+        let bee = bee_in(&world);
+        let dandelion = ItemStack::new(1, &Item::DANDELION);
+        let closed = ItemStack::new(1, &Item::CLOSED_EYEBLOSSOM);
+        let stick = ItemStack::new(1, &Item::STICK);
+        assert!(bee.is_food(&dandelion));
+        assert!(!bee.is_food(&closed));
+        assert!(!bee.is_food(&stick));
+        assert!(is_bee_food(bee.as_ref(), &dandelion));
+        assert!(!is_bee_food(bee.as_ref(), &stick));
+        world.level.shutdown().await;
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn stingers_fall_out_one_at_a_time() -> TestResult {
+        let folder = tempfile::tempdir()?;
+        let world = world(&folder);
+        let bee = bee_in(&world);
+        let living = &bee.mob_entity.living_entity;
+        living.set_stinger_count(2);
+        // 20 * (30 - 2) ticks until the first one drops
+        for _ in 0..559 {
+            living.tick_stingers();
+        }
+        assert_eq!(living.get_stinger_count(), 2);
+        living.tick_stingers();
+        assert_eq!(living.get_stinger_count(), 1);
+        world.level.shutdown().await;
+        Ok(())
     }
 }
