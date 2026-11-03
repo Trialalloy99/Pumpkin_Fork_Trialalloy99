@@ -103,3 +103,55 @@ pub fn nearby_same_type(mob: &dyn Mob) -> Vec<std::sync::Arc<dyn crate::entity::
         })
         .collect()
 }
+
+/// Vanilla `BlockGetter.findBlocksInBoxByManhattanDistance(..).forEachUntil`, nearest first; `visit` returns false to abort.
+pub fn for_each_by_manhattan(
+    origin: &BlockPos,
+    range: i32,
+    mut visit: impl FnMut(&BlockPos) -> bool,
+) {
+    for distance in 0..=range {
+        for x in -distance..=distance {
+            let remaining = distance - x.abs();
+            for y in -remaining..=remaining {
+                let rest = remaining - y.abs();
+                let zs: &[i32] = if rest == 0 { &[0] } else { &[rest, -rest] };
+                for &z in zs {
+                    let pos = BlockPos::new(origin.0.x + x, origin.0.y + y, origin.0.z + z);
+                    if !visit(&pos) {
+                        return;
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn manhattan_walk_is_nearest_first_and_stops_on_abort() {
+        let origin = BlockPos::new(10, 64, -3);
+        let mut distances = Vec::new();
+        for_each_by_manhattan(&origin, 3, |pos| {
+            distances.push(
+                (pos.0.x - origin.0.x).abs()
+                    + (pos.0.y - origin.0.y).abs()
+                    + (pos.0.z - origin.0.z).abs(),
+            );
+            true
+        });
+        // 1 + 6 + 18 + 38 blocks at manhattan distance 0..=3
+        assert_eq!(distances.len(), 63);
+        assert!(distances.windows(2).all(|pair| pair[0] <= pair[1]));
+
+        let mut visited = 0;
+        for_each_by_manhattan(&origin, 3, |_| {
+            visited += 1;
+            visited < 7
+        });
+        assert_eq!(visited, 7);
+    }
+}

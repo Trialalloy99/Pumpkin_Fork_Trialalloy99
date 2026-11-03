@@ -6,6 +6,7 @@ use super::super::memory::walk_target::WalkTarget;
 use super::super::memory::{MemoryModuleId, MemoryStatus, types};
 use super::timed::Behavior;
 use crate::entity::EntityBase;
+use crate::entity::mob::Mob;
 
 const TEMPTATION_COOLDOWN: i32 = 100;
 const NEVER_TIMES_OUT: i32 = i32::MAX - 1;
@@ -25,6 +26,7 @@ const ENTRY_CONDITIONS: [(MemoryModuleId, MemoryStatus); 6] = [
 // brain: FollowTemptation
 pub struct FollowTemptation {
     speed_modifier: f32,
+    speed_fn: Option<fn(&dyn Mob) -> f32>,
     close_enough_distance: f64,
     look_in_the_eyes: bool,
     baby_close_enough_distance: Option<f64>,
@@ -40,11 +42,19 @@ impl FollowTemptation {
     ) -> Self {
         Self {
             speed_modifier,
+            speed_fn: None,
             close_enough_distance,
             look_in_the_eyes,
             baby_close_enough_distance: None,
             on_start: None,
         }
+    }
+
+    // brain: FollowTemptation speedModifier as Function<LivingEntity, Float>
+    #[must_use]
+    pub const fn with_speed_fn(mut self, speed_fn: fn(&dyn Mob) -> f32) -> Self {
+        self.speed_fn = Some(speed_fn);
+        self
     }
 
     // brain: FollowTemptation closeEnoughDistance by age
@@ -120,7 +130,8 @@ impl Behavior for FollowTemptation {
                         self.look_in_the_eyes,
                         self.look_in_the_eyes,
                     )),
-                    self.speed_modifier,
+                    self.speed_fn
+                        .map_or(self.speed_modifier, |speed| speed(tick.mob)),
                     2,
                 ),
             );

@@ -5,10 +5,19 @@ use super::super::memory::walk_target::WalkTarget;
 use super::super::memory::{MemoryStatus, types};
 use super::OneShot;
 use super::utils::entity_is_visible;
+use crate::entity::mob::Mob;
 
 // brain: SetWalkTargetFromAttackTargetIfTargetOutOfReach.create
 #[must_use]
 pub fn create(speed_modifier: f32) -> OneShot {
+    create_with_speed_fn(move |_| speed_modifier)
+}
+
+// brain: SetWalkTargetFromAttackTargetIfTargetOutOfReach.create(Function<LivingEntity, Float>)
+#[must_use]
+pub fn create_with_speed_fn(
+    speed_modifier: impl Fn(&dyn Mob) -> f32 + Send + Sync + 'static,
+) -> OneShot {
     OneShot::new(
         "SetWalkTargetFromAttackTargetIfTargetOutOfReach",
         vec![
@@ -42,7 +51,7 @@ pub fn create(speed_modifier: f32) -> OneShot {
                     types::WALK_TARGET,
                     WalkTarget::new(
                         Arc::new(EntityTracker::new(target, false)),
-                        speed_modifier,
+                        speed_modifier(tick.mob),
                         0,
                     ),
                 );

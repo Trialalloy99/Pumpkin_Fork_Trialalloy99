@@ -8,6 +8,7 @@ use super::{BrainTick, VisibilityContext};
 
 pub mod adult;
 pub mod armadillo;
+pub mod axolotl;
 pub mod breeze_attack_entity;
 pub mod dummy;
 pub mod hurt_by;
@@ -50,6 +51,7 @@ pub enum SensorType {
     GolemDetected,
     NearestBed,
     ArmadilloScareDetected,
+    AxolotlAttackables,
 }
 
 impl SensorType {
@@ -73,6 +75,7 @@ impl SensorType {
             Self::GolemDetected => "minecraft:golem_detected",
             Self::NearestBed => "minecraft:nearest_bed",
             Self::ArmadilloScareDetected => "minecraft:armadillo_scare_detected",
+            Self::AxolotlAttackables => "minecraft:axolotl_attackables",
         }
     }
 
@@ -95,6 +98,7 @@ impl SensorType {
             | Self::WardenEntity
             | Self::VillagerHostiles
             | Self::VillagerBabies
+            | Self::AxolotlAttackables
             | Self::NearestBed => DEFAULT_SCAN_RATE,
         }
     }
@@ -118,6 +122,7 @@ impl SensorType {
             Self::GolemDetected => Box::new(villager::GolemSensor),
             Self::NearestBed => Box::new(villager::NearestBedSensor),
             Self::ArmadilloScareDetected => Box::new(armadillo::ArmadilloScareSensor),
+            Self::AxolotlAttackables => Box::new(axolotl::AxolotlAttackablesSensor),
         }
     }
 

@@ -1,5 +1,7 @@
+mod ai;
+
 use std::sync::{
-    Arc, PoisonError, Weak,
+    Arc, PoisonError,
     atomic::{AtomicBool, AtomicI32, Ordering},
 };
 
@@ -15,23 +17,16 @@ use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_protocol::codec::var_int::VarInt;
 use rand::RngExt;
 
+use crate::entity::ai::brain::memory::{PackedMemories, types};
 use crate::entity::{
     Entity, EntityBase,
     ageable::{AgeableData, AgeableMob},
-    ai::behavior::hunting::{self, Hunt},
     ai::control::{
         Control, LookControlTrait, MoveControlTrait,
         smooth_swimming_look_control::SmoothSwimmingLookControl,
         smooth_swimming_move_control::SmoothSwimmingMoveControl,
     },
-    ai::goal::{
-        breed::BreedGoal, follow_parent::FollowParentGoal, gated::GatedGoal,
-        look_at_entity::LookAtEntityGoal, melee_attack::MeleeAttackGoal,
-        random_swimming::RandomSwimmingGoal, tempt::TemptGoal, try_find_water::TryFindWaterGoal,
-        wander_around::WanderAroundGoal,
-    },
     ai::pathfinder::{Navigator, node::PathType},
-    ai::target_match::TargetMatch,
     bucketable::Bucketable,
     mob::{Mob, MobEntity, spawn::SpawnGroupData},
     passive::animal::Animal,
@@ -39,105 +34,16 @@ use crate::entity::{
 };
 use crate::world::World;
 
-// axolotl: constants (Axolotl, AxolotlAi)
-const TOTAL_PLAYDEAD_TIME: i32 = 200;
+// axolotl: constants (Axolotl)
 const AXOLOTL_TOTAL_AIR_SUPPLY: i32 = 6000;
 const REHYDRATE_AIR_SUPPLY: i32 = 1800;
 const RARE_VARIANT_CHANCE: i32 = 1200;
-const HUNTING_COOLDOWN: i32 = 2400;
 const REGEN_BUFF_MAX_DURATION: i32 = 2400;
 const REGEN_BUFF_BASE_DURATION: i32 = 100;
-const PLAYER_REGEN_DETECTION_RANGE: f64 = 20.0;
-const TARGET_DETECTION_DISTANCE_SQ: f64 = 64.0;
-const SPEED_WHEN_MAKING_LOVE: f64 = 0.2;
-const SPEED_ON_LAND: f64 = 0.15;
-const SPEED_WHEN_IDLING_IN_WATER: f64 = 0.5;
-const SPEED_WHEN_CHASING_IN_WATER: f64 = 0.6;
-const SPEED_WHEN_FOLLOWING_ADULT_IN_WATER: f64 = 0.6;
 
 fn axolotl(mob: &dyn Mob) -> Option<&AxolotlEntity> {
     mob.cast_any().downcast_ref::<AxolotlEntity>()
 }
-
-fn in_water(mob: &dyn Mob) -> bool {
-    mob.get_entity().is_in_water()
-}
-
-fn on_land(mob: &dyn Mob) -> bool {
-    !in_water(mob)
-}
-
-// axolotl: IDLE activity, nothing to attack and not playing dead (AxolotlAi.updateActivity)
-fn idle_in_water(mob: &dyn Mob) -> bool {
-    in_water(mob) && is_idle(mob)
-}
-
-fn idle_on_land(mob: &dyn Mob) -> bool {
-    on_land(mob) && is_idle(mob)
-}
-
-fn is_idle(mob: &dyn Mob) -> bool {
-    axolotl(mob).is_some_and(|axolotl| {
-        !axolotl.is_playing_dead() && mob.get_mob_entity().get_target().is_none()
-    })
-}
-
-fn fighting_in_water(mob: &dyn Mob) -> bool {
-    in_water(mob) && axolotl(mob).is_some_and(|axolotl| !axolotl.is_playing_dead())
-}
-
-fn fighting_on_land(mob: &dyn Mob) -> bool {
-    on_land(mob) && axolotl(mob).is_some_and(|axolotl| !axolotl.is_playing_dead())
-}
-
-fn not_breeding_and_idle(mob: &dyn Mob) -> bool {
-    is_idle(mob)
-}
-
-// axolotl: AxolotlAttackablesSensor, close, in water and not breeding
-fn attackable_target(
-    hunter: &dyn Mob,
-    target: &crate::entity::living::LivingEntity,
-    _world: &World,
-) -> bool {
-    !hunter.get_mob_entity().is_in_love()
-        && target.entity.is_in_water()
-        && hunter
-            .get_entity()
-            .pos
-            .load()
-            .squared_distance_to_vec(&target.entity.pos.load())
-            <= TARGET_DETECTION_DISTANCE_SQ
-}
-
-fn can_hunt(mob: &dyn Mob) -> bool {
-    axolotl(mob).is_some_and(|axolotl| {
-        axolotl.hunting_cooldown.load(Ordering::Relaxed) <= 0 && !axolotl.is_playing_dead()
-    })
-}
-
-fn can_always_hostile(mob: &dyn Mob) -> bool {
-    axolotl(mob).is_some_and(|axolotl| !axolotl.is_playing_dead())
-}
-
-const AXOLOTL_HUNTS: &[Hunt] = &[
-    Hunt::new(
-        1,
-        TargetMatch::Tag(&tag::EntityType::MINECRAFT_AXOLOTL_ALWAYS_HOSTILES),
-        true,
-    )
-    .matching(attackable_target)
-    .gated_by(can_always_hostile),
-    Hunt::new(
-        1,
-        TargetMatch::Tag(&tag::EntityType::MINECRAFT_AXOLOTL_HUNT_TARGETS),
-        true,
-    )
-    .matching(attackable_target)
-    .gated_by(can_hunt),
-];
-
-const TEMPT_ITEMS: &[&Item] = &[&Item::TROPICAL_FISH_BUCKET];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[repr(i32)]
@@ -189,14 +95,10 @@ pub struct AxolotlEntity {
     pub variant: AtomicI32,
     pub playing_dead: AtomicBool,
     pub from_bucket: AtomicBool,
-    pub play_dead_ticks: AtomicI32,
-    pub hunting_cooldown: AtomicI32,
-    was_fighting: AtomicBool,
     damaged_by_entity: AtomicBool,
 }
 
 impl AxolotlEntity {
-    #[expect(clippy::too_many_lines, reason = "one block of goal registrations")]
     pub fn new(entity: Entity) -> Arc<Self> {
         let mut mob_entity = MobEntity::new(entity);
         let navigator = mob_entity
@@ -222,110 +124,22 @@ impl AxolotlEntity {
             .entity
             .air_supply
             .store(AXOLOTL_TOTAL_AIR_SUPPLY, Ordering::Relaxed);
-        let axolotl = Self {
+        Arc::new(Self {
             mob_entity,
             ageable_data: AgeableData::default(),
             variant: AtomicI32::new(AxolotlVariant::Lucy.id()),
             playing_dead: AtomicBool::new(false),
             from_bucket: AtomicBool::new(false),
-            play_dead_ticks: AtomicI32::new(0),
-            hunting_cooldown: AtomicI32::new(0),
-            was_fighting: AtomicBool::new(false),
             damaged_by_entity: AtomicBool::new(false),
-        };
-        let mob_arc = Arc::new(axolotl);
-        let mob_weak: Weak<dyn Mob> = {
-            let mob_arc: Arc<dyn Mob> = mob_arc.clone();
-            Arc::downgrade(&mob_arc)
-        };
+        })
+    }
 
-        {
-            let goal_selector = &mob_arc.mob_entity.goals_selector;
-
-            // axolotl: FIGHT activity (MeleeAttack, SetWalkTargetFromAttackTarget speeds)
-            goal_selector.add_goal(
-                0,
-                Box::new(GatedGoal::new(
-                    MeleeAttackGoal::new(SPEED_WHEN_CHASING_IN_WATER, false),
-                    fighting_in_water,
-                )),
-            );
-            goal_selector.add_goal(
-                0,
-                Box::new(GatedGoal::new(
-                    MeleeAttackGoal::new(SPEED_ON_LAND, false),
-                    fighting_on_land,
-                )),
-            );
-            // axolotl: IDLE activity in brain order
-            goal_selector.add_goal(
-                1,
-                Box::new(GatedGoal::new(
-                    *LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 6.0),
-                    is_idle,
-                )),
-            );
-            goal_selector.add_goal(
-                2,
-                Box::new(GatedGoal::new(
-                    *BreedGoal::new(SPEED_WHEN_MAKING_LOVE),
-                    not_breeding_and_idle,
-                )),
-            );
-            goal_selector.add_goal(
-                3,
-                Box::new(GatedGoal::new(
-                    TemptGoal::new(SPEED_WHEN_IDLING_IN_WATER, TEMPT_ITEMS, false),
-                    idle_in_water,
-                )),
-            );
-            goal_selector.add_goal(
-                3,
-                Box::new(GatedGoal::new(
-                    TemptGoal::new(SPEED_ON_LAND, TEMPT_ITEMS, false),
-                    idle_on_land,
-                )),
-            );
-            goal_selector.add_goal(
-                3,
-                Box::new(GatedGoal::new(
-                    FollowParentGoal::new(SPEED_WHEN_FOLLOWING_ADULT_IN_WATER),
-                    idle_in_water,
-                )),
-            );
-            goal_selector.add_goal(
-                3,
-                Box::new(GatedGoal::new(
-                    FollowParentGoal::new(SPEED_ON_LAND),
-                    idle_on_land,
-                )),
-            );
-            goal_selector.add_goal(
-                5,
-                Box::new(GatedGoal::new(TryFindWaterGoal::new(), idle_on_land)),
-            );
-            goal_selector.add_goal(
-                6,
-                Box::new(GatedGoal::new(
-                    RandomSwimmingGoal::new(SPEED_WHEN_IDLING_IN_WATER, 120),
-                    idle_in_water,
-                )),
-            );
-            goal_selector.add_goal(
-                6,
-                Box::new(GatedGoal::new(
-                    WanderAroundGoal::new(SPEED_ON_LAND),
-                    idle_on_land,
-                )),
-            );
-        };
-
-        {
-            let target_selector = &mob_arc.mob_entity.target_selector;
-            hunting::apply(target_selector, &mob_arc.mob_entity, AXOLOTL_HUNTS);
-        };
-
-        mob_arc
+    // axolotl: getTargetFromBrain
+    fn sync_target_from_brain(&self) {
+        let target = self
+            .mob_entity
+            .with_brain(self, |brain| brain.get(types::ATTACK_TARGET).cloned());
+        self.apply_mob_target(target);
     }
 
     #[must_use]
@@ -382,50 +196,6 @@ impl AxolotlEntity {
         }
         living.remove_effect(&StatusEffect::MINING_FATIGUE);
     }
-
-    // axolotl: Axolotl.onStopAttacking, the player who killed the target gets regeneration
-    fn on_stop_attacking(&self, target: &dyn EntityBase) {
-        let Some(living) = target.get_living_entity() else {
-            return;
-        };
-        if living.is_alive() {
-            return;
-        }
-        let Some((_, killer_id)) = living.get_last_damage_source() else {
-            return;
-        };
-        let entity = self.get_entity();
-        let world = entity.world.load();
-        let in_range = world
-            .get_nearby_players(entity.pos.load(), PLAYER_REGEN_DETECTION_RANGE)
-            .into_iter()
-            .find(|player| player.get_entity().entity_id == killer_id);
-        if let Some(player) = in_range {
-            self.apply_supporting_effects(&player);
-        }
-    }
-
-    // axolotl: PlayDead.start, the brain forgets the walk and look targets
-    fn start_playing_dead(&self) {
-        self.play_dead_ticks
-            .store(TOTAL_PLAYDEAD_TIME, Ordering::Relaxed);
-        self.mob_entity.set_target(None);
-        self.mob_entity
-            .navigator
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .stop();
-        self.mob_entity.living_entity.add_effect(Effect {
-            effect_type: &StatusEffect::REGENERATION,
-            duration: TOTAL_PLAYDEAD_TIME,
-            amplifier: 0,
-            ambient: false,
-            show_particles: true,
-            show_icon: true,
-            blend: false,
-        });
-        self.set_playing_dead(true);
-    }
 }
 
 impl Bucketable for AxolotlEntity {
@@ -460,9 +230,11 @@ impl Bucketable for AxolotlEntity {
         nbt.put_int("Variant", self.get_variant().id());
         nbt.put_int("Age", self.get_age());
         nbt.put_bool("AgeLocked", self.is_age_locked());
-        let cooldown = self.hunting_cooldown.load(Ordering::Relaxed);
-        if cooldown > 0 {
-            nbt.put_long("HuntingCooldown", i64::from(cooldown));
+        let cooldown = self.mob_entity.with_brain(self, |brain| {
+            brain.time_until_expiry(types::HAS_HUNTING_COOLDOWN.id())
+        });
+        if let Some(cooldown) = cooldown {
+            nbt.put_long("HuntingCooldown", cooldown);
         }
         bucket.set_data_component(pumpkin_data::data_component_impl::BucketEntityDataImpl {
             nbt: Some(nbt),
@@ -475,10 +247,11 @@ impl Bucketable for AxolotlEntity {
         }
         self.set_age(nbt.get_int("Age").unwrap_or(0));
         self.set_age_locked(nbt.get_bool("AgeLocked").unwrap_or(false));
-        self.hunting_cooldown.store(
-            nbt.get_long("HuntingCooldown").unwrap_or(0) as i32,
-            Ordering::Relaxed,
-        );
+        let cooldown = nbt.get_long("HuntingCooldown");
+        self.mob_entity.with_brain(self, |brain| match cooldown {
+            Some(cooldown) => brain.set_with_expiry(types::HAS_HUNTING_COOLDOWN, true, cooldown),
+            None => brain.erase(types::HAS_HUNTING_COOLDOWN.id()),
+        });
         let entity = self.get_entity();
         let mob = self.get_mob_entity();
         if nbt.get_bool("NoAI") == Some(true) {
@@ -664,7 +437,11 @@ impl Mob for AxolotlEntity {
         })
     }
 
-    // axolotl: dries out on land, hunting cooldown and play dead timers (Axolotl.baseTick, AxolotlAi)
+    fn make_brain(&self, packed: &PackedMemories) -> crate::entity::ai::brain::Brain {
+        ai::make_brain(self, packed)
+    }
+
+    // axolotl: baseTick air supply (handleAirSupply) and customServerAiStep
     fn custom_server_ai_step(&self, caller: &dyn EntityBase) {
         let entity = self.get_entity();
         let living = &self.mob_entity.living_entity;
@@ -679,38 +456,16 @@ impl Mob for AxolotlEntity {
             entity.set_air_supply(AXOLOTL_TOTAL_AIR_SUPPLY);
         }
 
-        let cooldown = self.hunting_cooldown.load(Ordering::Relaxed);
-        if cooldown > 0 {
-            self.hunting_cooldown.store(cooldown - 1, Ordering::Relaxed);
+        self.mob_entity.tick_brain(self);
+        self.mob_entity.with_brain(self, ai::update_activity);
+        if !self.mob_entity.is_no_ai() {
+            let playing_dead = self
+                .mob_entity
+                .with_brain(self, |brain| brain.get(types::PLAY_DEAD_TICKS).copied())
+                .is_some_and(|ticks| ticks > 0);
+            self.set_playing_dead(playing_dead);
         }
-
-        // axolotl: PLAY_DEAD_TICKS memory (ValidatePlayDead, EraseMemoryIf breeding)
-        let ticks = self.play_dead_ticks.load(Ordering::Relaxed);
-        if ticks > 0 {
-            if !entity.is_in_water() || self.mob_entity.is_in_love() || ticks <= 1 {
-                self.play_dead_ticks.store(0, Ordering::Relaxed);
-                self.set_playing_dead(false);
-            } else {
-                self.play_dead_ticks.store(ticks - 1, Ordering::Relaxed);
-                self.set_playing_dead(true);
-            }
-        } else if self.is_playing_dead() {
-            self.set_playing_dead(false);
-        }
-
-        // axolotl: HAS_HUNTING_COOLDOWN once the FIGHT activity ends, supporting effects on kill
-        let target = self.mob_entity.get_target();
-        let fighting = target.is_some() && !self.is_playing_dead();
-        if self.was_fighting.swap(fighting, Ordering::Relaxed) && !fighting {
-            self.hunting_cooldown
-                .store(HUNTING_COOLDOWN, Ordering::Relaxed);
-        }
-        if let Some(target) = target
-            && !target.get_entity().is_alive()
-        {
-            self.on_stop_attacking(target.as_ref());
-            self.mob_entity.set_target(None);
-        }
+        self.sync_target_from_brain();
     }
 
     // axolotl: sinks into play dead when hurt (Axolotl.hurtServer)
@@ -725,29 +480,37 @@ impl Mob for AxolotlEntity {
         true
     }
 
+    // axolotl: hurtServer, play dead memory for 200 ticks
     fn modify_incoming_damage(&self, amount: f32, _damage_type: DamageType) -> f32 {
         let living = &self.mob_entity.living_entity;
         let health = living.health.load();
-        let (first, second, third) = {
-            let mut rng = rand::rng();
-            (
-                rng.random_range(0..3),
-                rng.random_range(0..3),
-                rng.random::<bool>(),
-            )
-        };
-        let _ = third;
-        if !self.mob_entity.is_no_ai()
-            && first == 0
-            && ((second as f32) < amount || health / living.get_max_health() < 0.5)
+        let plays_dead = !self.mob_entity.is_no_ai()
+            && {
+                let mut rng = self.get_random();
+                rng.random_range(0..3) == 0
+                    && ((rng.random_range(0..3) as f32) < amount
+                        || health / living.get_max_health() < 0.5)
+            }
             && amount < health
             && self.get_entity().is_in_water()
             && self.damaged_by_entity.load(Ordering::Relaxed)
-            && !self.is_playing_dead()
-        {
-            self.start_playing_dead();
+            && !self.is_playing_dead();
+        if plays_dead {
+            self.mob_entity.with_brain(self, |brain| {
+                brain.set(types::PLAY_DEAD_TICKS, ai::TOTAL_PLAYDEAD_TIME);
+            });
         }
         amount
+    }
+
+    // axolotl: getMaxHeadXRot
+    fn get_max_look_pitch_change(&self) -> f32 {
+        1.0
+    }
+
+    // axolotl: getMaxHeadYRot
+    fn get_max_head_rotation(&self) -> f32 {
+        1.0
     }
 
     fn mob_is_pushed_by_fluids(&self) -> bool {
@@ -859,5 +622,65 @@ impl Mob for AxolotlEntity {
             return result;
         }
         self.animal_interact(player, item_stack, Sound::EntityAxolotlIdleAir)
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
+mod tests {
+    use pumpkin_data::environment_attribute::Activity;
+    use pumpkin_util::math::vector3::Vector3;
+
+    use super::*;
+    use crate::entity::ai::test_support::world;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    fn axolotl_in(world: &Arc<World>) -> Arc<AxolotlEntity> {
+        AxolotlEntity::new(Entity::new(
+            world.clone(),
+            Vector3::new(0.5, 64.0, 0.5),
+            &EntityType::AXOLOTL,
+        ))
+    }
+
+    #[tokio::test]
+    async fn play_dead_memory_takes_over_and_the_fight_leaves_a_hunting_cooldown() -> TestResult {
+        let folder = tempfile::tempdir()?;
+        let world = world(&folder);
+        let axolotl = axolotl_in(&world);
+
+        axolotl.mob_entity.with_brain(axolotl.as_ref(), |brain| {
+            brain.set(types::ATTACK_TARGET, axolotl.clone() as Arc<dyn EntityBase>);
+            ai::update_activity(brain);
+            assert_eq!(brain.get_active_non_core_activity(), Some(Activity::Fight));
+            brain.erase(types::ATTACK_TARGET.id());
+            ai::update_activity(brain);
+            assert_eq!(brain.get_active_non_core_activity(), Some(Activity::Idle));
+            assert!(brain.has_memory_value(types::HAS_HUNTING_COOLDOWN.id()));
+            assert!(
+                brain
+                    .time_until_expiry(types::HAS_HUNTING_COOLDOWN.id())
+                    .is_some_and(|ticks| ticks > 2000)
+            );
+
+            brain.set(types::PLAY_DEAD_TICKS, 200);
+            ai::update_activity(brain);
+            assert_eq!(
+                brain.get_active_non_core_activity(),
+                Some(Activity::PlayDead)
+            );
+            // Fight cannot interrupt playing dead
+            brain.set(types::ATTACK_TARGET, axolotl.clone() as Arc<dyn EntityBase>);
+            ai::update_activity(brain);
+            assert_eq!(
+                brain.get_active_non_core_activity(),
+                Some(Activity::PlayDead)
+            );
+        });
+        axolotl.custom_server_ai_step(axolotl.as_ref());
+        assert!(axolotl.is_playing_dead());
+        world.level.shutdown().await;
+        Ok(())
     }
 }

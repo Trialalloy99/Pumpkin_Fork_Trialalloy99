@@ -44,6 +44,7 @@ pub mod stop_being_angry_if_target_dead;
 pub mod swim;
 pub mod timed;
 pub mod transport_items_between_containers;
+pub mod try_find_liquid;
 pub mod utils;
 
 pub use animal_panic::AnimalPanic;

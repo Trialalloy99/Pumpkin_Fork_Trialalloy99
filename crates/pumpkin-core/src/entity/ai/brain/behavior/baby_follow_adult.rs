@@ -5,6 +5,7 @@ use super::super::memory::walk_target::WalkTarget;
 use super::super::memory::{MemoryModuleType, MemoryStatus, types};
 use super::OneShot;
 use crate::entity::EntityBase;
+use crate::entity::mob::Mob;
 use crate::entity::player::Player;
 
 // brain: BabyFollowAdult.create
@@ -13,6 +14,28 @@ pub fn create<T: Clone + Send + Sync + 'static + crate::entity::ai::brain::memor
     follow_min: i32,
     follow_max: i32,
     speed_modifier: f32,
+    nearest_visible_type: MemoryModuleType<T>,
+    target_eye: bool,
+    as_entity: fn(&T) -> Arc<dyn EntityBase>,
+) -> OneShot {
+    create_with_speed_fn(
+        follow_min,
+        follow_max,
+        move |_| speed_modifier,
+        nearest_visible_type,
+        target_eye,
+        as_entity,
+    )
+}
+
+// brain: BabyFollowAdult.create(range, Function<LivingEntity, Float>, ...)
+#[must_use]
+pub fn create_with_speed_fn<
+    T: Clone + Send + Sync + 'static + crate::entity::ai::brain::memory::MemoryValue,
+>(
+    follow_min: i32,
+    follow_max: i32,
+    speed_modifier: impl Fn(&dyn Mob) -> f32 + Send + Sync + 'static,
     nearest_visible_type: MemoryModuleType<T>,
     target_eye: bool,
     as_entity: fn(&T) -> Arc<dyn EntityBase>,
@@ -44,7 +67,7 @@ pub fn create<T: Clone + Send + Sync + 'static + crate::entity::ai::brain::memor
                             target_eye,
                             target_eye,
                         )),
-                        speed_modifier,
+                        speed_modifier(tick.mob),
                         follow_min - 1,
                     ),
                 );

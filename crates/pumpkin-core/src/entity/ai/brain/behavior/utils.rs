@@ -138,6 +138,34 @@ pub fn is_other_target_much_further_away_than_current_attack_target(
     dist_to_other > dist_to_current + how_much_further_away * how_much_further_away
 }
 
+// brain: BehaviorUtils.getRandomSwimmablePos
+#[must_use]
+pub fn get_random_swimmable_pos(
+    mob: &dyn crate::entity::mob::Mob,
+    max_horizontal_distance: i32,
+    max_vertical_distance: i32,
+) -> Option<pumpkin_util::math::vector3::Vector3<f64>> {
+    use crate::entity::ai::pathfinder::node::PathComputationType;
+    use crate::entity::ai::util::default_random_pos;
+    let world = mob.get_entity().world.load();
+    let mut target =
+        default_random_pos::get_pos(mob, max_horizontal_distance, max_vertical_distance);
+    let mut count = 0;
+    while let Some(pos) = target {
+        let (block, state) = world.get_block_and_state(&pos.to_block_pos());
+        if world
+            .block_registry
+            .is_pathfindable(block, state, PathComputationType::Water)
+            || count >= 10
+        {
+            break;
+        }
+        count += 1;
+        target = default_random_pos::get_pos(mob, max_horizontal_distance, max_vertical_distance);
+    }
+    target
+}
+
 #[must_use]
 pub fn is_breeding(brain: &BrainState) -> bool {
     brain.has_memory_value(types::BREED_TARGET.id())

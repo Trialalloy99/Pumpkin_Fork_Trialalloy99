@@ -49,6 +49,13 @@ impl AnimalMakeLove {
         }
     }
 
+    /// Vanilla `AnimalMakeLove(type, speed, closeEnoughDistance)` speed.
+    #[must_use]
+    pub const fn with_speed_modifier(mut self, speed_modifier: f32) -> Self {
+        self.speed_modifier = speed_modifier;
+        self
+    }
+
     /// Vanilla `AnimalMakeLove(type, speed, closeEnoughDistance)`.
     #[must_use]
     pub const fn with_close_enough_distance(mut self, distance: i32) -> Self {
