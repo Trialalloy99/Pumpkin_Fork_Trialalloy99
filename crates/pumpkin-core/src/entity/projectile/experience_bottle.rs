@@ -9,8 +9,8 @@ use crate::server::Server;
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::world::WorldEvent;
+use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_protocol::codec::item_stack_seralizer::ItemStackSerializer;
-use pumpkin_util::math::position::BlockPos;
 use rand::RngExt;
 
 const GRAVITY: f64 = 0.07;
@@ -85,7 +85,8 @@ impl EntityBase for ExperienceBottleEntity {
         let entity = self.get_entity();
         let world = entity.world.load();
         let hit_pos = hit.hit_pos();
-        let block_pos = BlockPos::floored(hit_pos.x, hit_pos.y, hit_pos.z);
+        // xp bottle: levelEvent at blockPosition (ThrownExperienceBottle.onHit)
+        let block_pos = entity.block_pos.load();
 
         world.sync_world_event(
             WorldEvent::ParticlesSpellPotionSplash,
@@ -98,7 +99,31 @@ impl EntityBase for ExperienceBottleEntity {
 
         let mut rng = rand::rng();
         let xp_count = 3 + rng.random_range(0..5) + rng.random_range(0..5);
-        ExperienceOrbEntity::spawn(&world, hit_pos, xp_count);
+        // xp bottle: ExperienceOrb.awardWithDirection, block normal or against the flight
+        let direction = match &hit {
+            ProjectileHit::Block { normal, .. } => *normal,
+            ProjectileHit::Entity { .. } => entity.velocity.load().multiply(-1.0, -1.0, -1.0),
+        };
+        ExperienceOrbEntity::spawn_with_direction(&world, hit_pos, direction, xp_count);
+    }
+
+    fn write_custom_nbt(&self, nbt: &mut NbtCompound) {
+        let stack = self
+            .item_stack
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut item = NbtCompound::new();
+        stack.write_item_stack(&mut item);
+        nbt.put_compound("Item", item);
+    }
+
+    fn read_custom_nbt(&self, nbt: &NbtCompound) {
+        if let Some(stack) = nbt
+            .get_compound("Item")
+            .and_then(ItemStack::read_item_stack)
+        {
+            self.set_item_stack(stack.copy_with_count(1));
+        }
     }
 
     fn cast_any(&self) -> &dyn std::any::Any {
