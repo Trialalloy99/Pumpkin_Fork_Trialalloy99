@@ -197,14 +197,7 @@ impl EndCityTemplatePiece {
             return;
         }
         if marker.starts_with("Sentry") {
-            chunk.add_structure_entity(entity_nbt(
-                "minecraft:shulker",
-                Vector3::new(
-                    f64::from(position.x) + 0.5,
-                    f64::from(position.y),
-                    f64::from(position.z) + 0.5,
-                ),
-            ));
+            chunk.add_structure_entity(sentry_shulker_nbt(position));
         } else if marker.starts_with("Elytra") {
             chunk.add_structure_entity(self.item_frame_nbt(position));
         }
@@ -277,6 +270,20 @@ impl StructurePieceBase for EndCityTemplatePiece {
     ) {
         self.place_blocks(chunk, random, chunk_box);
     }
+}
+
+// end city: sentry shulker never despawns (EndCityPieces.handleDataMarker setPersistenceRequired)
+fn sentry_shulker_nbt(position: Vector3<i32>) -> NbtCompound {
+    let mut nbt = entity_nbt(
+        "minecraft:shulker",
+        Vector3::new(
+            f64::from(position.x) + 0.5,
+            f64::from(position.y),
+            f64::from(position.z) + 0.5,
+        ),
+    );
+    nbt.put_bool("PersistenceRequired", true);
+    nbt
 }
 
 fn entity_nbt(id: &str, position: Vector3<f64>) -> NbtCompound {
@@ -415,6 +422,17 @@ mod tests {
             nbt.get_list("Rotation")
                 .and_then(|rotation| rotation[0].extract_float()),
             Some(270.0)
+        );
+    }
+
+    #[test]
+    fn sentry_shulker_is_persistent() {
+        let nbt = sentry_shulker_nbt(Vector3::new(10, 70, -4));
+        assert_eq!(nbt.get_string("id"), Some("minecraft:shulker"));
+        assert_eq!(nbt.get_bool("PersistenceRequired"), Some(true));
+        assert_eq!(
+            nbt.get_list("Pos"),
+            Some(&[10.5.into(), 70.0.into(), (-3.5).into()][..])
         );
     }
 
