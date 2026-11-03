@@ -1822,9 +1822,17 @@ impl Entity {
                 _ => {}
             }
         }
-        self.default_dimensions
+        let dimensions = self
+            .default_dimensions
             .load()
-            .unwrap_or_else(|| Self::type_dimensions(self.entity_type))
+            .unwrap_or_else(|| Self::type_dimensions(self.entity_type));
+        // warden: low hit box while digging and emerging (Warden.getDefaultDimensions)
+        if self.entity_type == &EntityType::WARDEN
+            && matches!(pose, EntityPose::Digging | EntityPose::Emerging)
+        {
+            return EntityDimensions::new(dimensions.width, 1.0, 0.85);
+        }
+        dimensions
     }
 
     pub fn set_default_dimensions(&self, dimensions: EntityDimensions) {

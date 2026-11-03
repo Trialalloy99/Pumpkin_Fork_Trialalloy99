@@ -20,12 +20,12 @@ const VIBRATION_EVENT_LISTENER_RANGE: i32 = 16;
 const PARTICLE_SEND_DISTANCE: f64 = 32.0;
 
 #[derive(Clone)]
-struct VibrationInfo {
-    event: GameEvent,
-    distance: f32,
-    pos: Vector3<f64>,
-    source: Option<Uuid>,
-    projectile_owner: Option<Uuid>,
+pub struct VibrationInfo {
+    pub(crate) event: GameEvent,
+    pub(crate) distance: f32,
+    pub(crate) pos: Vector3<f64>,
+    pub(crate) source: Option<Uuid>,
+    pub(crate) projectile_owner: Option<Uuid>,
 }
 
 impl VibrationInfo {
@@ -76,15 +76,15 @@ impl VibrationInfo {
 }
 
 #[derive(Default)]
-pub(super) struct VibrationData {
-    current: Option<VibrationInfo>,
-    candidate: Option<(VibrationInfo, i64)>,
-    delay: i32,
-    reload_particle: bool,
+pub struct VibrationData {
+    pub(crate) current: Option<VibrationInfo>,
+    pub(crate) candidate: Option<(VibrationInfo, i64)>,
+    pub(crate) delay: i32,
+    pub(crate) reload_particle: bool,
 }
 
 impl VibrationData {
-    pub(super) fn read_nbt(nbt: &NbtCompound) -> Self {
+    pub(crate) fn read_nbt(nbt: &NbtCompound) -> Self {
         let Some(selector) = nbt.get_compound("selector") else {
             return Self::default();
         };
@@ -106,7 +106,7 @@ impl VibrationData {
         }
     }
 
-    pub(super) fn write_nbt(&self) -> NbtCompound {
+    pub(crate) fn write_nbt(&self) -> NbtCompound {
         let mut nbt = NbtCompound::new();
         if let Some(event) = &self.current {
             nbt.put_compound("event", event.write_nbt());
@@ -235,7 +235,7 @@ fn is_valid_vibration(event: GameEvent, context: &GameEventContext<'_>) -> bool 
         && !source.dampens_vibrations()
 }
 
-fn is_occluded(world: &World, origin: Vector3<f64>, destination: Vector3<f64>) -> bool {
+pub fn is_occluded(world: &World, origin: Vector3<f64>, destination: Vector3<f64>) -> bool {
     let from = BlockPos::floored_v(origin).to_centered_f64();
     let to = BlockPos::floored_v(destination).to_centered_f64();
     BlockDirection::all().iter().all(|direction| {
@@ -343,7 +343,11 @@ impl AllayEntity {
     }
 }
 
-fn vibration_payload(entity_id: i32, eye_offset: f32, delay: i32) -> Result<Vec<u8>, WritingError> {
+pub fn vibration_payload(
+    entity_id: i32,
+    eye_offset: f32,
+    delay: i32,
+) -> Result<Vec<u8>, WritingError> {
     let mut payload = Vec::new();
     VarInt(PositionSourceType::Entity.to_id()).encode(&mut payload)?;
     VarInt(entity_id).encode(&mut payload)?;

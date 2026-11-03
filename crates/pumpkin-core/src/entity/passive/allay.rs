@@ -40,7 +40,7 @@ use crate::world::game_event::GameEventListener;
 
 mod ai;
 mod chunk_loading;
-mod vibration;
+pub(crate) mod vibration;
 
 const DUPLICATION_COOLDOWN_TICKS: i64 = 6000;
 const ITEM_PICKUP_REACH: Vector3<f64> = Vector3::new(1.0, 1.0, 1.0);
