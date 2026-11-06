@@ -532,4 +532,31 @@ mod tests {
         assert_eq!(PaintingVariant::from_name("invalid"), None);
         assert_eq!(PaintingVariant::Kebab.asset_id(), "minecraft:kebab");
     }
+
+    #[tokio::test]
+    async fn painting_needs_a_solid_wall_behind_it() -> Result<(), Box<dyn std::error::Error>> {
+        use crate::entity::ai::test_support::world;
+        use pumpkin_world::world::BlockFlags;
+
+        let folder = tempfile::tempdir()?;
+        let world = world(&folder);
+        world.level.loaded_chunks.insert(
+            pumpkin_util::math::vector2::Vector2::new(0, 0),
+            pumpkin_world::chunk::ChunkData::empty_sync(0, 0),
+        );
+        let wall = BlockPos(Vector3::new(4, 64, 4));
+        let front =
+            |variant| PaintingEntity::painting_fits(&world, wall, BlockDirection::South, variant);
+        assert!(!front(PaintingVariant::Kebab));
+        world.set_block_state(
+            &wall,
+            pumpkin_data::Block::STONE.default_state.id,
+            BlockFlags::NOTIFY_ALL,
+        );
+        assert!(front(PaintingVariant::Kebab));
+        // a painting wider than the one wall block has nothing behind its other half
+        assert!(!front(PaintingVariant::Pool));
+        world.level.shutdown().await;
+        Ok(())
+    }
 }

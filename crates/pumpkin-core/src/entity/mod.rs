@@ -4491,6 +4491,11 @@ impl Entity {
 
     pub fn attach_leash(&self, holder: Arc<dyn EntityBase>) {
         let holder_entity_id = holder.get_entity().entity_id;
+        let previous = self
+            .leashed_to
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
         *self
             .delayed_leash
             .lock()
@@ -4523,6 +4528,16 @@ impl Entity {
             &je_packet,
             &be_packet,
         );
+        Self::notify_knot_leashee_removed(previous);
+    }
+
+    // leash: LeashFenceKnotEntity.notifyLeasheeRemoved for the previous holder
+    fn notify_knot_leashee_removed(previous: Option<Arc<dyn EntityBase>>) {
+        if let Some(holder) = previous
+            && holder.get_entity().entity_type == &EntityType::LEASH_KNOT
+        {
+            LeashKnotEntity::notify_leashee_removed(&holder);
+        }
     }
 
     pub fn unleash(&self) {
@@ -4562,6 +4577,7 @@ impl Entity {
         }
 
         self.send_leash_removed();
+        Self::notify_knot_leashee_removed(old_holder);
     }
 
     pub fn remove_leash(&self) {
