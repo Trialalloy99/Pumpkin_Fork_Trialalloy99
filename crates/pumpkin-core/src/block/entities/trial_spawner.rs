@@ -1,3 +1,4 @@
+use crate::entity::ominous_item_spawner::OminousItemSpawnerEntity;
 use rustc_hash::FxHashSet;
 use std::sync::{Arc, Mutex};
 
@@ -20,6 +21,19 @@ use rand::RngExt;
 use uuid::Uuid;
 
 use super::BlockEntity;
+
+// trial spawner: TrialSpawnerConfig.ticksBetweenItemSpawners default
+const TICKS_BETWEEN_ITEM_SPAWNERS: i64 = 160;
+
+/// Vanilla `dispensing`: the ominous items with their weights.
+#[derive(Clone, Default)]
+pub struct DispensingItems(pub Vec<(ItemStack, i32)>);
+
+impl std::fmt::Debug for DispensingItems {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DispensingItems({})", self.0.len())
+    }
+}
 use crate::entity::EntityBase;
 use crate::world::World;
 
@@ -591,6 +605,8 @@ pub struct TrialSpawnerStateData {
     pub total_mobs_spawned: i32,
     pub next_spawn_data: Option<SpawnData>,
     pub ejecting_loot_table: Option<String>,
+    /// Vanilla `dispensing`: the ominous items and their weights, rolled once per position.
+    pub dispensing: Option<DispensingItems>,
 }
 
 impl TrialSpawnerStateData {
@@ -1206,6 +1222,150 @@ impl TrialSpawner {
     }
 
     #[allow(clippy::too_many_lines)]
+    // trial spawner: TrialSpawnerStateData.getDispensingItems
+    fn dispensing_items(
+        &mut self,
+        world: &Arc<World>,
+        spawner_pos: BlockPos,
+    ) -> Vec<(ItemStack, i32)> {
+        if self.data.dispensing.is_none() {
+            let items = self
+                .active_config()
+                .items_to_drop_when_ominous
+                .as_deref()
+                .and_then(crate::world::loot::get_loot_table)
+                .map(|table| {
+                    // vanilla lowResolutionPosition keeps the roll stable inside one area
+                    let position = BlockPos::new(
+                        (f64::from(spawner_pos.0.x) / 30.0).floor() as i32,
+                        (f64::from(spawner_pos.0.y) / 20.0).floor() as i32,
+                        (f64::from(spawner_pos.0.z) / 30.0).floor() as i32,
+                    );
+                    let seed = world.level.seed.0 as i64 + position.as_long();
+                    table
+                        .generate_loot(seed)
+                        .into_iter()
+                        .map(|drop| (drop.copy_with_count(1), i32::from(drop.item_count)))
+                        .collect()
+                })
+                .unwrap_or_default();
+            self.data.dispensing = Some(DispensingItems(items));
+        }
+        self.data
+            .dispensing
+            .as_ref()
+            .map(|dispensing| dispensing.0.clone())
+            .unwrap_or_default()
+    }
+
+    // trial spawner: TrialSpawnerState.spawnOminousOminousItemSpawner
+    fn spawn_ominous_item_spawner(
+        &mut self,
+        world: &Arc<World>,
+        spawner_pos: BlockPos,
+        game_time: i64,
+    ) {
+        if game_time < self.data.cooldown_ends_at {
+            return;
+        }
+        let items = self.dispensing_items(world, spawner_pos);
+        let total_weight: i32 = items.iter().map(|(_, weight)| *weight).sum();
+        if total_weight <= 0 {
+            return;
+        }
+        let mut roll = rand::random_range(0..total_weight);
+        let Some(item) = items.iter().find_map(|(stack, weight)| {
+            if roll < *weight {
+                Some(stack.clone())
+            } else {
+                roll -= *weight;
+                None
+            }
+        }) else {
+            return;
+        };
+        let Some(pos) = self.position_to_spawn_item_spawner(world, spawner_pos) else {
+            return;
+        };
+        world.spawn_entity(OminousItemSpawnerEntity::create(world, pos, item));
+        let pitch = (rand::random::<f32>() - rand::random::<f32>()).mul_add(0.2, 1.0);
+        world.play_sound_fine(
+            Sound::BlockTrialSpawnerSpawnItemBegin,
+            SoundCategory::Blocks,
+            &pos,
+            1.0,
+            pitch,
+        );
+        self.data.cooldown_ends_at = game_time + TICKS_BETWEEN_ITEM_SPAWNERS;
+    }
+
+    // trial spawner: TrialSpawnerState.calculatePositionToSpawnSpawner and selectEntityToSpawnItemAbove
+    fn position_to_spawn_item_spawner(
+        &self,
+        world: &Arc<World>,
+        spawner_pos: BlockPos,
+    ) -> Option<Vector3<f64>> {
+        let center = spawner_pos.to_centered_f64();
+        let range = f64::from(self.required_player_range());
+        let players: Vec<Arc<dyn crate::entity::EntityBase>> = self
+            .data
+            .registered_players
+            .iter()
+            .filter_map(|id| world.get_player_by_uuid(*id))
+            .filter(|player| {
+                !player.is_creative()
+                    && !player.is_spectator()
+                    && player.living_entity.is_alive()
+                    && player.position().squared_distance_to_vec(&center) <= range * range
+            })
+            .map(|player| player as Arc<dyn crate::entity::EntityBase>)
+            .collect();
+        if players.is_empty() {
+            return None;
+        }
+        let mobs: Vec<Arc<dyn crate::entity::EntityBase>> = self
+            .data
+            .current_mobs
+            .iter()
+            .filter_map(|id| world.get_entity_by_uuid(*id))
+            .filter(|mob| {
+                mob.get_entity().is_alive()
+                    && mob.get_entity().pos.load().squared_distance_to_vec(&center) <= range * range
+            })
+            .collect();
+        let eligible = if rand::random::<bool>() {
+            mobs
+        } else {
+            players
+        };
+        if eligible.is_empty() {
+            return None;
+        }
+        let target = &eligible[rand::random_range(0..eligible.len())];
+        let entity = target.get_entity();
+        let from = entity.pos.load();
+        let to = from.add_raw(
+            0.0,
+            f64::from(entity.height()) + 2.0 + f64::from(rand::random_range(0..4)),
+            0.0,
+        );
+        let hit = world.clip(&pumpkin_world::clip::ClipContext::new(
+            from,
+            to,
+            pumpkin_world::clip::ClipBlock::Visual,
+            pumpkin_world::clip::ClipFluid::None,
+        ));
+        let down = hit.block_pos.to_centered_f64().add_raw(0.0, -1.0, 0.0);
+        let down_block = BlockPos::floored(down.x, down.y, down.z);
+        world
+            .get_block_state(&down_block)
+            .get_block_collision_shapes()
+            .next()
+            .is_none()
+            .then_some(down)
+    }
+
+    #[expect(clippy::too_many_lines, reason = "mirrors TrialSpawnerState.tickAndGetNext")]
     fn tick_and_get_next(
         &mut self,
         world: &Arc<World>,
@@ -1267,6 +1427,9 @@ impl TrialSpawner {
                 }
 
                 self.try_detect_players(world, spawner_pos);
+                if self.is_ominous {
+                    self.spawn_ominous_item_spawner(world, spawner_pos, game_time);
+                }
 
                 let (total_mobs_needed, max_simultaneous, ticks_between_spawn) = {
                     let active_config = self.active_config();

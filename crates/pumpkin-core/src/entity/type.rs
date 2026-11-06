@@ -252,6 +252,9 @@ pub fn from_type(
         id if id == EntityType::TEXT_DISPLAY.id => TextDisplayEntity::new(entity),
         id if id == EntityType::PAINTING.id => Arc::new(PaintingEntity::new(entity)),
         id if id == EntityType::LEASH_KNOT.id => Arc::new(LeashKnotEntity::new(entity)),
+        id if id == EntityType::OMINOUS_ITEM_SPAWNER.id => {
+            Arc::new(crate::entity::ominous_item_spawner::OminousItemSpawnerEntity::new(entity))
+        }
         id if id == EntityType::ITEM_FRAME.id || id == EntityType::GLOW_ITEM_FRAME.id => {
             Arc::new(ItemFrameEntity::new(entity))
         }
