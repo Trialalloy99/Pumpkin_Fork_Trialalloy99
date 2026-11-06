@@ -1365,7 +1365,10 @@ impl TrialSpawner {
             .then_some(down)
     }
 
-    #[expect(clippy::too_many_lines, reason = "mirrors TrialSpawnerState.tickAndGetNext")]
+    #[expect(
+        clippy::too_many_lines,
+        reason = "mirrors TrialSpawnerState.tickAndGetNext"
+    )]
     fn tick_and_get_next(
         &mut self,
         world: &Arc<World>,

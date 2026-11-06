@@ -26,7 +26,7 @@ use std::sync::atomic::Ordering::{AcqRel, Relaxed};
 use std::sync::{
     Arc, Mutex,
     atomic::{
-        AtomicBool, AtomicI32, AtomicU8,
+        AtomicBool, AtomicI32,
         Ordering::{self},
     },
 };
@@ -42,10 +42,9 @@ pub struct ItemEntity {
     // These cannot be atomic values because we mutate their state based on what they are; we run
     // into the ABA problem
     item_stack: Mutex<ItemStack>,
-    pickup_delay: AtomicU8,
+    pickup_delay: AtomicI32,
     health: AtomicF32,
-    never_despawn: AtomicBool,
-    never_pickup: AtomicBool,
+    target: crossbeam::atomic::AtomicCell<Option<uuid::Uuid>>,
     merge_reserved: AtomicBool,
 }
 
@@ -97,7 +96,11 @@ const MERGE_MAX_COUNT: u8 = 64;
 const MERGE_DISTANCE: f64 = 0.5;
 
 impl ItemEntity {
-    pub const DEFAULT_PICKUP_DELAY: u8 = 10;
+    pub const DEFAULT_PICKUP_DELAY: i32 = 10;
+    /// Vanilla `INFINITE_PICKUP_DELAY`.
+    pub const INFINITE_PICKUP_DELAY: i32 = 32767;
+    /// Vanilla `INFINITE_LIFETIME`.
+    pub const INFINITE_LIFETIME: i32 = -32768;
 
     pub fn new(entity: Entity, item_stack: ItemStack) -> Self {
         entity.velocity.store(Vector3::new(
@@ -113,10 +116,9 @@ impl ItemEntity {
             item_stack: Mutex::new(item_stack),
             item_age: AtomicI32::new(0),
             thrower: crossbeam::atomic::AtomicCell::new(None),
-            pickup_delay: AtomicU8::new(Self::DEFAULT_PICKUP_DELAY),
+            pickup_delay: AtomicI32::new(Self::DEFAULT_PICKUP_DELAY),
             health: AtomicF32::new(5.0),
-            never_despawn: AtomicBool::new(false),
-            never_pickup: AtomicBool::new(false),
+            target: crossbeam::atomic::AtomicCell::new(None),
             merge_reserved: AtomicBool::new(false),
         }
     }
@@ -125,7 +127,7 @@ impl ItemEntity {
         entity: Entity,
         item_stack: ItemStack,
         velocity: Vector3<f64>,
-        pickup_delay: u8,
+        pickup_delay: impl Into<i32>,
     ) -> Self {
         entity.velocity.store(velocity);
         entity.yaw.store(rand::random::<f32>() * 360.0);
@@ -136,10 +138,9 @@ impl ItemEntity {
             item_stack: Mutex::new(item_stack),
             item_age: AtomicI32::new(0),
             thrower: crossbeam::atomic::AtomicCell::new(None),
-            pickup_delay: AtomicU8::new(pickup_delay), // Vanilla pickup delay is 10 ticks
+            pickup_delay: AtomicI32::new(pickup_delay.into()),
             health: AtomicF32::new(5.0),
-            never_despawn: AtomicBool::new(false),
-            never_pickup: AtomicBool::new(false),
+            target: crossbeam::atomic::AtomicCell::new(None),
             merge_reserved: AtomicBool::new(false),
         }
     }
@@ -152,10 +153,9 @@ impl ItemEntity {
             item_stack: Mutex::new(ItemStack::new(1, &pumpkin_data::item::Item::AIR)),
             item_age: AtomicI32::new(0),
             thrower: crossbeam::atomic::AtomicCell::new(None),
-            pickup_delay: AtomicU8::new(0),
+            pickup_delay: AtomicI32::new(0),
             health: AtomicF32::new(5.0),
-            never_despawn: AtomicBool::new(false),
-            never_pickup: AtomicBool::new(false),
+            target: crossbeam::atomic::AtomicCell::new(None),
             merge_reserved: AtomicBool::new(false),
         }
     }
@@ -172,17 +172,41 @@ impl ItemEntity {
         self.thrower.load()
     }
 
-    pub fn get_pickup_delay(&self) -> u8 {
+    pub fn get_pickup_delay(&self) -> i32 {
         self.pickup_delay.load(Ordering::Relaxed)
     }
 
-    pub fn set_pickup_delay(&self, pickup_delay: u8) {
-        self.pickup_delay.store(pickup_delay, Ordering::Relaxed);
+    pub fn set_pickup_delay(&self, pickup_delay: impl Into<i32>) {
+        self.pickup_delay
+            .store(pickup_delay.into(), Ordering::Relaxed);
     }
 
-    // item: setExtendedLifetime (ItemEntity)
+    // item: setNeverPickUp
+    pub fn set_never_pickup(&self) {
+        self.pickup_delay
+            .store(Self::INFINITE_PICKUP_DELAY, Ordering::Relaxed);
+    }
+
+    // item: setTarget, only this player can pick it up
+    pub fn set_target(&self, target: Option<uuid::Uuid>) {
+        self.target.store(target);
+    }
+
+    // item: setUnlimitedLifetime
+    pub fn set_unlimited_lifetime(&self) {
+        self.item_age
+            .store(Self::INFINITE_LIFETIME, Ordering::Relaxed);
+    }
+
+    // item: setExtendedLifetime
     pub fn set_extended_lifetime(&self) {
-        self.item_age.store(-32768, Ordering::Relaxed);
+        self.item_age.store(-LIFETIME, Ordering::Relaxed);
+    }
+
+    // item: makeFakeItem
+    pub fn make_fake_item(&self) {
+        self.set_never_pickup();
+        self.item_age.store(LIFETIME - 1, Ordering::Relaxed);
     }
 
     pub const fn get_entity(&self) -> &Entity {
@@ -215,8 +239,8 @@ impl ItemEntity {
     /// Vanilla `ItemEntity.isMergable`.
     fn is_mergeable(&self) -> bool {
         if self.entity.removed.load(Ordering::SeqCst)
-            || self.never_pickup.load(Ordering::Relaxed)
-            || self.never_despawn.load(Ordering::Relaxed)
+            || self.pickup_delay.load(Ordering::Relaxed) == Self::INFINITE_PICKUP_DELAY
+            || self.item_age.load(Ordering::Relaxed) == Self::INFINITE_LIFETIME
             || self.item_age.load(Ordering::Relaxed) >= LIFETIME
         {
             return false;
@@ -257,6 +281,10 @@ impl ItemEntity {
 
     #[expect(clippy::too_many_lines)]
     fn try_merge_with(&self, other: &Self) {
+        // item: Objects.equals(this.target, other.target)
+        if self.target.load() != other.target.load() {
+            return;
+        }
         // Always lock in entity_id order to prevent deadlock when two
         // items try to merge with each other concurrently.
         let (low, high) = if self.entity.entity_id < other.entity.entity_id {
@@ -439,7 +467,7 @@ impl ItemEntity {
     fn decrement_pickup_delay(&self) {
         self.pickup_delay
             .try_update(Ordering::Relaxed, Ordering::Relaxed, |val| {
-                Some(val.saturating_sub(1))
+                (val > 0 && val != Self::INFINITE_PICKUP_DELAY).then_some(val - 1)
             })
             .ok();
     }
@@ -529,12 +557,12 @@ impl ItemEntity {
     }
 
     fn process_age_and_merge(&self) -> bool {
-        if self.never_despawn.load(Ordering::Relaxed) {
-            return true;
-        }
-
         let entity = &self.entity;
-        let age = self.item_age.fetch_add(1, Ordering::Relaxed) + 1;
+        let age = if self.item_age.load(Ordering::Relaxed) == Self::INFINITE_LIFETIME {
+            Self::INFINITE_LIFETIME
+        } else {
+            self.item_age.fetch_add(1, Ordering::Relaxed) + 1
+        };
 
         if age >= LIFETIME {
             let entity_id = entity.entity_id;
@@ -742,8 +770,25 @@ impl EntityBase for ItemEntity {
         true
     }
 
+    // item: ItemEntity.ignoreExplosion, immune where blocklike entities are spared
+    fn ignore_explosion(&self, explosion: &crate::world::explosion::Explosion) -> bool {
+        let mob_griefing = self
+            .entity
+            .world
+            .load()
+            .level_info
+            .load()
+            .game_rules
+            .mob_griefing;
+        !explosion.should_affect_blocklike_entities(mob_griefing)
+    }
+
     fn on_player_collision(&self, player: &Arc<Player>) {
-        if self.pickup_delay.load(Ordering::Relaxed) > 0
+        if self.pickup_delay.load(Ordering::Relaxed) != 0
+            || self
+                .target
+                .load()
+                .is_some_and(|target| target != player.gameprofile.id)
             || player.living_entity.health.load() <= 0.0
             || player.is_spectator()
         {
@@ -855,6 +900,9 @@ impl EntityBase for ItemEntity {
             "PickupDelay",
             self.pickup_delay.load(Ordering::Relaxed) as i16,
         );
+        if let Some(target) = self.target.load() {
+            nbt.put_uuid("Owner", target);
+        }
         nbt.put_short("Health", self.health.load(Relaxed) as i16);
         if let Some(thrower) = self.thrower.load() {
             nbt.put_uuid("Thrower", thrower);
@@ -881,8 +929,9 @@ impl EntityBase for ItemEntity {
 
         // Vanilla stores PickupDelay as a short
         if let Some(delay) = nbt.get_short("PickupDelay") {
-            self.pickup_delay.store(delay as u8, Ordering::Relaxed);
+            self.pickup_delay.store(i32::from(delay), Ordering::Relaxed);
         }
+        self.target.store(nbt.get_uuid("Owner"));
 
         // Vanilla stores Health as a short
         if let Some(health) = nbt.get_short("Health") {
