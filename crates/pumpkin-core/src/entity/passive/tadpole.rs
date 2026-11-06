@@ -1,3 +1,5 @@
+mod ai;
+
 use std::sync::{
     Arc, PoisonError,
     atomic::{AtomicBool, AtomicI32, Ordering},
@@ -6,26 +8,21 @@ use std::sync::{
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
-use pumpkin_data::particle::Particle;
 use pumpkin_data::sound::{Sound, SoundCategory};
 use pumpkin_data::tag::{self, Taggable};
 use pumpkin_data::tracked_data;
 use pumpkin_nbt::compound::NbtCompound;
-use pumpkin_util::math::vector3::Vector3;
 
 use super::{
     abstract_fish::{AbstractFish, FishData},
     water_animal::WaterAnimal,
 };
+use crate::entity::ai::brain::memory::PackedMemories;
 use crate::entity::{
     Entity, EntityBase,
     ai::control::{
         smooth_swimming_look_control::SmoothSwimmingLookControl,
         smooth_swimming_move_control::SmoothSwimmingMoveControl,
-    },
-    ai::goal::{
-        escape_danger::EscapeDangerGoal, look_at_entity::LookAtEntityGoal,
-        random_swimming::RandomSwimmingGoal, tempt::TemptGoal,
     },
     ai::pathfinder::{Navigator, node::PathType},
     bucketable::Bucketable,
@@ -41,12 +38,7 @@ use crate::world::World;
 // tadpole: constants (Tadpole, TadpoleAi)
 const TICKS_TO_BE_FROG: i32 = 24000;
 const AGE_LOCK_PARTICLE_COOLDOWN: i32 = 40;
-const SPEED_WHEN_PANICKING: f64 = 2.0;
-const SPEED_WHEN_IDLING_IN_WATER: f64 = 0.5;
-const SPEED_WHEN_TEMPTED: f64 = 1.25;
 const FEED_SPEED_UP_FACTOR: f32 = 0.1;
-
-const TEMPT_ITEMS: &[&Item] = &[&Item::SLIME_BALL];
 
 pub struct TadpoleEntity {
     pub mob_entity: MobEntity,
@@ -83,31 +75,7 @@ impl TadpoleEntity {
         };
         // tadpole: fromBucket() is always true (Tadpole.fromBucket)
         tadpole.fish_data.from_bucket.store(true, Ordering::Relaxed);
-        let mob_arc = Arc::new(tadpole);
-        let mob_weak: std::sync::Weak<dyn Mob> = {
-            let mob_arc: Arc<dyn Mob> = mob_arc.clone();
-            Arc::downgrade(&mob_arc)
-        };
-
-        {
-            let goal_selector = &mob_arc.mob_entity.goals_selector;
-
-            goal_selector.add_goal(0, EscapeDangerGoal::new(SPEED_WHEN_PANICKING));
-            goal_selector.add_goal(
-                1,
-                LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 6.0),
-            );
-            goal_selector.add_goal(
-                2,
-                Box::new(TemptGoal::new(SPEED_WHEN_TEMPTED, TEMPT_ITEMS, false)),
-            );
-            goal_selector.add_goal(
-                3,
-                Box::new(RandomSwimmingGoal::new(SPEED_WHEN_IDLING_IN_WATER, 120)),
-            );
-        };
-
-        mob_arc
+        Arc::new(tadpole)
     }
 
     fn is_food(item_stack: &ItemStack) -> bool {
@@ -162,15 +130,6 @@ impl TadpoleEntity {
         let ticks_left = (TICKS_TO_BE_FROG - self.tadpole_age.load(Ordering::Relaxed)).max(0);
         let seconds = ((ticks_left / 20) as f32 * FEED_SPEED_UP_FACTOR) as i32;
         self.set_tadpole_age(self.tadpole_age.load(Ordering::Relaxed) + seconds * 20);
-        let entity = self.get_entity();
-        let pos = entity.pos.load();
-        entity.world.load().spawn_particle(
-            pos + Vector3::new(0.0, f64::from(entity.height()) * 0.5, 0.0),
-            Vector3::new(0.5, 0.5, 0.5),
-            0.0,
-            7,
-            Particle::HappyVillager,
-        );
     }
 
     // tadpole: golden dandelion toggles the age lock (AgeableMob.canUseGoldenDandelion)
@@ -211,6 +170,16 @@ impl TadpoleEntity {
 
 impl Mob for TadpoleEntity {
     crate::fish_mob_hooks!();
+
+    fn make_brain(&self, packed: &PackedMemories) -> crate::entity::ai::brain::Brain {
+        ai::make_brain(self, packed)
+    }
+
+    // tadpole: customServerAiStep (tadpoleBrain, tadpoleActivityUpdate)
+    fn custom_server_ai_step(&self, _caller: &dyn EntityBase) {
+        self.mob_entity.tick_brain(self);
+        self.mob_entity.with_brain(self, ai::update_activity);
+    }
 
     fn mob_write_nbt(&self, nbt: &mut NbtCompound) {
         self.fish_write_nbt(nbt);
@@ -340,5 +309,35 @@ impl Bucketable for TadpoleEntity {
             self.set_tadpole_age(age);
         }
         self.set_age_locked(nbt.get_bool("AgeLocked").unwrap_or(false));
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::unwrap_used)]
+mod tests {
+    use pumpkin_data::environment_attribute::Activity;
+    use pumpkin_util::math::vector3::Vector3;
+
+    use super::*;
+    use crate::entity::ai::test_support::world;
+
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
+    #[tokio::test]
+    async fn tadpole_brain_idles() -> TestResult {
+        let folder = tempfile::tempdir()?;
+        let world = world(&folder);
+        let tadpole = TadpoleEntity::new(Entity::new(
+            world.clone(),
+            Vector3::new(0.5, 64.0, 0.5),
+            &EntityType::TADPOLE,
+        ));
+        let active = tadpole.mob_entity.with_brain(tadpole.as_ref(), |brain| {
+            ai::update_activity(brain);
+            brain.get_active_non_core_activity()
+        });
+        assert_eq!(active, Some(Activity::Idle));
+        world.level.shutdown().await;
+        Ok(())
     }
 }

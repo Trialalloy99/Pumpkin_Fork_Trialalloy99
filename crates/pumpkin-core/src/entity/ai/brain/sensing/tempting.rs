@@ -13,11 +13,17 @@ const REQUIRES: [MemoryModuleId; 1] = [types::TEMPTING_PLAYER.id()];
 pub struct TemptingSensor;
 
 fn is_temptation(tick: &BrainTick<'_>, stack: &ItemStack) -> bool {
+    // sensor: TemptingSensor, Tadpole is no animal and tempts with FROG_FOOD
     !stack.is_empty()
-        && tick
-            .mob
-            .as_animal()
-            .is_some_and(|animal| animal.is_food(stack))
+        && tick.mob.as_animal().map_or_else(
+            || {
+                pumpkin_data::tag::Taggable::has_tag(
+                    stack.item,
+                    &pumpkin_data::tag::Item::MINECRAFT_FROG_FOOD,
+                )
+            },
+            |animal| animal.is_food(stack),
+        )
 }
 
 fn holding_temptation(tick: &BrainTick<'_>, player: &Player) -> bool {

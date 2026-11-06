@@ -1580,6 +1580,11 @@ pub trait Mob: EntityBase + Send + Sync {
     /// See [`EntityBase::on_flap`].
     fn mob_on_flap(&self) {}
 
+    /// See [`EntityBase::next_step`].
+    fn mob_next_step(&self) -> f32 {
+        (self.get_entity().move_dist.load() as i32 + 1) as f32
+    }
+
     /// See [`EntityBase::can_stand_on_fluid`].
     fn mob_can_stand_on_fluid(&self, _fluid: &pumpkin_data::fluid::Fluid) -> bool {
         false
@@ -2550,6 +2555,10 @@ impl<T: Mob + Send + 'static> EntityBase for T {
 
     fn can_stand_on_fluid(&self, fluid: &pumpkin_data::fluid::Fluid) -> bool {
         self.mob_can_stand_on_fluid(fluid)
+    }
+
+    fn next_step(&self) -> f32 {
+        self.mob_next_step()
     }
 
     fn get_swim_sound(&self) -> Option<Sound> {

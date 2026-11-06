@@ -2182,6 +2182,8 @@ impl PathNavigationTrait for WallClimberNavigation {
 
 pub struct AmphibiousPathNavigation {
     pub inner: PathNavigation,
+    /// Vanilla `Turtle.TurtlePathNavigation`: while set, only water is a stable stop.
+    pub turtle_travelling: Option<std::sync::Arc<std::sync::atomic::AtomicBool>>,
 }
 
 impl Default for AmphibiousPathNavigation {
@@ -2197,6 +2199,7 @@ impl AmphibiousPathNavigation {
             inner: PathNavigation::new(EvaluatorKind::Amphibious(AmphibiousNodeEvaluator::new(
                 prefers_shallow_swimming,
             ))),
+            turtle_travelling: None,
         }
     }
 }
@@ -2210,13 +2213,26 @@ impl AmphibiousPathNavigation {
         evaluator.walk.prefer_jump_blocks_are_open = true;
         let mut inner = PathNavigation::new(EvaluatorKind::Amphibious(evaluator));
         inner.water_border_blocks_corner_cuts = true;
-        Self { inner }
+        Self {
+            inner,
+            turtle_travelling: None,
+        }
     }
 }
 
 impl PathNavigationTrait for AmphibiousPathNavigation {
     fn set_progress(&mut self, goal: NavigatorGoal) {
         self.inner.set_progress(goal);
+    }
+
+    fn is_stable_destination(&self, world: &World, pos: &BlockPos) -> bool {
+        match &self.turtle_travelling {
+            Some(travelling) if travelling.load(Ordering::Relaxed) => {
+                world.get_block(pos) == &pumpkin_data::Block::WATER
+            }
+            Some(_) => !world.get_block_state(&pos.down()).is_air(),
+            None => world.get_block_state(&pos.down()).is_solid_render(),
+        }
     }
 
     fn set_speed(&mut self, speed: f64) {
@@ -2502,6 +2518,14 @@ impl Navigator {
     #[must_use]
     pub fn amphibious(prefers_shallow_swimming: bool) -> Self {
         Self::new(AmphibiousPathNavigation::new(prefers_shallow_swimming))
+    }
+
+    /// Vanilla `Turtle.TurtlePathNavigation`.
+    #[must_use]
+    pub fn turtle(travelling: std::sync::Arc<std::sync::atomic::AtomicBool>) -> Self {
+        let mut navigation = AmphibiousPathNavigation::new(false);
+        navigation.turtle_travelling = Some(travelling);
+        Self::new(navigation)
     }
 
     /// Vanilla `Strider.StriderPathNavigation`, ground walking that may stop on lava.

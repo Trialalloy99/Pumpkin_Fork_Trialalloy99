@@ -19,6 +19,7 @@ use pumpkin_util::math::{position::BlockPos, vector3::Vector3};
 use pumpkin_world::world::BlockFlags;
 use rand::RngExt;
 
+use crate::entity::custom_sound::CustomSound;
 use crate::entity::{
     Entity, EntityBase,
     ageable::{AgeableData, AgeableMob},
@@ -73,6 +74,7 @@ pub struct TurtleEntity {
     pub home_pos: Mutex<BlockPos>,
     pub travel_pos: Mutex<Option<BlockPos>>,
     pub going_home: AtomicBool,
+    travelling: Arc<AtomicBool>,
 }
 
 impl TurtleEntity {
@@ -86,7 +88,8 @@ impl TurtleEntity {
             .navigator
             .get_mut()
             .unwrap_or_else(PoisonError::into_inner);
-        *navigator = Navigator::amphibious(false);
+        let travelling = Arc::new(AtomicBool::new(false));
+        *navigator = Navigator::turtle(travelling.clone());
         // turtle: pathfinding malus (Turtle constructor)
         navigator.set_pathfinding_malus(PathType::Water, 0.0);
         navigator.set_pathfinding_malus(PathType::DoorIronClosed, -1.0);
@@ -101,6 +104,7 @@ impl TurtleEntity {
             home_pos: Mutex::new(BlockPos::new(0, 0, 0)),
             travel_pos: Mutex::new(None),
             going_home: AtomicBool::new(false),
+            travelling,
         };
         let mob_arc = Arc::new(turtle);
         let mob_weak: std::sync::Weak<dyn Mob> = {
@@ -230,6 +234,25 @@ impl Animal for TurtleEntity {
     }
 }
 
+// turtle: Turtle.getHurtSound and getDeathSound, baby variants
+impl CustomSound for TurtleEntity {
+    fn hurt_sound(&self) -> Option<Sound> {
+        Some(if self.is_baby() {
+            Sound::EntityTurtleHurtBaby
+        } else {
+            Sound::EntityTurtleHurt
+        })
+    }
+
+    fn death_sound(&self) -> Option<Sound> {
+        Some(if self.is_baby() {
+            Sound::EntityTurtleDeathBaby
+        } else {
+            Sound::EntityTurtleDeath
+        })
+    }
+}
+
 impl Mob for TurtleEntity {
     fn mob_play_step_sound(&self, _pos: &BlockPos, _state: &BlockState) {
         let sound = if self.get_entity().age.load(Ordering::Relaxed) < 0 {
@@ -238,6 +261,15 @@ impl Mob for TurtleEntity {
             Sound::EntityTurtleShamble
         };
         self.play_entity_sound(sound, 0.15, 1.0);
+    }
+
+    // turtle: Turtle.nextStep
+    fn mob_next_step(&self) -> f32 {
+        self.get_entity().move_dist.load() + 0.15
+    }
+
+    fn as_custom_sound(&self) -> Option<&dyn CustomSound> {
+        Some(self)
     }
 
     fn mob_play_swim_sound(&self, volume: f32) {
@@ -828,6 +860,7 @@ impl Goal for TravelGoal {
         if f64::from(yt) + pos.y > f64::from(entity.world.load().sea_level - 1) {
             yt = 0;
         }
+        turtle.travelling.store(true, Ordering::Relaxed);
         *TurtleEntity::lock(&turtle.travel_pos) = Some(BlockPos::new(
             (f64::from(xt) + pos.x).floor() as i32,
             (f64::from(yt) + pos.y).floor() as i32,
@@ -901,6 +934,7 @@ impl Goal for TravelGoal {
 
     fn stop(&mut self, mob: &dyn Mob) {
         if let Some(turtle) = turtle(mob) {
+            turtle.travelling.store(false, Ordering::Relaxed);
             *TurtleEntity::lock(&turtle.travel_pos) = None;
         }
     }
