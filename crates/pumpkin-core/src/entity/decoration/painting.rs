@@ -1,20 +1,24 @@
 use core::f32;
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 
-use crate::entity::player::Player;
+use super::block_attached::{self, BlockAttached};
 use crate::entity::{Entity, EntityBase, living::LivingEntity};
+use crate::server::Server;
 use pumpkin_data::BlockDirection;
 use pumpkin_data::damage::DamageType;
+use pumpkin_data::entity::EntityType;
 use pumpkin_data::item::Item;
 use pumpkin_data::item_stack::ItemStack;
 use pumpkin_data::painting_variant::PaintingVariant;
-use pumpkin_data::sound::{Sound, SoundCategory};
+use pumpkin_data::sound::Sound;
 use pumpkin_nbt::compound::NbtCompound;
 use pumpkin_protocol::codec::var_int::VarInt;
 use pumpkin_protocol::java::client::play::Metadata;
+use pumpkin_util::math::boundingbox::BoundingBox;
 use pumpkin_util::math::position::BlockPos;
 use pumpkin_util::math::vector3::Vector3;
 use pumpkin_util::version::JavaMinecraftVersion;
+use std::sync::Arc;
 
 /// The world stores a painting facing as a horizontal value: 0 south, 1 west,
 /// 2 north, 3 east (`Direction.get2DDataValue`). The entity data, and the spawn
@@ -45,9 +49,15 @@ const fn facing_to_horizontal(direction: BlockDirection) -> u8 {
     }
 }
 
+// painting: Painting.DEPTH
+const DEPTH: f64 = 0.0625;
+// hanging entity: spawnAtLocation offset from the wall
+const DROP_OFFSET: f64 = 0.15;
+
 pub struct PaintingEntity {
     pub entity: Entity,
     variant_id: AtomicU32,
+    ticks_since_check: AtomicI32,
 }
 
 impl PaintingEntity {
@@ -61,7 +71,113 @@ impl PaintingEntity {
         Self {
             entity,
             variant_id: AtomicU32::new(variant.id()),
+            ticks_since_check: AtomicI32::new(0),
         }
+    }
+
+    #[must_use]
+    pub fn direction(&self) -> BlockDirection {
+        BlockDirection::from_index(self.entity.data.load(Ordering::Relaxed) as u8)
+            .filter(pumpkin_data::BlockDirection::is_horizontal)
+            .unwrap_or(BlockDirection::South)
+    }
+
+    // painting: Painting.calculateBoundingBox, 1/16 deep box around the centre
+    #[must_use]
+    pub fn hitbox(
+        center: Vector3<f64>,
+        direction: BlockDirection,
+        variant: PaintingVariant,
+    ) -> BoundingBox {
+        let x_size = if matches!(direction, BlockDirection::East | BlockDirection::West) {
+            DEPTH
+        } else {
+            f64::from(variant.width())
+        };
+        let z_size = if matches!(direction, BlockDirection::North | BlockDirection::South) {
+            DEPTH
+        } else {
+            f64::from(variant.width())
+        };
+        let y_size = f64::from(variant.height());
+        BoundingBox::new(
+            Vector3::new(
+                center.x - x_size / 2.0,
+                center.y - y_size / 2.0,
+                center.z - z_size / 2.0,
+            ),
+            Vector3::new(
+                center.x + x_size / 2.0,
+                center.y + y_size / 2.0,
+                center.z + z_size / 2.0,
+            ),
+        )
+    }
+
+    // painting: Painting.recalculateBoundingBox
+    pub fn refresh_bounding_box(&self) {
+        self.entity.bounding_box.store(Self::hitbox(
+            self.entity.pos.load(),
+            self.direction(),
+            self.variant(),
+        ));
+    }
+
+    // hanging entity: HangingEntity.survives, free of collisions, backed by solid blocks, no overlap
+    #[must_use]
+    pub fn fits_at(
+        world: &crate::world::World,
+        center: Vector3<f64>,
+        direction: BlockDirection,
+        variant: PaintingVariant,
+        own_id: Option<i32>,
+    ) -> bool {
+        let bounds = Self::hitbox(center, direction, variant);
+        if !world.is_space_empty(bounds) {
+            return false;
+        }
+        let offset = direction.to_offset().to_f64();
+        let support = BoundingBox::new(
+            Vector3::new(
+                bounds.min.x - offset.x * 0.5 + 1.0e-7,
+                bounds.min.y + 1.0e-7,
+                bounds.min.z - offset.z * 0.5 + 1.0e-7,
+            ),
+            Vector3::new(
+                bounds.max.x - offset.x * 0.5 - 1.0e-7,
+                bounds.max.y - 1.0e-7,
+                bounds.max.z - offset.z * 0.5 - 1.0e-7,
+            ),
+        );
+        let supported =
+            BlockPos::iterate(support.min_block_pos(), support.max_block_pos()).all(|pos| {
+                let (block, state) = world.get_block_and_state(&pos);
+                state.is_solid()
+                    || block == &pumpkin_data::Block::REPEATER
+                    || block == &pumpkin_data::Block::COMPARATOR
+            });
+        if !supported {
+            return false;
+        }
+        // hanging entity: canCoexist(false), same type or same direction blocks it
+        let own_type = &EntityType::PAINTING;
+        !world.get_entities_at_box(&bounds).iter().any(|other| {
+            let other_entity = other.get_entity();
+            if Some(other_entity.entity_id) == own_id {
+                return false;
+            }
+            let other_direction = if let Some(painting) = other.cast_any().downcast_ref::<Self>() {
+                painting.direction()
+            } else if let Some(frame) = other
+                .cast_any()
+                .downcast_ref::<super::item_frame::ItemFrameEntity>()
+            {
+                frame.get_facing()
+            } else {
+                return false;
+            };
+            other_entity.entity_type == own_type || other_direction == direction
+        })
     }
 
     #[must_use]
@@ -76,6 +192,7 @@ impl PaintingEntity {
     pub fn set_variant(&self, variant: PaintingVariant) {
         self.variant_id.store(variant.id(), Ordering::Relaxed);
         self.sync_variant();
+        self.refresh_bounding_box();
     }
 
     pub fn sync_variant(&self) {
@@ -116,7 +233,6 @@ impl PaintingEntity {
     }
 
     /// Checks if a painting of the specified variant fits on the wall at `location` facing `face`.
-    /// The wall blocks behind the painting must be solid, and the blocks in front must not be solid.
     #[must_use]
     pub fn painting_fits(
         world: &crate::world::World,
@@ -124,41 +240,11 @@ impl PaintingEntity {
         face: BlockDirection,
         variant: PaintingVariant,
     ) -> bool {
-        let width = variant.width();
-        let height = variant.height();
-        let face_ccw = face.rotate_counter_clockwise();
-        let ccw_offset = face_ccw.to_offset();
-        let face_offset = face.to_offset();
-
-        let k = -((width as i32 - 1) / 2);
-        let l = -((height as i32 - 1) / 2);
-
-        for x_idx in 0..width {
-            for y_idx in 0..height {
-                let wall_pos = BlockPos(Vector3::new(
-                    location.0.x + ccw_offset.x * (x_idx as i32 + k),
-                    location.0.y + (y_idx as i32 + l),
-                    location.0.z + ccw_offset.z * (x_idx as i32 + k),
-                ));
-                let front_pos = wall_pos.offset(face_offset);
-
-                let wall_state = world.get_block_state(&wall_pos);
-                if !wall_state.is_solid() {
-                    return false;
-                }
-
-                let front_state = world.get_block_state(&front_pos);
-                if front_state.is_solid() {
-                    return false;
-                }
-            }
-        }
-        true
+        let center = Self::calculate_center_pos(location, face, variant.width(), variant.height());
+        Self::fits_at(world, center, face, variant, None)
     }
 
-    /// Chooses a placeable painting variant that fits the wall at `location` facing `face`.
-    /// Matches vanilla Minecraft: filters to variants that fit, selects the subset with
-    /// the largest area (width * height), and randomly picks one from that subset.
+    /// Vanilla `Painting.create`: variants that survive, the largest area, a random one of those.
     #[must_use]
     pub fn choose_variant(
         world: &crate::world::World,
@@ -186,27 +272,55 @@ impl PaintingEntity {
         let mut rng = rand::rng();
         fitting_variants.choose(&mut rng).copied()
     }
+}
 
-    fn drop_and_remove(&self, caused_by: Option<&dyn EntityBase>) {
-        let entity = &self.entity;
-        let world = entity.world.load();
-        world.play_sound(
-            Sound::EntityPaintingBreak,
-            SoundCategory::Blocks,
-            &entity.pos.load(),
-        );
+impl BlockAttached for PaintingEntity {
+    fn ticks_since_check(&self) -> &AtomicI32 {
+        &self.ticks_since_check
+    }
 
-        let is_creative = caused_by.is_some_and(|c| {
-            c.cast_any()
-                .downcast_ref::<Player>()
-                .is_some_and(Player::is_creative)
-        });
+    // painting: HangingEntity.survives
+    fn survives(&self) -> bool {
+        Self::fits_at(
+            &self.entity.world.load(),
+            self.entity.pos.load(),
+            self.direction(),
+            self.variant(),
+            Some(self.entity.entity_id),
+        )
+    }
 
-        if !is_creative {
-            world.drop_stack(&entity.block_pos.load(), ItemStack::new(1, &Item::PAINTING));
+    // painting: Painting.dropItem
+    fn drop_item(&self, caused_by: Option<&dyn EntityBase>) {
+        let world = self.entity.world.load();
+        if !world.level_info.load().game_rules.entity_drops {
+            return;
         }
-
-        entity.remove();
+        self.entity.play_sound(Sound::EntityPaintingBreak);
+        if block_attached::infinite_materials(caused_by) {
+            return;
+        }
+        let mut stack = ItemStack::new(1, &Item::PAINTING);
+        if let Some(name) = (**self.entity.custom_name.load()).clone() {
+            stack.set_data_component(pumpkin_data::data_component_impl::CustomNameImpl { name });
+        }
+        let direction = self.direction().to_offset().to_f64();
+        let pos = self.entity.pos.load();
+        let item = crate::entity::item::ItemEntity::new_with_velocity(
+            Entity::new(
+                world.clone(),
+                Vector3::new(
+                    pos.x + direction.x * DROP_OFFSET,
+                    pos.y,
+                    pos.z + direction.z * DROP_OFFSET,
+                ),
+                &EntityType::ITEM,
+            ),
+            stack,
+            Vector3::new(0.0, 0.0, 0.0),
+            crate::entity::item::ItemEntity::DEFAULT_PICKUP_DELAY,
+        );
+        world.spawn_entity(Arc::new(item));
     }
 }
 
@@ -241,6 +355,7 @@ impl EntityBase for PaintingEntity {
             self.variant_id.store(raw_id, Ordering::Relaxed);
             self.sync_variant();
         }
+        self.refresh_bounding_box();
     }
 
     fn get_entity(&self) -> &Entity {
@@ -253,6 +368,7 @@ impl EntityBase for PaintingEntity {
 
     fn init_data_tracker(&self) {
         self.sync_variant();
+        self.refresh_bounding_box();
     }
 
     fn java_spawn_metadata(&self, version: JavaMinecraftVersion) -> Option<Box<[u8]>> {
@@ -280,21 +396,49 @@ impl EntityBase for PaintingEntity {
         }
     }
 
+    fn tick(&self, _caller: &dyn EntityBase, _server: &Server) {
+        self.block_attached_tick();
+    }
+
+    // painting: BlockAttachedEntity.hurtServer, the player must be allowed to interact there
     fn damage_with_context(
         &self,
-        caller: &dyn EntityBase,
+        _caller: &dyn EntityBase,
         _amount: f32,
-        _damage_type: DamageType,
+        damage_type: DamageType,
         _position: Option<Vector3<f64>>,
-        _source: Option<&dyn EntityBase>,
-        _cause: Option<&dyn EntityBase>,
+        source: Option<&dyn EntityBase>,
+        cause: Option<&dyn EntityBase>,
     ) -> bool {
-        self.drop_and_remove(Some(caller));
-        true
+        if let Some(player) = cause.or(source).and_then(EntityBase::get_player)
+            && self
+                .entity
+                .world
+                .load()
+                .is_in_spawn_protection(player, &self.entity.block_pos.load())
+        {
+            return false;
+        }
+        self.block_attached_hurt(&damage_type, source, cause)
     }
 
     fn can_hit(&self) -> bool {
         self.entity.is_alive()
+    }
+
+    fn is_pickable(&self) -> bool {
+        true
+    }
+
+    fn ignore_explosion(&self, explosion: &crate::world::explosion::Explosion) -> bool {
+        block_attached::ignores_explosion(&self.entity, explosion)
+    }
+
+    fn on_lightning_strike(
+        &self,
+        _caller: &dyn EntityBase,
+        _lightning: &crate::entity::lightning::LightningBoltEntity,
+    ) {
     }
 
     fn cast_any(&self) -> &dyn std::any::Any {

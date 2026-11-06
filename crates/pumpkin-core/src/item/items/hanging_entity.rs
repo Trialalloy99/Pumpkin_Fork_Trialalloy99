@@ -7,8 +7,10 @@ use crate::entity::Entity;
 use crate::entity::decoration::item_frame::ItemFrameEntity;
 use crate::entity::decoration::painting::PaintingEntity;
 use crate::entity::player::Player;
+use crate::item::items::spawn_egg::apply_entity_variant;
 use crate::item::{ItemBehaviour, ItemMetadata};
 use crate::server::Server;
+use crate::world::game_event::GameEventContext;
 use pumpkin_data::data_component_impl::PaintingVariantImpl;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::game_event::GameEvent;
@@ -53,7 +55,10 @@ impl ItemBehaviour for HangingEntityItem {
         );
 
         if item.item.id == Item::PAINTING.id {
-            if face == BlockDirection::Up || face == BlockDirection::Down {
+            if face == BlockDirection::Up
+                || face == BlockDirection::Down
+                || world.is_in_spawn_protection(player, &target_pos)
+            {
                 return BlockActionResult::Fail;
             }
 
@@ -84,13 +89,22 @@ impl ItemBehaviour for HangingEntityItem {
                 .data
                 .store(i32::from(face.to_index()), Ordering::Relaxed);
             let painting = Arc::new(PaintingEntity::new_with_variant(entity, variant));
+            // painting: EntityType.createDefaultStackConfig, custom name
+            apply_entity_variant(item, painting.as_ref(), Some(player));
+            painting.refresh_bounding_box();
+            world.spawn_entity(painting);
             world.play_sound(
                 Sound::EntityPaintingPlace,
                 SoundCategory::Blocks,
                 &spawn_pos,
             );
-            world.emit_game_event(GameEvent::EntityPlace.name(), spawn_pos);
-            world.spawn_entity(painting);
+            world.emit_game_event_with_context(
+                GameEvent::EntityPlace.name(),
+                spawn_pos,
+                &GameEventContext {
+                    source_entity: Some(player),
+                },
+            );
         } else {
             if !world.is_in_build_limit(target_pos) {
                 return BlockActionResult::Fail;
