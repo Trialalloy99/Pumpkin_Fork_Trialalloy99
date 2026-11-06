@@ -2611,6 +2611,28 @@ impl World {
                         }
                     }
                 }
+            } else if state.is_liquid() {
+                // liquid: LiquidBlock.getCollisionShape, a living mob that can stand on a source
+                let (fluid, fluid_state) = Self::fluid_state_from_block_state(state.id);
+                let feet = entity.get_entity().pos.load().y;
+                if fluid_state.is_source
+                    && entity.can_stand_on_fluid(fluid)
+                    && feet > f64::from(pos.0.y) + 0.5 - 1.0e-5
+                    && !fluid.matches_type(self.get_fluid(&pos.up()))
+                {
+                    let shape = BoundingBox::new(
+                        Vector3::new(f64::from(pos.0.x), f64::from(pos.0.y), f64::from(pos.0.z)),
+                        Vector3::new(
+                            f64::from(pos.0.x) + 1.0,
+                            f64::from(pos.0.y) + 0.5,
+                            f64::from(pos.0.z) + 1.0,
+                        ),
+                    );
+                    if shape.intersects(&bounding_box) {
+                        collided = true;
+                        collisions.push(shape);
+                    }
+                }
             } else {
                 for shape in state.get_block_collision_shapes_at(&pos) {
                     let shape = shape.at_pos(pos);

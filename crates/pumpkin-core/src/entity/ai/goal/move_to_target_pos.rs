@@ -26,6 +26,8 @@ pub struct MoveToTargetPosGoal<M: MoveToTargetPos> {
     pub max_y_difference: i32,
     pub lowest_y: i32,
     pub reset_path_interval: i32,
+    /// Vanilla `getMoveToTarget` override returning the block itself (`StriderGoToLavaGoal`).
+    pub targets_block_itself: bool,
 }
 
 impl<M: MoveToTargetPos> MoveToTargetPosGoal<M> {
@@ -49,6 +51,7 @@ impl<M: MoveToTargetPos> MoveToTargetPosGoal<M> {
             max_y_difference,
             lowest_y: 0,
             reset_path_interval: 40,
+            targets_block_itself: false,
         }
     }
 
@@ -109,6 +112,9 @@ impl<M: MoveToTargetPos> MoveToTargetPosGoal<M> {
 
     #[must_use]
     pub fn get_target_pos(&self) -> BlockPos {
+        if self.targets_block_itself {
+            return self.target_pos;
+        }
         self.target_pos.up()
     }
 

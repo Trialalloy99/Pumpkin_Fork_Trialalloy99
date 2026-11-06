@@ -1580,6 +1580,11 @@ pub trait Mob: EntityBase + Send + Sync {
     /// See [`EntityBase::on_flap`].
     fn mob_on_flap(&self) {}
 
+    /// See [`EntityBase::can_stand_on_fluid`].
+    fn mob_can_stand_on_fluid(&self, _fluid: &pumpkin_data::fluid::Fluid) -> bool {
+        false
+    }
+
     /// See [`EntityBase::is_affected_by_blocks`].
     fn mob_is_affected_by_blocks(&self) -> bool {
         self.get_entity().is_affected_by_blocks()
@@ -2541,6 +2546,10 @@ impl<T: Mob + Send + 'static> EntityBase for T {
 
     fn is_affected_by_blocks(&self) -> bool {
         self.mob_is_affected_by_blocks()
+    }
+
+    fn can_stand_on_fluid(&self, fluid: &pumpkin_data::fluid::Fluid) -> bool {
+        self.mob_can_stand_on_fluid(fluid)
     }
 
     fn get_swim_sound(&self) -> Option<Sound> {

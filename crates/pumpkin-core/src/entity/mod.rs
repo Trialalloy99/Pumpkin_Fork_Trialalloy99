@@ -558,6 +558,11 @@ pub trait EntityBase: Send + Sync + std::any::Any {
         false
     }
 
+    // entity: LivingEntity.canStandOnFluid, collides with the top half of a source of that fluid
+    fn can_stand_on_fluid(&self, _fluid: &Fluid) -> bool {
+        false
+    }
+
     // entity: LivingEntity.isAffectedByPotions, splash potions and clouds skip it
     fn is_affected_by_potions(&self) -> bool {
         true
@@ -5326,6 +5331,14 @@ impl Entity {
                                 target_block_y,
                                 target_block_z,
                             ));
+                            // strider: Strider.getDismountLocationForPassenger never lands in lava
+                            if self.entity_type == &EntityType::STRIDER
+                                && world
+                                    .get_fluid(&target_pos)
+                                    .has_tag(&pumpkin_data::tag::Fluid::MINECRAFT_LAVA)
+                            {
+                                continue;
+                            }
                             let height = world.get_dismount_height(&target_pos);
 
                             if height.is_finite() && height < 1.0 {
