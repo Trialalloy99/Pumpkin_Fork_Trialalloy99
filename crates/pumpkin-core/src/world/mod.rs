@@ -1,8 +1,10 @@
+const LIGHTNING_ROD_SEARCH_RADIUS: i32 = 128;
 use crate::block::entities::{BlockEntity, block_entity_from_nbt};
 use dashmap::DashMap;
 use pumpkin_data::chunk::Biome;
 use pumpkin_data::item::{BedrockItem, BedrockItemVersion};
 use pumpkin_data::packet::CURRENT_MC_VERSION;
+use pumpkin_data::tag::Taggable as _;
 use pumpkin_protocol::bedrock::client::item_registry::{CItemRegistry, ItemData};
 use pumpkin_protocol::bedrock::client::level_event::{CLevelEvent, LevelEvent};
 use pumpkin_protocol::bedrock::client::{
@@ -2706,6 +2708,110 @@ impl World {
         }
     }
 
+    // world: ServerLevel.findLightningRod, closest rod that tops its column within 128 blocks
+    fn find_lightning_rod(&self, center: BlockPos) -> Option<BlockPos> {
+        self.poi_find_all_closest_first(
+            center,
+            LIGHTNING_ROD_SEARCH_RADIUS,
+            |poi_type| poi_type.ends_with("lightning_rod"),
+            crate::world::poi_manager::PoiOccupancy::Any,
+        )
+        .into_iter()
+        .map(|(pos, _)| pos)
+        .find(|rod| rod.0.y == self.get_heightmap_height(MotionBlocking, rod.0.x, rod.0.z))
+        .map(|rod| rod.up())
+    }
+
+    // world: ServerLevel.findLightningTargetAround, a rod, a living entity under open sky or the surface
+    fn find_lightning_target_around(&self, x: i32, z: i32) -> BlockPos {
+        let surface = self.get_heightmap_height(MotionBlocking, x, z) + 1;
+        let mut center = BlockPos::new(x, surface, z);
+        if let Some(rod) = self.find_lightning_rod(center) {
+            return rod;
+        }
+        let search = BoundingBox::new(
+            Vector3::new(
+                f64::from(x) - 3.0,
+                f64::from(surface) - 3.0,
+                f64::from(z) - 3.0,
+            ),
+            Vector3::new(
+                f64::from(x) + 4.0,
+                f64::from(self.get_top_y()) + 4.0,
+                f64::from(z) + 4.0,
+            ),
+        );
+        let candidates: Vec<BlockPos> = self
+            .get_all_at_box(&search)
+            .into_iter()
+            .filter(|entity| {
+                entity
+                    .get_living_entity()
+                    .is_some_and(super::entity::living::LivingEntity::is_alive)
+                    && self.can_see_sky(&entity.get_entity().block_pos.load())
+            })
+            .map(|entity| entity.get_entity().block_pos.load())
+            .collect();
+        if !candidates.is_empty() {
+            return candidates[rng().random_range(0..candidates.len())];
+        }
+        if center.0.y == self.min_y - 1 {
+            center = center.up().up();
+        }
+        center
+    }
+
+    // world: ServerLevel.tickThunder, lightning and skeleton traps
+    fn tick_thunder(self: &Arc<Self>, chunk_pos: Vector2<i32>) {
+        if !self.is_raining() || !self.is_thundering() || rng().random_range(0..100_000) != 0 {
+            return;
+        }
+        let random = rng().random::<i32>();
+        let x = (chunk_pos.x << 4) + (random & 15);
+        let z = (chunk_pos.y << 4) + (random >> 8 & 15);
+        let pos = self.find_lightning_target_around(x, z);
+        if !self.is_raining_at(&pos) {
+            return;
+        }
+        let difficulty = crate::entity::mob::equipment::RegionalDifficulty::at(self, pos.to_f64());
+        let spawn_mobs = self.level_info.load().game_rules.spawn_mobs;
+        let is_trap = spawn_mobs
+            && rng().random::<f64>() < f64::from(difficulty.effective_difficulty) * 0.01
+            && !self
+                .get_block(&pos.down())
+                .has_tag(&pumpkin_data::tag::Block::MINECRAFT_LIGHTNING_RODS);
+        if is_trap {
+            let horse = crate::entity::r#type::from_type(
+                &EntityType::SKELETON_HORSE,
+                pos.to_f64(),
+                self,
+                uuid::Uuid::new_v4(),
+            );
+            if let Some(skeleton_horse) =
+                horse
+                    .cast_any()
+                    .downcast_ref::<crate::entity::passive::skeleton_horse::SkeletonHorseEntity>()
+            {
+                skeleton_horse.set_trap(true);
+                crate::entity::ageable::AgeableMob::set_age(skeleton_horse, 0);
+            }
+            self.spawn_entity(horse);
+        }
+        let bolt = crate::entity::r#type::from_type(
+            &EntityType::LIGHTNING_BOLT,
+            pos.to_f64().add_raw(0.5, 0.0, 0.5),
+            self,
+            uuid::Uuid::new_v4(),
+        );
+        if let Some(bolt) = bolt
+            .cast_any()
+            .downcast_ref::<crate::entity::lightning::LightningBoltEntity>()
+        {
+            bolt.set_visual_only(is_trap);
+        }
+        self.spawn_entity_non_save(bolt);
+    }
+
     pub fn tick_spawning_chunk(
         self: &Arc<Self>,
         chunk_pos: Vector2<i32>,
@@ -2715,52 +2821,8 @@ impl World {
     ) {
         // this.level.tickThunder(chunk);
         //TODO check in simulation distance
-        let (is_raining, is_thundering) = (self.is_raining(), self.is_thundering());
-
-        if is_raining && is_thundering && rng().random_range(0..100_000) == 0 {
-            let rand_value = rng().random::<i32>() >> 2;
-            let delta = Vector3::new(rand_value & 15, rand_value >> 16 & 15, rand_value >> 8 & 15);
-            let random_pos = Vector3::new(
-                chunk_pos.x << 4,
-                chunk
-                    .heightmap
-                    .lock()
-                    .unwrap_or_else(std::sync::PoisonError::into_inner)
-                    .get(
-                        MotionBlocking,
-                        chunk_pos.x << 4,
-                        chunk_pos.y << 4,
-                        self.min_y,
-                    ),
-                chunk_pos.y << 4,
-            )
-            .add(&delta);
-            // TODO this.getBrightness(LightLayer.SKY, blockPos) >= 15;
-            // TODO heightmap
-
-            // TODO findLightningRod(blockPos)
-            // TODO encapsulatingFullBlocks
-            if true {
-                // TODO biome.getPrecipitationAt(pos, this.getSeaLevel()) == Biome.Precipitation.RAIN
-                // TODO this.getCurrentDifficultyAt(blockPos);
-                if rng().random::<f32>() < 0.0675
-                    && self.get_block(&random_pos.to_block_pos().down()) != &Block::LIGHTNING_ROD
-                {
-                    let entity = Entity::new(
-                        self.clone(),
-                        random_pos.to_f64(),
-                        &EntityType::SKELETON_HORSE,
-                    );
-                    self.spawn_entity_non_save(Arc::new(entity));
-                }
-                let entity = Entity::new(
-                    self.clone(),
-                    random_pos.to_f64().add_raw(0.5, 0., 0.5),
-                    &EntityType::LIGHTNING_BOLT,
-                );
-                self.spawn_entity_non_save(Arc::new(entity));
-            }
-        }
+        let is_thundering = self.is_thundering();
+        self.tick_thunder(chunk_pos);
 
         if spawn_list.is_empty() {
             return;

@@ -19,14 +19,16 @@ use pumpkin_util::math::position::BlockPos;
 use rand::RngExt;
 use uuid::Uuid;
 
-use crate::entity::passive::abstract_horse::{HORSE_SOUND_VOLUME, HorseCore, HorseLike};
+use crate::entity::passive::abstract_horse::{
+    ABSTRACT_HORSES, HORSE_SOUND_VOLUME, HorseCore, HorseLike, RandomStandGoal,
+};
 use crate::entity::{
     Entity, EntityBase,
     ageable::{AgeableData, AgeableMob},
     ai::goal::{
-        escape_danger::EscapeDangerGoal, look_around::RandomLookAroundGoal,
-        look_at_entity::LookAtEntityGoal, swim::SwimGoal, tempt::TemptGoal,
-        wander_around::WanderAroundGoal,
+        breed::BreedGoal, follow_parent::FollowParentGoal, look_around::RandomLookAroundGoal,
+        look_at_entity::LookAtEntityGoal, run_around_like_crazy::RunAroundLikeCrazyGoal,
+        swim::SwimGoal, tempt::TemptGoal, wander_around::WanderAroundGoal,
     },
     custom_sound::CustomSound,
     mob::{
@@ -41,8 +43,11 @@ use crate::entity::{
     r#type::from_type,
 };
 use crate::world::World;
+use pumpkin_util::math::boundingbox::EntityDimensions;
 
-const TEMPT_ITEMS: &[&Item] = &[&Item::RED_MUSHROOM, &Item::BAKED_POTATO];
+// zombie_horse: ItemTags.ZOMBIE_HORSE_FOOD
+const TEMPT_ITEMS: &[&Item] = &[&Item::RED_MUSHROOM];
+const BABY_SCALE: f32 = 0.7;
 
 fn generate_zombie_horse_jump_strength(rng: &mut impl rand::Rng) -> f64 {
     0.5 + rng.random::<f64>() * 0.06666666666666667
@@ -92,15 +97,19 @@ impl ZombieHorseEntity {
 
         {
             let goal_selector = &mob_arc.mob_entity.goals_selector;
+            // zombie_horse: AbstractHorse.registerGoals, ZombieHorse.addBehaviourGoals
             goal_selector.add_goal(0, Box::new(SwimGoal::default()));
-            goal_selector.add_goal(1, EscapeDangerGoal::new(1.2));
+            goal_selector.add_goal(1, Box::new(RunAroundLikeCrazyGoal::new(1.2)));
+            goal_selector.add_goal(2, BreedGoal::with_partner_types(1.0, ABSTRACT_HORSES));
             goal_selector.add_goal(3, Box::new(TemptGoal::new(1.25, TEMPT_ITEMS, false)));
-            goal_selector.add_goal(6, Box::new(WanderAroundGoal::new(0.7)));
+            goal_selector.add_goal(4, Box::new(FollowParentGoal::new(1.0)));
+            goal_selector.add_goal(6, Box::new(WanderAroundGoal::water_avoiding(0.7)));
             goal_selector.add_goal(
                 7,
                 LookAtEntityGoal::with_default(mob_weak, &EntityType::PLAYER, 6.0),
             );
             goal_selector.add_goal(8, Box::new(RandomLookAroundGoal::default()));
+            goal_selector.add_goal(9, Box::new(RandomStandGoal::default()));
         };
 
         mob_arc
@@ -122,6 +131,16 @@ impl ZombieHorseEntity {
 
     pub fn set_tame(&self, val: bool) {
         self.put_flag(FLAG_TAME, val);
+    }
+
+    // zombie_horse: isMobControlled, a mob rides it
+    fn is_mob_controlled(&self) -> bool {
+        self.get_entity()
+            .passengers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .first()
+            .is_some_and(|passenger| passenger.get_mob().is_some())
     }
 
     // zombie_horse: ZombieHorse.randomizeAttributes
@@ -212,6 +231,11 @@ impl AgeableMob for ZombieHorseEntity {
     fn default_baby_spawn_chance(&self) -> f32 {
         crate::entity::ageable::ABSTRACT_HORSE_BABY_SPAWN_CHANCE
     }
+
+    // zombie_horse: ZombieHorse.canAgeUp
+    fn can_age_up(&self) -> bool {
+        false
+    }
 }
 
 impl Animal for ZombieHorseEntity {
@@ -219,7 +243,6 @@ impl Animal for ZombieHorseEntity {
         item_stack
             .item
             .has_tag(&tag::Item::MINECRAFT_ZOMBIE_HORSE_FOOD)
-            || item_stack.get_item() == &Item::BAKED_POTATO
     }
 }
 
@@ -248,6 +271,30 @@ impl Mob for ZombieHorseEntity {
 
     fn remove_when_far_away(&self, _distance_sq: f64) -> bool {
         true
+    }
+
+    // zombie_horse: ZombieHorse.canFallInLove and AbstractHorse.canMate
+    fn can_fall_in_love(&self) -> bool {
+        false
+    }
+
+    fn can_mate(&self, _partner: &dyn EntityBase) -> bool {
+        false
+    }
+
+    // zombie_horse: ZombieHorse.canBeLeashed, isMobControlled
+    fn can_be_leashed(&self) -> bool {
+        self.is_horse_tame() || !self.is_mob_controlled()
+    }
+
+    // zombie_horse: ZombieHorse.BABY_DIMENSIONS
+    fn baby_dimensions(&self) -> Option<EntityDimensions> {
+        let adult = Entity::type_dimensions(self.get_entity().entity_type);
+        Some(EntityDimensions::new(
+            adult.width * BABY_SCALE,
+            adult.height * BABY_SCALE,
+            adult.eye_height * BABY_SCALE,
+        ))
     }
 
     fn as_custom_sound(&self) -> Option<&dyn CustomSound> {
@@ -308,22 +355,17 @@ impl Mob for ZombieHorseEntity {
         if reason == SpawnReason::Natural as u8 {
             let pos = self.get_entity().pos.load();
             let zombie = from_type(&EntityType::ZOMBIE, pos, world, Uuid::new_v4());
-            if let Some(living) = zombie.get_living_entity() {
-                if let Ok(mut eq) = living.entity_equipment.lock() {
-                    eq.put(
-                        &EquipmentSlot::MAIN_HAND,
-                        ItemStack::new(1, &Item::IRON_SPEAR),
-                    );
-                }
-                living.send_equipment_changes(&[(
-                    EquipmentSlot::MAIN_HAND,
+            zombie
+                .get_entity()
+                .set_rotation(self.get_entity().yaw.load(), 0.0);
+            crate::entity::mob::spawn::finalize_spawn(&zombie, world, None, SpawnReason::Jockey);
+            if let Some(mob) = zombie.get_mob() {
+                mob.get_mob_entity().set_item_slot(
+                    &EquipmentSlot::MAIN_HAND,
                     ItemStack::new(1, &Item::IRON_SPEAR),
-                )]);
+                );
             }
-            if let Some(this_base) = world.get_entity_by_id(self.get_entity().entity_id) {
-                self.get_entity().add_passenger(this_base, zombie.clone());
-            }
-            world.spawn_entity(zombie);
+            self.mob_entity.add_pending_rider(zombie);
         }
         result
     }
@@ -356,6 +398,10 @@ impl Mob for ZombieHorseEntity {
 
     // zombie_horse: ZombieHorse.mobInteract and AbstractHorse.mobInteract with the body armor
     fn mob_interact(&self, player: &Arc<Player>, item_stack: &mut ItemStack) -> bool {
+        // zombie_horse: ZombieHorse.interact sets persistence
+        self.mob_entity
+            .persistence_required
+            .store(true, Ordering::Relaxed);
         let sneaking = player.living_entity.entity.is_sneaking();
         let should_open_inventory = !self.is_baby() && self.is_horse_tame() && sneaking;
         let holds_golden_dandelion = player.inventory().held_item().get_item()
