@@ -75,7 +75,7 @@ impl SlimeEntity {
             goal_selector.add_goal(1, Box::new(SlimeFloatGoal::new(Arc::downgrade(&mob_arc))));
             goal_selector.add_goal(2, Box::new(SlimeAttackGoal::new(Arc::downgrade(&mob_arc))));
             goal_selector.add_goal(
-                3,
+                4,
                 Box::new(SlimeRandomDirectionGoal::new(Arc::downgrade(&mob_arc))),
             );
             goal_selector.add_goal(
@@ -186,6 +186,38 @@ impl SlimeEntity {
         false
     }
 
+    // cube mob: AbstractCubeMob.canDealDamage, a magma cube bites at any size
+    pub fn can_deal_damage(&self) -> bool {
+        let effective_ai = !self.entity.is_no_ai();
+        if self.entity.living_entity.entity.entity_type == &EntityType::MAGMA_CUBE {
+            effective_ai
+        } else {
+            !self.is_tiny() && effective_ai
+        }
+    }
+
+    // cube mob: AbstractCubeMob.dealDamage, teams, melee range and line of sight
+    pub fn deal_damage(&self, caller: &dyn Mob, target: &dyn EntityBase) {
+        let living = &self.entity.living_entity;
+        if !living.entity.is_alive()
+            || !(caller as &dyn EntityBase).do_teams_allow_damage(target)
+            || !self.entity.is_in_attack_range(target)
+            || !caller.has_line_of_sight(target.get_entity())
+        {
+            return;
+        }
+        if self.entity.try_attack(caller, target) {
+            caller.get_entity().world.load().play_sound_fine(
+                Sound::EntitySlimeAttack,
+                SoundCategory::Hostile,
+                &living.entity.pos.load(),
+                1.0,
+                (rand::random_range(0.0..1.0) - rand::random_range(0.0..1.0)) * 0.2 + 1.0,
+            );
+            caller.on_attack(target);
+        }
+    }
+
     fn get_jump_delay() -> i32 {
         rand::random_range(10..30)
     }
@@ -226,7 +258,7 @@ impl SlimeEntity {
 
     fn get_sound_pitch(&self) -> f32 {
         let pitch_adjuster = if self.is_tiny() { 1.4 } else { 0.8 };
-        (rand::random_range(0.0..1.0) - rand::random_range(0.0..1.0)) * 0.2 + 1.0 * pitch_adjuster
+        ((rand::random_range(0.0..1.0) - rand::random_range(0.0..1.0)) * 0.2 + 1.0) * pitch_adjuster
     }
 }
 
@@ -311,28 +343,7 @@ impl Mob for SlimeEntity {
             let world = self.entity.living_entity.entity.world.load();
             let entity = &self.entity.living_entity.entity;
             let pos = entity.pos.load();
-            let width = entity.entity_dimension.load().width;
-            let radius = width;
-            let particle = if entity.entity_type == &EntityType::MAGMA_CUBE {
-                pumpkin_data::particle::Particle::Flame
-            } else {
-                pumpkin_data::particle::Particle::ItemSlime
-            };
-            for _ in 0..(width * 32.0) as i32 {
-                let direction = rand::random_range(0.0..std::f64::consts::TAU);
-                let distance = rand::random_range(0.5..1.0) * f64::from(radius);
-                world.spawn_particle(
-                    Vector3::new(
-                        pos.x + direction.sin() * distance,
-                        pos.y,
-                        pos.z + direction.cos() * distance,
-                    ),
-                    Vector3::new(0.0, 0.0, 0.0),
-                    0.0,
-                    1,
-                    particle,
-                );
-            }
+            // cube mob: landing particles come from the client tick (AbstractCubeMob.tick)
             world.play_sound_fine(
                 self.get_squish_sound(),
                 SoundCategory::Hostile,
@@ -360,21 +371,14 @@ impl Mob for SlimeEntity {
     }
 
     fn mob_player_collision(&self, player: &Arc<crate::entity::player::Player>) {
-        if !self.is_tiny() {
-            // dealDamage
-            let damaged = self.entity.try_attack(self, &**player);
-            if damaged {
-                self.on_attack(&**player);
-            }
+        if self.can_deal_damage() {
+            self.deal_damage(self, &**player);
         }
     }
 
     fn mob_entity_collision(&self, entity: &dyn EntityBase) {
-        if !self.is_tiny() && entity.get_entity().entity_type == &EntityType::IRON_GOLEM {
-            let damaged = self.entity.try_attack(self, entity);
-            if damaged {
-                self.on_attack(entity);
-            }
+        if entity.get_entity().entity_type == &EntityType::IRON_GOLEM && self.can_deal_damage() {
+            self.deal_damage(self, entity);
         }
     }
 
@@ -387,7 +391,6 @@ impl Mob for SlimeEntity {
                 .is_ok()
         {
             let size = self.get_size();
-            let world = self.entity.living_entity.entity.world.load();
             let pos = self.entity.living_entity.entity.pos.load();
             let half_size = size / 2;
             let count = 2 + rand::random_range(0..3);
@@ -404,40 +407,28 @@ impl Mob for SlimeEntity {
             for i in 0..count {
                 let xd = ((i % 2) as f32 - 0.5) * xz_offset;
                 let zd = ((i / 2) as f32 - 0.5) * xz_offset;
-
-                let new_pos = pumpkin_util::math::vector3::Vector3::new(
-                    pos.x + xd as f64,
-                    pos.y + 0.5,
-                    pos.z + zd as f64,
-                );
-                let slime_like = crate::entity::r#type::from_type(
+                // cube mob: AbstractCubeMob.setUpSplitCube
+                crate::entity::mob::conversion::convert_split(
+                    self,
                     self.entity.living_entity.entity.entity_type,
-                    new_pos,
-                    &world,
-                    uuid::Uuid::new_v4(),
+                    |child| {
+                        if let Some(slime) = child.cast_any().downcast_ref::<Self>() {
+                            slime.set_size(half_size, true);
+                        } else if let Some(cube) = child
+                            .cast_any()
+                            .downcast_ref::<crate::entity::mob::magma_cube::MagmaCubeEntity>(
+                        ) {
+                            cube.set_size(half_size, true);
+                        }
+                        let entity = child.get_entity();
+                        entity.set_pos(Vector3::new(
+                            pos.x + f64::from(xd),
+                            pos.y + 0.5,
+                            pos.z + f64::from(zd),
+                        ));
+                        entity.set_rotation(rand::random_range(0.0..360.0), 0.0);
+                    },
                 );
-                if let Some(slime) = slime_like.cast_any().downcast_ref::<Self>() {
-                    slime.set_size(half_size, true);
-                } else if let Some(cube) = slime_like
-                    .cast_any()
-                    .downcast_ref::<crate::entity::mob::magma_cube::MagmaCubeEntity>(
-                ) {
-                    cube.set_size(half_size, true);
-                }
-                let child = slime_like.get_entity();
-                child.yaw.store(rand::random_range(0.0..360.0));
-                child
-                    .custom_name
-                    .store(self.entity.living_entity.entity.custom_name.load_full());
-                child.invulnerable.store(
-                    self.entity
-                        .living_entity
-                        .entity
-                        .invulnerable
-                        .load(Ordering::Relaxed),
-                    Ordering::Relaxed,
-                );
-                world.spawn_entity_non_save(slime_like);
             }
         }
     }

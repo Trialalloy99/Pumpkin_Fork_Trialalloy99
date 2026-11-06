@@ -126,21 +126,16 @@ impl Mob for MagmaCubeEntity {
     }
 
     fn mob_player_collision(&self, player: &Arc<crate::entity::player::Player>) {
-        let damaged = self
-            .slime
-            .get_mob_entity()
-            .try_attack(&*self.slime, &**player);
-        if damaged {
-            self.slime.on_attack(&**player);
+        if self.slime.can_deal_damage() {
+            self.slime.deal_damage(self, &**player);
         }
     }
 
     fn mob_entity_collision(&self, entity: &dyn EntityBase) {
-        if entity.get_entity().entity_type == &pumpkin_data::entity::EntityType::IRON_GOLEM {
-            let damaged = self.slime.get_mob_entity().try_attack(self, entity);
-            if damaged {
-                self.on_attack(entity);
-            }
+        if entity.get_entity().entity_type == &pumpkin_data::entity::EntityType::IRON_GOLEM
+            && self.slime.can_deal_damage()
+        {
+            self.slime.deal_damage(self, entity);
         }
     }
 }

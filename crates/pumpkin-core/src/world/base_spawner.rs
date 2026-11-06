@@ -11,7 +11,7 @@ use rand::RngExt;
 use crate::entity::{
     EntityBase,
     mob::spawn::{SpawnReason, finalize_spawn},
-    r#type::{check_spawn_rules, load_entity},
+    r#type::load_entity,
 };
 use crate::world::{World, natural_spawner};
 
@@ -268,7 +268,12 @@ impl BaseSpawner {
                     continue;
                 }
             } else if !natural_spawner::is_spawn_position_ok(world, &spawn_block, entity_type)
-                || !check_spawn_rules(entity_type, world, &spawn_block, world.is_thundering())
+                || !crate::entity::r#type::check_spawn_rules_for_spawner(
+                    entity_type,
+                    world,
+                    &spawn_block,
+                    world.is_thundering(),
+                )
             {
                 continue;
             }

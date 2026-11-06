@@ -22,10 +22,6 @@ const ALL_SLOTS: [EquipmentSlot; 8] = [
     EquipmentSlot::SADDLE,
 ];
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "mirrors ConversionType.SINGLE + convertCommon"
-)]
 // mob conversion: replace `from` with a new `to_type` mob (Mob.convertTo, ConversionType.SINGLE)
 pub fn convert_single(
     from: &dyn Mob,
@@ -91,6 +87,42 @@ pub fn convert_single(
                 .load(Ordering::Relaxed),
             Ordering::Relaxed,
         );
+    }
+
+    convert_common(from, &converted, preserve_can_pick_up_loot);
+    after(&converted);
+    world.spawn_entity(converted.clone());
+    // conversion: hand over rider, vehicle and leash (ConversionType.SINGLE)
+    if let Some(passenger) = root_passenger {
+        entity.remove_passenger(passenger.get_entity().entity_id);
+        to_entity.add_passenger(converted.clone(), passenger);
+    }
+    if let Some(vehicle) = vehicle {
+        vehicle.get_entity().remove_passenger(entity.entity_id);
+        vehicle
+            .get_entity()
+            .add_passenger(vehicle.clone(), converted.clone());
+    }
+    if let Some(holder) = leash_holder {
+        to_entity.attach_leash(holder);
+    }
+    entity.remove();
+    Some(converted)
+}
+
+// mob conversion: ConversionType.convertCommon, shared by SINGLE and SPLIT_ON_DEATH
+fn convert_common(
+    from: &dyn Mob,
+    converted: &Arc<dyn EntityBase>,
+    preserve_can_pick_up_loot: bool,
+) {
+    let entity = from.get_entity();
+    let to_entity = converted.get_entity();
+    let from_mob = from.get_mob_entity();
+    let from_living = &from_mob.living_entity;
+    if let Some(to_mob) = converted.get_mob() {
+        let to_mob_entity = to_mob.get_mob_entity();
+        let to_living = &to_mob_entity.living_entity;
         to_living.set_absorption(from_living.get_absorption());
         to_living.hurt_cooldown.store(
             from_living.hurt_cooldown.load(Ordering::Relaxed),
@@ -110,6 +142,9 @@ pub fn convert_single(
                 .is_some_and(crate::entity::ageable::AgeableMob::is_baby)
         {
             to_mob.spawn_as_baby();
+        }
+        if let (Some(old), Some(new)) = (from.as_ageable(), to_mob.as_ageable()) {
+            new.set_age(old.get_age());
         }
         if preserve_can_pick_up_loot {
             to_mob_entity.set_can_pick_up_loot(from_mob.can_pick_up_loot());
@@ -163,23 +198,42 @@ pub fn convert_single(
     if let Some(team) = from_base.get_team_name() {
         to_entity.join_team(&team);
     }
+}
 
+// mob conversion: spawn a split-off `to_type` mob (ConversionType.SPLIT_ON_DEATH)
+pub fn convert_split(
+    from: &dyn Mob,
+    to_type: &'static EntityType,
+    after: impl FnOnce(&Arc<dyn EntityBase>),
+) -> Arc<dyn EntityBase> {
+    let entity = from.get_entity();
+    let world = entity.world.load_full();
+    let converted = from_type(to_type, entity.pos.load(), &world, uuid::Uuid::new_v4());
+    if let Some(to_mob) = converted.get_mob() {
+        to_mob
+            .get_mob_entity()
+            .spawn_reason
+            .store(SpawnReason::Triggered as u8, Ordering::Relaxed);
+    }
+    let rider = entity
+        .passengers
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .first()
+        .cloned();
+    if let Some(rider) = rider {
+        entity.remove_passenger(rider.get_entity().entity_id);
+    }
+    let leashed = entity
+        .leashed_to
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .is_some();
+    if leashed {
+        entity.drop_leash();
+    }
+    convert_common(from, &converted, false);
     after(&converted);
     world.spawn_entity(converted.clone());
-    // conversion: hand over rider, vehicle and leash (ConversionType.SINGLE)
-    if let Some(passenger) = root_passenger {
-        entity.remove_passenger(passenger.get_entity().entity_id);
-        to_entity.add_passenger(converted.clone(), passenger);
-    }
-    if let Some(vehicle) = vehicle {
-        vehicle.get_entity().remove_passenger(entity.entity_id);
-        vehicle
-            .get_entity()
-            .add_passenger(vehicle.clone(), converted.clone());
-    }
-    if let Some(holder) = leash_holder {
-        to_entity.attach_leash(holder);
-    }
-    entity.remove();
-    Some(converted)
+    converted
 }

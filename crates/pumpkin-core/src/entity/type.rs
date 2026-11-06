@@ -453,6 +453,20 @@ pub fn self_and_passengers(entity: &Arc<dyn EntityBase>) -> Vec<Arc<dyn EntityBa
     stack
 }
 
+// slime: Slime.checkSlimeSpawnRules, a spawner skips the surface and chunk rules
+pub fn check_spawn_rules_for_spawner(
+    entity_type: &'static EntityType,
+    world: &World,
+    pos: &BlockPos,
+    is_thundering: bool,
+) -> bool {
+    if entity_type == &EntityType::SLIME {
+        return world.level_info.load().difficulty != pumpkin_util::Difficulty::Peaceful
+            && mob::MobEntity::check_mob_spawn_rules(world, pos);
+    }
+    check_spawn_rules(entity_type, world, pos, is_thundering)
+}
+
 #[expect(clippy::too_many_lines)]
 pub fn check_spawn_rules(
     entity_type: &'static EntityType,
