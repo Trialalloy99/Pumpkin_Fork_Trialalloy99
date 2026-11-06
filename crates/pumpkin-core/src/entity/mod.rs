@@ -1288,6 +1288,8 @@ pub struct Entity {
     default_dimensions: AtomicCell<Option<EntityDimensions>>,
     /// Whether this entity is invulnerable to all damage
     pub invulnerable: AtomicBool,
+    /// Vanilla `Entity.invulnerableTime` for entities that are not living (items after lightning).
+    pub invulnerable_time: AtomicI32,
     /// List of damage types this entity is immune to
     pub damage_immunities: std::sync::Mutex<Vec<DamageType>>,
     // Whether the entity is immune to fire (to disable visual fire and fire damage)
@@ -1571,6 +1573,7 @@ impl Entity {
             quad_leash_params: AtomicCell::new(None),
             default_dimensions: AtomicCell::new(None),
             invulnerable: AtomicBool::new(false),
+            invulnerable_time: AtomicI32::new(0),
             damage_immunities: std::sync::Mutex::new(Vec::new()),
             data: AtomicI32::new(0),
             flags: std::sync::atomic::AtomicI8::new(0),
@@ -4164,7 +4167,10 @@ impl Entity {
             .is_some_and(Player::is_creative);
 
         self.removed.load(Ordering::SeqCst)
-            || (self.invulnerable.load(Ordering::Relaxed) && !bypasses && !creative_cause)
+            || ((self.invulnerable.load(Ordering::Relaxed)
+                || self.invulnerable_time.load(Ordering::Relaxed) > 0)
+                && !bypasses
+                && !creative_cause)
             || (damage_type.has_tag(&tag::DamageType::MINECRAFT_IS_FIRE) && self.is_fire_immune())
             || (damage_type.has_tag(&tag::DamageType::MINECRAFT_IS_FALL)
                 && self
@@ -5120,6 +5126,10 @@ impl Entity {
 
     pub fn remove_passenger(&self, passenger_id: i32) {
         self.remove_passenger_internal(passenger_id, true);
+        // cushion: Cushion.removePassenger, get-up sound while still in the world
+        if self.entity_type == &EntityType::CUSHION && !self.is_removed() {
+            self.play_sound(Sound::EntityCushionGetUp);
+        }
     }
 
     pub fn remove_passenger_before_teleport(&self, passenger_id: i32) {
@@ -5808,6 +5818,9 @@ impl EntityBase for Entity {
             .store(was_in_powder_snow, Ordering::Relaxed);
         self.is_in_powder_snow.store(false, Ordering::Relaxed);
 
+        if self.invulnerable_time.load(Ordering::Relaxed) > 0 {
+            self.invulnerable_time.fetch_sub(1, Ordering::Relaxed);
+        }
         self.update_last_pos();
         self.tick_portal(caller);
         self.update_fluid_state(caller);

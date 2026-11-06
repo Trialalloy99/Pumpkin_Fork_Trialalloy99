@@ -201,6 +201,14 @@ pub struct Explosion {
 }
 
 impl Explosion {
+    // explosion: Explosion.getDirectSourceEntity().isInWater()
+    #[must_use]
+    pub fn direct_source_in_water(&self) -> bool {
+        self.source
+            .as_ref()
+            .is_some_and(|source| source.get_entity().is_in_water())
+    }
+
     // explosion: ServerExplosion.shouldAffectBlocklikeEntities
     #[must_use]
     pub fn should_affect_blocklike_entities(&self, mob_griefing: bool) -> bool {

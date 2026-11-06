@@ -4,8 +4,10 @@ use std::sync::Arc;
 use crate::entity::Entity;
 use crate::entity::decoration::cushion::CushionEntity;
 use crate::entity::player::Player;
+use crate::item::items::spawn_egg::apply_entity_variant;
 use crate::item::{ItemBehaviour, ItemMetadata};
 use crate::server::Server;
+use crate::world::game_event::GameEventContext;
 use pumpkin_data::entity::EntityType;
 use pumpkin_data::game_event::GameEvent;
 use pumpkin_data::item::Item;
@@ -86,7 +88,8 @@ impl ItemBehaviour for CushionItem {
             ),
         );
 
-        if !world.is_space_empty(bounding_box)
+        // cushion: CushionItem.useOn, anchor below, not buried, no other cushion
+        if !CushionEntity::can_be_placed_at(&world, &bounding_box)
             || world
                 .get_entities_at_box(&bounding_box)
                 .iter()
@@ -101,6 +104,14 @@ impl ItemBehaviour for CushionItem {
         entity.set_rotation(rotation, 0.0);
 
         let pos = entity.pos.load();
+        let cushion = Arc::new(CushionEntity::new(
+            entity,
+            CushionEntity::color_from_stack(item),
+        ));
+        // cushion: EntityType.createDefaultStackConfig, custom name and entity_data
+        apply_entity_variant(item, cushion.as_ref(), Some(player));
+        world.spawn_entity(cushion.clone());
+        cushion.destroy_if_in_fire();
         world.play_sound_fine(
             Sound::EntityCushionPlace,
             SoundCategory::Blocks,
@@ -108,10 +119,13 @@ impl ItemBehaviour for CushionItem {
             0.75,
             0.8,
         );
-
-        let cushion = CushionEntity::new(entity, CushionEntity::color_from_stack(item));
-        world.spawn_entity(Arc::new(cushion));
-        world.emit_game_event(GameEvent::EntityPlace.name(), pos);
+        world.emit_game_event_with_context(
+            GameEvent::EntityPlace.name(),
+            pos,
+            &GameEventContext {
+                source_entity: Some(player),
+            },
+        );
         item.decrement_unless_creative(player.gamemode.load(), 1);
         BlockActionResult::Success
     }

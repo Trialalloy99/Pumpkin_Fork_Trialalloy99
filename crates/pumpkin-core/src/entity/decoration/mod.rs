@@ -1,4 +1,5 @@
 pub mod armor_stand;
+pub mod block_attached;
 pub mod cushion;
 pub mod display;
 pub mod end_crystal;
